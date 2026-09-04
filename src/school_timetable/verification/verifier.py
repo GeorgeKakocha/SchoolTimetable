@@ -33,7 +33,7 @@ def verify(problem: SchedulingProblem, entries: tuple[ScheduleEntry, ...]) -> Ve
     violations += _check_weekly_lesson_counts(problem, entries)
     violations += _check_teacher_unavailable_respected(index, entries)
     violations += _check_fixed_placements_respected(problem, entries)
-    violations += _check_required_double_lessons(problem, index, entries)
+    violations += _check_required_block_patterns(problem, index, entries)
     violations += _check_reserved_blocks_respected(problem, entries)
     violations += _check_split_groups_synchronized(index, entries)
     violations += _check_merged_group_classes(index, entries)
@@ -114,43 +114,56 @@ def _check_fixed_placements_respected(problem: SchedulingProblem, entries) -> li
     return violations
 
 
-def _check_required_double_lessons(problem: SchedulingProblem, index: ProblemIndex, entries) -> list[str]:
+def _check_required_block_patterns(problem: SchedulingProblem, index: ProblemIndex, entries) -> list[str]:
+    """Independently re-derive whether a REQUIRED lesson-block pattern
+    (Phase 2A: an arbitrary multiset of positive block lengths, e.g.
+    ``(2, 2)`` or ``(3, 1)``) actually holds, from the raw entries alone.
+
+    Two independent facts are checked per requirement:
+    1. The multiset of per-day lesson counts (days with zero lessons
+       excluded) must exactly equal the sorted pattern -- this alone rules
+       out both "wrong number of distinct days" and "wrong block sizes",
+       since any merging or splitting of intended blocks across days would
+       change this multiset.
+    2. Every day whose count is > 1 must be a single genuinely consecutive,
+       same-block_id run of periods -- ruling out two non-adjacent periods
+       (or a pair crossing a structural break) masquerading as one block.
+    """
     violations = []
-    valid_pairs = {
-        (p1.id, p2.id) for (p1, p2) in index.consecutive_pairs
-    } | {
-        (p2.id, p1.id) for (p1, p2) in index.consecutive_pairs
-    }
 
     for req in problem.teaching_requirements:
-        if req.block_policy.mode != BlockPolicyMode.REQUIRED or not req.block_policy.has_double:
+        if req.block_policy.mode != BlockPolicyMode.REQUIRED:
             continue
+        pattern = sorted(req.block_policy.block_sizes)
+        if not pattern:
+            continue  # malformed policy; already reported elsewhere
+
         periods_by_day: dict[str, list[str]] = defaultdict(list)
         for e in entries:
             if e.requirement_id == req.id:
                 periods_by_day[e.day_id].append(e.period_id)
 
-        double_days = [day_id for day_id, period_ids in periods_by_day.items() if len(period_ids) == 2]
-        if len(double_days) != 1:
+        actual_lengths = sorted(len(pids) for pids in periods_by_day.values() if pids)
+        if actual_lengths != pattern:
             violations.append(
-                f"Requirement {req.id!r} requires exactly one double-lesson day, found {len(double_days)}"
+                f"Requirement {req.id!r} REQUIRED pattern {pattern!r} does not match actual "
+                f"per-day lesson counts {actual_lengths!r}"
             )
             continue
 
-        day_id = double_days[0]
-        p1, p2 = periods_by_day[day_id]
-        if (p1, p2) not in valid_pairs:
-            violations.append(
-                f"Requirement {req.id!r} double lesson on {day_id!r} uses non-consecutive or "
-                f"cross-break periods {p1!r}/{p2!r}"
-            )
-
         for day_id, period_ids in periods_by_day.items():
-            if len(period_ids) > 2:
-                violations.append(
-                    f"Requirement {req.id!r} has {len(period_ids)} periods on {day_id!r}, "
-                    "expected at most a double lesson"
-                )
+            if len(period_ids) <= 1:
+                continue
+            ordered = sorted(
+                (index.periods_by_id[pid] for pid in period_ids), key=lambda p: p.index
+            )
+            for a, b in zip(ordered, ordered[1:]):
+                if b.index != a.index + 1 or a.block_id != b.block_id:
+                    violations.append(
+                        f"Requirement {req.id!r} block on {day_id!r} is not a single consecutive "
+                        f"same-block_id run: periods {[p.id for p in ordered]!r}"
+                    )
+                    break
     return violations
 
 

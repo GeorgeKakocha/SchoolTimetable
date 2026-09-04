@@ -4,10 +4,11 @@ reasons about the plain domain objects.
 """
 from __future__ import annotations
 
+from school_timetable.domain.calendar import period_windows
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.people import AvailabilityStatus
 from school_timetable.domain.problem import SchedulingProblem
-from school_timetable.domain.requirements import BlockPolicyMode
+from school_timetable.domain.requirements import BlockPolicyMode, TeachingRequirement
 from school_timetable.validation.errors import ValidationError
 
 
@@ -21,7 +22,7 @@ def run_preflight(problem: SchedulingProblem) -> list[ValidationError]:
     if errors:
         return errors
 
-    errors.extend(_check_block_patterns(problem))
+    errors.extend(_check_block_patterns(problem, index))
     errors.extend(_check_split_group_consistency(problem, index))
     errors.extend(_check_fixed_placement_availability(problem, index))
     errors.extend(_check_teacher_load_vs_availability(problem, index))
@@ -136,7 +137,15 @@ def _check_references(problem: SchedulingProblem, index: ProblemIndex) -> list[V
     return errors
 
 
-def _check_block_patterns(problem: SchedulingProblem) -> list[ValidationError]:
+def _check_block_patterns(problem: SchedulingProblem, index: ProblemIndex) -> list[ValidationError]:
+    """Validate ``LessonBlockPolicy.block_sizes`` shape.
+
+    REQUIRED patterns are generic (Phase 2A): any multiset of positive
+    integers summing to ``weekly_periods``, checked for placeability
+    against the actual calendar shape. PREFERRED intentionally keeps the
+    original Phase-1 restriction (at most one size-2 block, rest singles)
+    -- see ``LessonBlockPolicy`` for why this was not generalized here.
+    """
     errors: list[ValidationError] = []
     for req in problem.teaching_requirements:
         policy = req.block_policy
@@ -150,19 +159,11 @@ def _check_block_patterns(problem: SchedulingProblem) -> list[ValidationError]:
                 {"requirement_id": req.id},
             ))
             continue
-        if any(size not in (1, 2) for size in sizes):
+        if any(not isinstance(size, int) or size <= 0 for size in sizes):
             errors.append(ValidationError(
-                "UNSUPPORTED_BLOCK_SIZE",
-                f"Requirement {req.id!r} block_sizes {sizes!r} contains a size other than 1 or 2; "
-                "this PoC solver only supports single lessons and one double lesson per requirement",
-                {"requirement_id": req.id},
-            ))
-            continue
-        if sizes.count(2) > 1:
-            errors.append(ValidationError(
-                "UNSUPPORTED_BLOCK_SIZE",
-                f"Requirement {req.id!r} block_sizes {sizes!r} requests more than one double lesson; "
-                "this PoC solver supports at most one double lesson per requirement",
+                "NON_POSITIVE_BLOCK_LENGTH",
+                f"Requirement {req.id!r} block_sizes {sizes!r} contains a non-positive or "
+                "non-integer block length",
                 {"requirement_id": req.id},
             ))
             continue
@@ -173,6 +174,78 @@ def _check_block_patterns(problem: SchedulingProblem) -> list[ValidationError]:
                 f"but weekly_periods is {req.weekly_periods}",
                 {"requirement_id": req.id},
             ))
+            continue
+
+        if policy.mode == BlockPolicyMode.PREFERRED:
+            errors.extend(_check_preferred_block_pattern(req, sizes))
+            continue
+
+        errors.extend(_check_required_block_pattern(req, sizes, index))
+    return errors
+
+
+def _check_preferred_block_pattern(
+    req: TeachingRequirement, sizes: tuple[int, ...]
+) -> list[ValidationError]:
+    """Phase-1-shaped PREFERRED restriction, unchanged: at most one
+    size-2 block, the rest singles. Intentionally not generalized -- see
+    ``LessonBlockPolicy``."""
+    if any(size not in (1, 2) for size in sizes):
+        return [ValidationError(
+            "UNSUPPORTED_BLOCK_SIZE",
+            f"Requirement {req.id!r} block_sizes {sizes!r} contains a size other than 1 or 2; "
+            "PREFERRED patterns only support single lessons and one double lesson per requirement",
+            {"requirement_id": req.id},
+        )]
+    if sizes.count(2) > 1:
+        return [ValidationError(
+            "UNSUPPORTED_BLOCK_SIZE",
+            f"Requirement {req.id!r} block_sizes {sizes!r} requests more than one double lesson; "
+            "PREFERRED patterns support at most one double lesson per requirement",
+            {"requirement_id": req.id},
+        )]
+    return []
+
+
+def _check_required_block_pattern(
+    req: TeachingRequirement, sizes: tuple[int, ...], index: ProblemIndex
+) -> list[ValidationError]:
+    """Generic REQUIRED pattern placeability checks (Phase 2A, rules 7-9):
+    enough days to host every block on its own day, no block longer than
+    an allowed max_periods_per_day, and every block length actually fits
+    inside some consecutive same-block_id run of periods."""
+    errors: list[ValidationError] = []
+    num_days = len(index.days_sorted)
+
+    if len(sizes) > num_days:
+        errors.append(ValidationError(
+            "TOO_MANY_BLOCKS_FOR_AVAILABLE_DAYS",
+            f"Requirement {req.id!r} block_sizes {sizes!r} needs {len(sizes)} distinct days, "
+            f"but only {num_days} school days are configured",
+            {"requirement_id": req.id, "blocks": len(sizes), "available_days": num_days},
+        ))
+
+    max_block = max(sizes)
+    max_per_day = req.distribution_policy.max_periods_per_day
+    if max_per_day is not None and max_per_day < max_block:
+        errors.append(ValidationError(
+            "BLOCK_EXCEEDS_MAX_PERIODS_PER_DAY",
+            f"Requirement {req.id!r} has a block of length {max_block}, but "
+            f"max_periods_per_day is {max_per_day}",
+            {"requirement_id": req.id, "max_block": max_block, "max_periods_per_day": max_per_day},
+        ))
+
+    for length in sorted(set(sizes)):
+        if length == 1:
+            continue
+        if not period_windows(index.instructional_periods_sorted, length):
+            errors.append(ValidationError(
+                "BLOCK_LENGTH_UNPLACEABLE",
+                f"Requirement {req.id!r} needs a block of length {length}, but no configured "
+                "run of consecutive same-block_id periods is long enough to hold it",
+                {"requirement_id": req.id, "block_length": length},
+            ))
+
     return errors
 
 

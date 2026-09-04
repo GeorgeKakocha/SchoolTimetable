@@ -88,7 +88,42 @@ def test_block_pattern_total_mismatch():
     assert "BLOCK_PATTERN_TOTAL_MISMATCH" in codes
 
 
-def test_unsupported_block_size_is_rejected():
+def test_preferred_unsupported_block_size_is_rejected():
+    # Phase 2A generalized REQUIRED patterns, but PREFERRED intentionally
+    # keeps the Phase-1 restriction (at most one size-2 block, rest
+    # singles) -- see docs/DECISIONS.md. A size-3 block is still rejected
+    # here specifically because the policy is PREFERRED, not REQUIRED.
+    problem = _base_problem(
+        teaching_requirements=(
+            TeachingRequirement(
+                id="r1", teacher_id="t1", activity_id="a1", participant_group_id="pg1",
+                weekly_periods=3,
+                block_policy=LessonBlockPolicy(BlockPolicyMode.PREFERRED, block_sizes=(3,)),
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNSUPPORTED_BLOCK_SIZE" in codes
+
+
+def test_preferred_more_than_one_double_is_rejected():
+    problem = _base_problem(
+        teaching_requirements=(
+            TeachingRequirement(
+                id="r1", teacher_id="t1", activity_id="a1", participant_group_id="pg1",
+                weekly_periods=4,
+                block_policy=LessonBlockPolicy(BlockPolicyMode.PREFERRED, block_sizes=(2, 2)),
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNSUPPORTED_BLOCK_SIZE" in codes
+
+
+def test_required_generic_block_size_of_three_is_now_accepted():
+    # Phase 2A: REQUIRED is no longer limited to singles + one double.
+    # A lone size-3 block is a legitimate pattern as long as it is
+    # placeable and fits within max_periods_per_day (both true here).
     problem = _base_problem(
         teaching_requirements=(
             TeachingRequirement(
@@ -99,7 +134,8 @@ def test_unsupported_block_size_is_rejected():
         ),
     )
     codes = {e.code for e in run_preflight(problem)}
-    assert "UNSUPPORTED_BLOCK_SIZE" in codes
+    assert "UNSUPPORTED_BLOCK_SIZE" not in codes
+    assert "BLOCK_LENGTH_UNPLACEABLE" not in codes
 
 
 def test_fixed_placement_on_unavailable_slot_is_rejected():

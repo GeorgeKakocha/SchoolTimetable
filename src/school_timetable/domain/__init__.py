@@ -5,7 +5,15 @@ preflight validation, the solver, and the independent verifier all share.
 """
 from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
-from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot, consecutive_period_pairs
+from school_timetable.domain.calendar import (
+    AcademicYear,
+    Day,
+    Period,
+    TimeSlot,
+    consecutive_period_pairs,
+    period_runs,
+    period_windows,
+)
 from school_timetable.domain.groups import ClassSection, ParticipantGroup
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
@@ -31,6 +39,8 @@ __all__ = [
     "Period",
     "TimeSlot",
     "consecutive_period_pairs",
+    "period_runs",
+    "period_windows",
     "ClassSection",
     "ParticipantGroup",
     "AvailabilityStatus",

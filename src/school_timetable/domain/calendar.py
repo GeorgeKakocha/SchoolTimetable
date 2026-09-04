@@ -64,6 +64,10 @@ def consecutive_period_pairs(periods: tuple[Period, ...]) -> list[tuple[Period, 
     A pair spanning a break (different ``block_id``) is never returned,
     which is how "do not cross the lunch boundary" is enforced structurally
     rather than by a magic period number.
+
+    Kept as-is (rather than rewritten in terms of ``period_windows``) so
+    the Phase-1 PREFERRED double-lesson encoding, which depends on it,
+    is not put at risk of a subtle behavior change.
     """
     by_index = sorted(periods, key=lambda p: p.index)
     pairs: list[tuple[Period, Period]] = []
@@ -71,3 +75,35 @@ def consecutive_period_pairs(periods: tuple[Period, ...]) -> list[tuple[Period, 
         if b.index == a.index + 1 and a.block_id == b.block_id:
             pairs.append((a, b))
     return pairs
+
+
+def period_runs(periods: tuple[Period, ...]) -> list[tuple[Period, ...]]:
+    """Split periods into maximal runs that are consecutive in ``index``
+    and share a ``block_id`` -- the contiguous stretches with no
+    structural break (e.g. lunch) inside them.
+    """
+    by_index = sorted(periods, key=lambda p: p.index)
+    runs: list[list[Period]] = []
+    for p in by_index:
+        if runs and p.index == runs[-1][-1].index + 1 and p.block_id == runs[-1][-1].block_id:
+            runs[-1].append(p)
+        else:
+            runs.append([p])
+    return [tuple(run) for run in runs]
+
+
+def period_windows(periods: tuple[Period, ...], length: int) -> list[tuple[Period, ...]]:
+    """Every valid consecutive window of exactly ``length`` periods that
+    stays entirely inside one structural run -- i.e. every placement a
+    lesson block of that length could legally occupy without crossing a
+    break boundary. Returns an empty list if no run is long enough to fit
+    ``length`` (this is the generic, size-independent basis for both
+    preflight's placeability check and the CP-SAT block encoding).
+    """
+    if length < 1:
+        return []
+    windows: list[tuple[Period, ...]] = []
+    for run in period_runs(periods):
+        for start in range(0, len(run) - length + 1):
+            windows.append(run[start:start + length])
+    return windows

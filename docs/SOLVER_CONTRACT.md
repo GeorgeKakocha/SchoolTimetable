@@ -35,8 +35,16 @@ A `SchedulingResult`:
 5. Teacher `UNAVAILABLE` slots are never used.
 6. Reserved/club blocks: ordinary lessons are forbidden in a class's
    reserved slots; the reserved activity occupies them instead.
-7. `REQUIRED` double lessons: same day, consecutive instructional
-   periods, never crossing a structural break (e.g. lunch).
+7. `REQUIRED` lesson-block patterns (generalized in Phase 2A):
+   `LessonBlockPolicy.block_sizes` is an arbitrary multiset of positive
+   block lengths that must sum to `weekly_periods` -- e.g. `(2, 1, 1, 1)`,
+   `(2, 2)`, `(3, 1)`. Every element is placed on its own distinct day; a
+   block of length > 1 occupies a genuinely consecutive run of
+   instructional periods and can never straddle a structural break (e.g.
+   lunch) -- enforced via `Period.block_id` and `domain.calendar.period_windows`.
+   This is enforced exactly by CP-SAT, not merely encouraged.
+   `PREFERRED` intentionally keeps the original, narrower Phase-1 shape
+   (at most one size-2 block, the rest singles) -- see `DECISIONS.md`.
 8. Parallel split groups: branches sharing a `split_group_id` are always
    scheduled in identical slots, with the parent class(es) occupied once.
 9. Merged groups occupy every underlying class simultaneously.
@@ -48,7 +56,8 @@ A `SchedulingResult`:
 
 1. Teacher `PREFER_NOT` slot usage.
 2. Non-preferred period usage (`TimePreference`).
-3. A `PREFERRED` double lesson not being formed.
+3. A `PREFERRED` double lesson not being formed (Phase-1 shape only --
+   at most one size-2 block; not generalized to arbitrary patterns).
 4. `min_distinct_days` shortfall.
 
 Weights are centralized in `scheduling/weights.py` as three tiers
@@ -60,11 +69,19 @@ through solver code.
 `validation/preflight.py` runs before CP-SAT and rejects (as
 `INVALID_INPUT`) obviously broken input: unknown references (teacher,
 activity, participant group, class, resource, requirement, slot),
-malformed or unsupported block patterns, a fixed placement landing on a
-teacher's `UNAVAILABLE` slot, a teacher required for more weekly periods
-than they have usable slots, inconsistent split-group branches, and a
-class occupancy total that cannot possibly reach full occupancy. It never
-looks at CP-SAT.
+malformed block patterns, a fixed placement landing on a teacher's
+`UNAVAILABLE` slot, a teacher required for more weekly periods than they
+have usable slots, inconsistent split-group branches, and a class
+occupancy total that cannot possibly reach full occupancy. It never looks
+at CP-SAT.
+
+REQUIRED-pattern-specific checks (Phase 2A): `TOO_MANY_BLOCKS_FOR_AVAILABLE_DAYS`
+(more pattern elements than configured school days), `BLOCK_EXCEEDS_MAX_PERIODS_PER_DAY`
+(a block longer than a configured `max_periods_per_day`), and
+`BLOCK_LENGTH_UNPLACEABLE` (a block length longer than every consecutive
+same-`block_id` run in the calendar). PREFERRED patterns still use the
+narrower Phase-1 `UNSUPPORTED_BLOCK_SIZE` check instead. `NON_POSITIVE_BLOCK_LENGTH`
+and `BLOCK_PATTERN_TOTAL_MISMATCH` apply to both modes.
 
 ## Independent verification
 

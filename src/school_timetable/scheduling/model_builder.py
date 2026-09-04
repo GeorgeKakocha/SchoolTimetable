@@ -7,11 +7,12 @@ that is preflight's job, done earlier by the caller.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from ortools.sat.python import cp_model
 
-from school_timetable.domain.calendar import Day, Period
+from school_timetable.domain.calendar import Day, Period, period_windows
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.people import AvailabilityStatus
 from school_timetable.domain.problem import SchedulingProblem
@@ -53,9 +54,10 @@ def build_model(problem: SchedulingProblem, index: ProblemIndex | None = None) -
     _add_fixed_placements(model, problem, lesson_vars)
     _add_max_periods_per_day(model, requirements, lesson_vars, days, periods)
     _add_split_group_sync(model, index, lesson_vars, days, periods)
+    _add_required_block_constraints(model, requirements, lesson_vars, days, periods)
 
     objective_terms: list = []
-    objective_terms += _add_block_policy_constraints(model, index, requirements, lesson_vars, days, periods)
+    objective_terms += _add_preferred_double_constraints(model, index, requirements, lesson_vars, days, periods)
     objective_terms += _add_teacher_prefer_not_penalty(index, requirements, lesson_vars, days, periods)
     objective_terms += _add_preferred_period_penalty(requirements, lesson_vars, days, periods)
     objective_terms += _add_min_distinct_days_penalty(model, requirements, lesson_vars, days, periods)
@@ -189,16 +191,20 @@ def _add_split_group_sync(model, index, lesson_vars, days, periods) -> None:
                     )
 
 
-def _add_block_policy_constraints(model, index, requirements, lesson_vars, days, periods) -> list:
-    """Enforces (or penalizes breaking) at most one double lesson per
-    requirement, on a same-block consecutive pair of periods -- see
-    ``LessonBlockPolicy`` for the supported-shape limitation."""
+def _add_preferred_double_constraints(model, index, requirements, lesson_vars, days, periods) -> list:
+    """Phase-1 PREFERRED double-lesson soft encoding, unchanged in this
+    slice: for a requirement whose PREFERRED pattern includes a size-2
+    block, the solver is encouraged (never required) to form at most one
+    same-block consecutive pair per week; missing it costs a soft penalty.
+    See ``LessonBlockPolicy`` for why this was not generalized alongside
+    REQUIRED in Phase 2A.
+    """
     objective_terms: list = []
     pairs = index.consecutive_pairs
 
     for req in requirements:
         policy = req.block_policy
-        if policy.mode == BlockPolicyMode.FLEXIBLE or not policy.has_double:
+        if policy.mode != BlockPolicyMode.PREFERRED or not policy.has_double:
             continue
 
         pair_used_vars = []
@@ -223,15 +229,78 @@ def _add_block_policy_constraints(model, index, requirements, lesson_vars, days,
             day_total = sum(lesson_vars[(req.id, day.id, p.id)] for p in periods)
             model.Add(day_total <= 1 + sum(pair_used_today))
 
-        if policy.mode == BlockPolicyMode.REQUIRED:
-            model.Add(sum(pair_used_vars) == 1)
-        elif policy.mode == BlockPolicyMode.PREFERRED:
-            model.Add(sum(pair_used_vars) <= 1)
-            missing_double = model.NewBoolVar(f"missing_double_{req.id}")
-            model.Add(sum(pair_used_vars) + missing_double == 1)
-            objective_terms.append(weight_value(PREFERRED_DOUBLE_WEIGHT_TIER) * missing_double)
+        model.Add(sum(pair_used_vars) <= 1)
+        missing_double = model.NewBoolVar(f"missing_double_{req.id}")
+        model.Add(sum(pair_used_vars) + missing_double == 1)
+        objective_terms.append(weight_value(PREFERRED_DOUBLE_WEIGHT_TIER) * missing_double)
 
     return objective_terms
+
+
+def _add_required_block_constraints(model, requirements, lesson_vars, days, periods) -> None:
+    """Generic REQUIRED lesson-block pattern enforcement (Phase 2A).
+
+    A REQUIRED pattern is an arbitrary multiset of positive block lengths
+    that must sum to weekly_periods. This is a HARD constraint: it is
+    enforced exactly, not merely encouraged. For each distinct block
+    length present, decide on which distinct days a block of that length
+    lands (``day_has_length``), and -- for lengths > 1 -- which specific
+    consecutive same-block_id window of periods realizes it that day
+    (``window_used``). The daily period total is tied directly to
+    whichever length (if any) is active that day, which is what forces
+    "no extra periods stacked onto a block's day" and "every pattern
+    element gets its own day" simultaneously, for any pattern shape --
+    not just a single double, with no per-shape special-casing.
+    """
+    for req in requirements:
+        policy = req.block_policy
+        if policy.mode != BlockPolicyMode.REQUIRED:
+            continue
+
+        length_counts = Counter(policy.block_sizes)
+        windows_by_length = {
+            length: period_windows(periods, length)
+            for length in length_counts
+            if length > 1
+        }
+
+        day_has_length: dict[tuple[str, int], cp_model.IntVar] = {}
+        for day in days:
+            day_vars_today = []
+            for length in length_counts:
+                var = model.NewBoolVar(f"block_{req.id}_{day.id}_len{length}")
+                day_has_length[(day.id, length)] = var
+                day_vars_today.append(var)
+            # Rule 3: different pattern elements occur on distinct days --
+            # a single day can host at most one block for this requirement.
+            model.Add(sum(day_vars_today) <= 1)
+
+        for length, count in length_counts.items():
+            # Exactly as many days host a block of this length as the
+            # pattern requires.
+            model.Add(sum(day_has_length[(day.id, length)] for day in days) == count)
+
+        for day in days:
+            day_total = sum(lesson_vars[(req.id, day.id, p.id)] for p in periods)
+            weighted_length = sum(length * day_has_length[(day.id, length)] for length in length_counts)
+            # Ties the day's actual period count to whichever block length
+            # (if any) is active -- 0 when none is, forbidding stray
+            # periods on an otherwise-unused or already-filled day.
+            model.Add(day_total == weighted_length)
+
+            for length, windows in windows_by_length.items():
+                window_vars = []
+                for w_idx, window in enumerate(windows):
+                    w_var = model.NewBoolVar(f"window_{req.id}_{day.id}_len{length}_{w_idx}")
+                    for p in window:
+                        model.Add(w_var <= lesson_vars[(req.id, day.id, p.id)])
+                    model.Add(
+                        w_var >= sum(lesson_vars[(req.id, day.id, p.id)] for p in window) - (length - 1)
+                    )
+                    window_vars.append(w_var)
+                # Exactly one valid consecutive window realizes the block
+                # when this length is active that day, none when it isn't.
+                model.Add(sum(window_vars) == day_has_length[(day.id, length)])
 
 
 def _add_teacher_prefer_not_penalty(index, requirements, lesson_vars, days, periods) -> list:

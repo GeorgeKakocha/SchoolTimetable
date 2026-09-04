@@ -45,14 +45,28 @@ class LessonBlockPolicy:
 
     ``block_sizes`` is a multiset of block lengths that must sum to the
     requirement's ``weekly_periods`` whenever ``mode`` is REQUIRED or
-    PREFERRED (ignored, and expected empty, for FLEXIBLE).
+    PREFERRED (ignored, and expected empty, for FLEXIBLE). Each element is
+    one daily lesson block; different elements are always placed on
+    distinct days; a block of length > 1 must occupy consecutive
+    instructional periods and can never straddle a structural break (see
+    ``Period.block_id``).
 
-    This PoC's solver supports at most a single block of size 2 (a double
-    lesson) per requirement, with the remainder as size-1 singles -- e.g.
-    ``(2, 1, 1, 1)``. This covers every block shape needed by the fixtures
-    while keeping the CP-SAT encoding simple; it is a solver-implementation
-    limitation, not a hard-coded subject rule, and is enforced explicitly
-    by preflight validation rather than silently accepted or ignored.
+    Mode-dependent support (Phase 2A):
+
+    - REQUIRED: ``block_sizes`` may be *any* multiset of positive integers
+      summing to ``weekly_periods`` -- e.g. ``(2, 1, 1, 1)``, ``(2, 2)``,
+      ``(3, 1)``. The solver enforces the exact shape (not merely
+      encourages it), and preflight rejects a pattern that cannot possibly
+      be placed (too many blocks for the available days, a block longer
+      than every available consecutive run, or a block longer than a
+      configured ``max_periods_per_day``) before CP-SAT ever runs.
+    - PREFERRED: intentionally NOT generalized in this slice. Only the
+      Phase-1 shape is supported -- at most one block of size 2 (a double
+      lesson), with the rest as size-1 singles. The solver encourages,
+      but does not require, forming that one double; breaking it costs a
+      soft penalty. Preflight rejects any other PREFERRED shape explicitly
+      (``UNSUPPORTED_BLOCK_SIZE``) rather than silently mishandling it.
+    - FLEXIBLE: ``block_sizes`` is ignored; periods are placed freely.
     """
 
     mode: BlockPolicyMode
@@ -60,6 +74,9 @@ class LessonBlockPolicy:
 
     @property
     def has_double(self) -> bool:
+        """True if this policy's pattern includes a size-2 block. Only
+        meaningful for the (still Phase-1-shaped) PREFERRED double-lesson
+        encoding; REQUIRED's generic encoding does not use it."""
         return self.block_sizes.count(2) > 0
 
 

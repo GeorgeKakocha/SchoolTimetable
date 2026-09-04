@@ -27,12 +27,26 @@ this implementation followed them as given.
 
 6. **Lesson block policy has three modes**: `REQUIRED` (hard pattern),
    `PREFERRED` (soft pattern, penalized if broken), `FLEXIBLE` (no shape
-   constraint). This PoC's CP-SAT encoding supports at most one double
-   lesson (block size 2) per requirement, with the rest as single lessons
-   -- sufficient for every fixture required by this milestone, and
-   enforced explicitly by preflight validation (`UNSUPPORTED_BLOCK_SIZE`)
-   rather than silently ignored. Generalizing to arbitrary multi-block
-   patterns is future work, not a hidden limitation.
+   constraint).
+
+   As of Phase 2A, `REQUIRED` supports an arbitrary multiset of positive
+   block lengths summing to `weekly_periods` (e.g. `(2, 1, 1, 1)`,
+   `(2, 2)`, `(3, 1)`), enforced exactly by CP-SAT -- not limited to a
+   single double lesson. Preflight rejects a pattern that cannot possibly
+   be placed (too many blocks for the configured days, a block exceeding
+   `max_periods_per_day`, or a block longer than any available
+   consecutive same-`block_id` run) before CP-SAT ever runs.
+
+   `PREFERRED` is **intentionally not generalized** in Phase 2A: it keeps
+   the original Phase-1 shape (at most one size-2 block, the rest
+   singles), still enforced by `UNSUPPORTED_BLOCK_SIZE`. Reason: REQUIRED's
+   generic encoding is a hard multi-block placement (a day either fully
+   realizes a chosen length or is empty); generalizing PREFERRED the same
+   way would mean the solver deciding, as a *soft* choice, which subset of
+   an arbitrary block multiset to attempt to form -- a materially larger
+   soft-optimization design than "encourage one specific double lesson
+   into existence". That redesign was explicitly out of scope for this
+   slice and is deferred, not silently reinterpreted.
 
 7. **Distribution policy**: `max_periods_per_day` is HARD;
    `min_distinct_days` is SOFT. Both live on the individual
