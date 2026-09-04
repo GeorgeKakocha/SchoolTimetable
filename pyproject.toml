@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "school-timetable"
+version = "0.1.0"
+description = "Configurable school timetable optimization system (solver proof-of-concept milestone)"
+requires-python = ">=3.12"
+dependencies = [
+    "ortools>=9.9",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
