@@ -2,8 +2,9 @@
 
 ## Current milestone
 
-Phase 2A: solver hardening -- generalized REQUIRED lesson-block patterns,
-plus closing two Phase-1 test-coverage gaps. Still an isolated Python
+Phase 2B: realistic school-scale solver validation. No product-semantic
+or HARD-constraint changes; the only production additions are
+`SolverOptions` and richer benchmark metadata. Still an isolated Python
 CP-SAT solver, no web framework, database, or UI.
 
 ## Implemented capabilities
@@ -32,30 +33,44 @@ CP-SAT solver, no web framework, database, or UI.
   preflight, one passing preflight but INFEASIBLE in CP-SAT).
 - A manual PoC runner (`python -m school_timetable.run_poc`) that solves
   the valid fixture, verifies it, and prints a readable weekly grid.
+- **`SolverOptions`** (Phase 2B; `scheduling/options.py`): `max_time_seconds`,
+  `num_search_workers`, `random_seed`. `solve(problem)` without it is
+  unchanged from Phase 2A. Result `metadata` now also reports
+  `num_conflicts`, `num_branches`, `num_lesson_variables`,
+  `num_cp_variables`, `num_cp_constraints`, and (when applicable)
+  `best_objective_bound`/`objective_value`.
+- **A realistic school-scale fixture generator** (`fixtures/school_scale/`):
+  15 classes, 34 teachers, 19 activities, 227 `TeachingRequirement`s, 600
+  total class-slot occupancy units/week, proven feasible by solving a
+  placement-free version of the problem once (see
+  `docs/SCALE_VALIDATION.md`) rather than by hand-guessing. Three
+  scenarios: `standard`, `tight` (more unavailability, more fixed
+  placements), `impossible` (a genuine capacity-1 gym overcommitment).
+- A dedicated benchmark runner, `python -m school_timetable.run_scale_benchmark`,
+  reporting compact per-run statistics (not a full timetable by default).
 
 ## Test baseline
 
-52 pytest tests, all passing (`.venv/bin/python -m pytest -q`): the
-Phase-1 baseline (updated from 33 to 35 -- one test that asserted the old
-REQUIRED size-3 restriction was repurposed to assert the still-restricted
-PREFERRED behavior, plus a new REQUIRED-now-accepts-size-3 test and a
-PREFERRED-multi-double-rejected test), plus 5 focused occupancy tests
-(full-class-occupancy missing-slot/double-booking detection, and
-split-group occupancy non-double-counting with a negative-control
-contrast case) and 12 focused REQUIRED-block-pattern tests (`[2,2]`,
-`[2,1,1,1]`, `[3,1]` end-to-end solves; boundary-crossing rejection at
-both preflight and verifier level; sum-mismatch, non-positive-length,
-too-many-blocks, max-periods-per-day, and unplaceable-length preflight
-rejections; and a malformed-multi-block verifier detection test).
+67 pytest tests total. `pytest -q` (default, slow-marked tests excluded):
+**63 passed** in under a second. `pytest -q -m slow`: the 4 school-scale
+integration tests (standard/tight solve+verify, impossible-never-valid,
+standard 3x stability) -- **4 passed** in ~16s on this machine, since each
+invokes CP-SAT twice (once to prove the fixture feasible, once to
+benchmark it).
+
+Phase 2A's 52 remain unchanged in behavior; Phase 2B adds 11 fast unit
+tests for the fixture generator/consistency check (`test_school_scale_fixture.py`)
+and 4 slow integration tests (`test_school_scale_integration.py`).
 
 ## Known limitations
 
 - `PREFERRED` intentionally still supports only the Phase-1 shape (at
-  most one size-2 block, the rest singles) -- not generalized alongside
-  REQUIRED in this slice; see `DECISIONS.md` for why.
-- No performance tuning has been done; the valid fixture (4 classes, ~24
-  requirements, 160 lesson-instances) solves to proven optimality in well
-  under a second, so this has not been a concern yet.
+  most one size-2 block, the rest singles) -- not generalized; see
+  `DECISIONS.md` for why.
+- No performance bottleneck was found at 15-class/227-requirement scale
+  (all scenarios solve to OPTIMAL in ~1-1.7s locally; see
+  `docs/SCALE_VALIDATION.md`), so no solver hardening work is queued.
+  This has only been validated at this one scale point, not larger ones.
 - Teacher gap minimization is explicitly out of scope for this milestone.
 - No persistence, API, or UI -- by design, per `DECISIONS.md`.
 
@@ -74,6 +89,8 @@ why verification is a hard requirement, not a formality.
 
 ## Next step
 
-Await review of this Phase 2A slice. Candidate next steps: Phase 2B scale
-testing, or introducing the FastAPI/SQLAlchemy/PostgreSQL layer around
-this existing domain model and solver -- neither has been started.
+Await review of this Phase 2B slice. See `docs/SCALE_VALIDATION.md` for
+the explicit readiness recommendation. Candidate next steps: manual
+edit/lock/re-optimization, or introducing the FastAPI/SQLAlchemy/PostgreSQL
+layer around this existing domain model and solver -- neither has been
+started.

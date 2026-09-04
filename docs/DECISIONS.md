@@ -74,3 +74,34 @@ this implementation followed them as given.
 
 12. **No generic rule DSL, no AI, no premature abstraction.** Preflight,
     solver, and verifier are explicit Python, not a rule-scripting engine.
+
+13. **`SolverOptions` (Phase 2B)** is a plain, OR-Tools-free dataclass in
+    `scheduling/options.py` (`max_time_seconds`, `num_search_workers`,
+    `random_seed`) controlling how CP-SAT runs. `solve(problem)` without
+    it reproduces the exact prior default behavior; this is additive, not
+    a breaking change.
+
+14. **A realistic scheduling problem may return `FEASIBLE` rather than
+    `OPTIMAL`** within its time budget, and that is a successful, valid
+    result -- not a failure -- as long as the independent verifier
+    passes. `UNKNOWN` (no solution found before the time limit) is the
+    actual failure condition to investigate. Never weaken a SOFT or HARD
+    constraint merely to force `OPTIMAL` status.
+
+15. **Known-feasible fixture generation uses CP-SAT itself, not a
+    hand-rolled constructor.** For the Phase 2B school-scale fixture, a
+    zero-slack (every class exactly fully occupied), ~230-requirement
+    problem is exactly the kind of densely-packed combinatorial structure
+    where a single-pass greedy constructor can genuinely dead-end on an
+    early commitment even though a valid global arrangement exists (this
+    was attempted and hit that wall three times with three different
+    targeted fixes -- see `docs/SCALE_VALIDATION.md`). The generator
+    instead builds the problem with zero fixed placements, solves it once
+    with the same validated `model_builder`/CP-SAT pipeline to obtain a
+    witness, and promotes a small, explicit subset of that witness to
+    real `FixedPlacement`s before discarding the rest. The benchmark that
+    is actually measured afterwards calls `solve()` completely fresh (a
+    separate `CpSolver` instance, no shared state) against the resulting
+    problem -- so no placement decision beyond the deliberately chosen
+    fixed lessons ever crosses from fixture generation into the
+    benchmark under test.

@@ -9,12 +9,22 @@ teaching requirements, resources, reserved blocks, and fixed placements.
 Nothing is hard-coded: day/period counts, teacher counts, subject counts,
 etc. are all read from this object.
 
+`solve(problem, options: SolverOptions | None = None)` also accepts an
+optional `SolverOptions` (Phase 2B; `scheduling/options.py`) controlling
+`max_time_seconds` (default 30.0), `num_search_workers` (default 8), and
+`random_seed` (default `None`, i.e. OR-Tools' own default). It is a plain
+dataclass with no OR-Tools types in it. Omitting it (`solve(problem)`)
+reproduces the exact Phase 1/2A default behavior.
+
 ## Output
 
 A `SchedulingResult`:
 
 - `status: SolverStatus` -- one of `OPTIMAL`, `FEASIBLE`, `INFEASIBLE`,
-  `INVALID_INPUT`, `ERROR`.
+  `INVALID_INPUT`, `ERROR`. A realistic problem may legitimately return
+  `FEASIBLE` (a valid schedule found, optimality not proven within the
+  time budget) -- this is a successful result, not a failure, as long as
+  the independent verifier passes.
 - `entries: tuple[ScheduleEntry, ...]` -- populated only for
   `OPTIMAL`/`FEASIBLE`. Each entry carries activity, teacher (if any),
   participant group (if any), class sections occupied, day, period, and
@@ -23,7 +33,29 @@ A `SchedulingResult`:
   applied).
 - `validation_errors: tuple[ValidationError, ...]` -- populated only for
   `INVALID_INPUT`.
-- `metadata: dict` -- solver wall time and raw CP-SAT status name.
+- `metadata: dict` -- benchmark/observability fields (Phase 2B). Contents
+  depend on how far `solve()` got, not on the public `status` value alone:
+  - `INVALID_INPUT` -- preflight rejected the input before a CP-SAT model
+    was ever built. `metadata` is empty; there is no solver run to report on.
+  - A model-build exception (a solver-implementation bug, not bad input)
+    -- CP-SAT never ran. `metadata` contains only `{"error": ...}`.
+  - Every other case -- CP-SAT actually ran to completion, including a
+    raw status such as `UNKNOWN` that the public `SolverStatus` maps to
+    `ERROR` -- `metadata` carries the full normal benchmark fields below,
+    because the solver genuinely executed and those statistics are real:
+    `wall_time_seconds`, `raw_status` (CP-SAT's own status name),
+    `num_conflicts`, `num_branches`, `num_lesson_variables` (the
+    `x[requirement, day, period]` decision variables), `num_cp_variables`
+    and `num_cp_constraints` (total CP-SAT model size, including
+    block/window/day-used auxiliary variables), and -- only when the
+    model has an objective -- `best_objective_bound` and, for successful
+    (`OPTIMAL`/`FEASIBLE`) results, `objective_value`.
+
+  This is not a general telemetry system; it is exactly the fields needed
+  to reason about solver scaling (see `docs/SCALE_VALIDATION.md`). Public
+  `SolverStatus` semantics are unchanged -- `ERROR` still covers both the
+  model-build-exception case and the unmapped-raw-status case; only the
+  `metadata` contract distinguishes them.
 
 ## HARD constraints (must always hold)
 

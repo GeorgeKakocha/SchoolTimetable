@@ -30,6 +30,13 @@ This installs the runtime dependency (`ortools`) and the test dependency
 pytest -q
 ```
 
+Heavier, solver-invoking scale tests are marked `slow` and excluded by
+default. Run them explicitly with:
+
+```bash
+pytest -q -m slow
+```
+
 ## Running the PoC
 
 Solves the deterministic synthetic fixture, runs the independent
@@ -39,16 +46,29 @@ verifier, and prints a weekly grid per class:
 python -m school_timetable.run_poc
 ```
 
+## Running the school-scale benchmark
+
+Solves the realistic 15-class synthetic school (see
+`docs/SCALE_VALIDATION.md`) and reports compact per-run statistics:
+
+```bash
+python -m school_timetable.run_scale_benchmark
+python -m school_timetable.run_scale_benchmark --scenario standard --repeats 3
+python -m school_timetable.run_scale_benchmark --detail standard
+```
+
 ## Project layout
 
 ```
 src/school_timetable/
 ├── domain/         Typed domain model (no OR-Tools, no I/O)
 ├── validation/      Preflight validation
-├── scheduling/       CP-SAT model building, solving, weights
+├── scheduling/       CP-SAT model building, solving, weights, SolverOptions
 ├── verification/     Independent post-hoc verifier
 ├── fixtures/         Deterministic synthetic fixtures
-└── run_poc.py        Manual end-to-end demo
+│   └── school_scale/  Realistic school-scale fixture generator (Phase 2B)
+├── run_poc.py        Manual end-to-end demo (small Phase-1 fixture)
+└── run_scale_benchmark.py  School-scale benchmark runner (Phase 2B)
 tests/                pytest suite
-docs/                 Product/architecture/decisions/solver-contract docs
+docs/                 Product/architecture/decisions/solver-contract/scale-validation docs
 ```

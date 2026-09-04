@@ -21,3 +21,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: heavier tests (school-scale fixture generation/solving) excluded from the default run; use -m slow to run them",
+]
+addopts = "-m 'not slow'"
