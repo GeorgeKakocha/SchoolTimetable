@@ -474,10 +474,48 @@ CorruptScheduleStateError`, an internal defect, never `None` and never
 not-found handling, session-close tracking, and a `SchedulingProblem`
 round-trip through the generation-safe repository. No migration/schema
 change, no `GenerateScheduleService`, no API route, no solver/verifier
-change -- **Phase 3A3.3 has NOT started.** The next authorized slice is
-**Phase 3A3.3 only** (`GenerateScheduleService` + generation
-composition/orchestration), per the same slice-at-a-time discipline
-every prior Phase 3A2/3A3 slice has followed.
+change.
+
+**Phase 3A3.3 is implemented on feature branch
+`feature/phase-3a3-3-generate-service`, pending review -- not yet
+merged to `main`.** It adds `application.generate_schedule_service.
+GenerateScheduleService`, the first genuine `application/` orchestration
+service, which composes only the existing `SchedulingProblemRepository`/
+`ScheduleVersionRepository` ports with the existing preflight
+validator, CP-SAT solver, and independent verifier -- never SQLAlchemy,
+persistence concrete adapters, or FastAPI. `generate(...)` runs the
+locked order: existing-schedule precheck (`get_active_schedule`) ->
+load a fully detached `SchedulingProblem` -> explicit preflight ->
+solve -> (`OPTIMAL`/`FEASIBLE` only) independent verify -> atomic
+`persist_initial_version`, returning exactly the `ActiveScheduleVersion`
+the repository gives back. New application-owned outcomes in
+`application.errors`: `InvalidSchedulingConfigurationError` (preflight
+failure, carrying the validator's own `ValidationError` tuple) and
+`ScheduleInfeasibleError` (CP-SAT proved `INFEASIBLE`); two new
+internal-only defects local to the service module,
+`ScheduleGenerationError` (solver `ERROR`) and
+`ScheduleVerificationFailedError` (solver claimed success but the
+independent verifier disagreed) -- neither is ever persisted, retried,
+or presented as one of the public outcomes. A losing concurrent
+double-generate still surfaces the existing `ScheduleAlreadyExistsError`
+unchanged, from `persist_initial_version`'s own constraint translation,
+with no catch/re-wrap/retry in the service. Proven with 9 pure
+orchestration tests (`tests/test_generate_schedule_service.py`, fakes
+for both repository ports, no database) covering every branch, plus 4
+real-PostgreSQL/real-solver/real-verifier integration tests
+(`tests_web/test_generate_schedule_service_integration.py`): a full
+generate -> persist -> reload round trip (exact entry order, exact
+metadata, second generate rejected without a second version), and three
+dedicated proofs that invalid configuration, a genuinely infeasible
+valid problem, and a (monkeypatched) verifier failure each leave every
+schedule table empty. The integration suite also proves operationally,
+via a session-open tracker wrapped around preflight/solve/verify, that
+no repository-owned `Session` is open during that window -- the
+DB-free boundary Owner Decision 4 requires. No migration/schema change,
+no API route, no solver/verifier semantic change -- **Phase 3A3.4 has
+NOT started.** The next authorized slice after review/merge is **Phase
+3A3.4 only** (the HTTP composition root: `POST .../schedule/generate`,
+`GET .../schedule/active`, and their response/error mapping).
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
