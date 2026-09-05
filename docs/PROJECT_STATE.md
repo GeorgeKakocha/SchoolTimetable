@@ -431,20 +431,20 @@ Phase 3A2.4 is closed (merged to `main`). Phase 3A3's design and all
 five owner decisions are locked -- see `DECISIONS.md` #31 for the
 complete schema, application-service, port, and API design.
 
-**Phase 3A3.1 implementation is complete on the feature branch
-`feature/phase-3a3-1-schedule-schema`, pending review.** The four
-persistence tables it adds -- `schedule`, `schedule_version`,
+**Phase 3A3.1 is CLOSED and merged to `main`** (commit `4447b10`). The
+four persistence tables it adds -- `schedule`, `schedule_version`,
 `schedule_entry`, `locked_occurrence` -- and one Alembic migration
-(`4681f7a362bd`, on top of `8cdd513e16da`) now exist exactly as
-specified in `DECISIONS.md` #31, proven against real PostgreSQL
-(upgrade/downgrade/upgrade, autogenerate no-drift, and 15 focused
-schema tests including the required direct-delete-rejected and
-whole-snapshot root-cascade proofs). Not yet merged to `main`. No
-domain <-> persistence mapping, repository, application service, or API
-route exists for these tables yet -- the next implementation slice
-after this one is reviewed/merged is **Phase 3A3.2 only** (mappers +
-repository adapter + round-trip), per the same slice-at-a-time
-discipline every prior Phase 3A2/3A3 slice has followed.
+(`4681f7a362bd`, on top of `8cdd513e16da`) are now part of authoritative
+`main`, exactly as specified in `DECISIONS.md` #31. Proven against real
+PostgreSQL: migration upgrade/downgrade/upgrade, autogenerate no-drift,
+and 15 focused schema tests, including the required direct-delete-
+rejected and whole-snapshot root-cascade proofs, all passed. No domain
+<-> persistence mapping, repository, application service, or API route
+exists for these tables yet -- **Phase 3A3.2 has NOT started.** The
+next authorized slice is **Phase 3A3.2 only** (schedule persistence
+mapping + repository adapter + exact DB round-trip), per the same
+slice-at-a-time discipline every prior Phase 3A2/3A3 slice has
+followed.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
