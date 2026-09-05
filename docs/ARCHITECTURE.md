@@ -38,13 +38,13 @@ no solver/schedule-generation endpoint -- see `docs/PROJECT_STATE.md`
 and `DECISIONS.md` #26-30 for exactly what Phase
 3A2.1/3A2.2/3A2.3/3A2.4 do and do not include.
 
-**Phase 3A3 (design locked; schema merged; persistence mapping/adapter
-pending merge)** connects this DB-backed
-`SchedulingProblem` to the existing solver and persists generated
-results as immutable `ScheduleVersion` snapshots -- see `DECISIONS.md`
-#31 for the full locked schema, application-service, and API design.
-One canonical `Schedule` per School+AcademicYear; generation is
-initial-generation-only (a second `Generate` call conflicts, 409,
+**Phase 3A3 (design locked; schema + persistence mapping/adapter
+merged; application orchestration not yet implemented)** connects this
+DB-backed `SchedulingProblem` to the existing solver and persists
+generated results as immutable `ScheduleVersion` snapshots -- see
+`DECISIONS.md` #31 for the full locked schema, application-service, and
+API design. One canonical `Schedule` per School+AcademicYear; generation
+is initial-generation-only (a second `Generate` call conflicts, 409,
 rather than reoptimizing or appending); a new `GenerateScheduleService`
 in `application/` orchestrates load -> preflight -> solve -> require
 success -> verify -> persist, using one new application-owned port,
@@ -53,11 +53,10 @@ success -> verify -> persist, using one new application-owned port,
 (`4681f7a362bd`) are merged to `main`. Phase 3A3.2 (schedule persistence
 mapping, `ScheduleVersionRepository` + its `SqlAlchemyScheduleVersionRepository`
 adapter, and a session-factory-backed `SchedulingProblemRepository`
-implementation for future generation use) is implemented on a feature
-branch pending review, not yet merged to `main`. No `GenerateScheduleService`,
-application service, or API route exists yet -- Phase 3A3.3
-(`GenerateScheduleService`) is the next implementation slice, not
-started.
+implementation for future generation use) is likewise merged to `main`.
+No `GenerateScheduleService`, application service layer, or API route
+exists yet -- Phase 3A3.3 (`GenerateScheduleService`) is the next
+implementation slice, not started.
 
 ```
 src/school_timetable/
@@ -212,13 +211,13 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A3.2 (implemented on a feature branch, pending review --
-not yet merged to `main`): `ScheduleVersionRepository` and its
-`SqlAlchemyScheduleVersionRepository` adapter, and schedule domain <->
-persistence mapping, now exist, but no `GenerateScheduleService` or any
-other `application/` service layer exists yet, no
-`POST .../schedule/generate` or `GET .../schedule/active` endpoint, no
-frontend, no auth. `docker-compose.yml` provides a local development
-PostgreSQL only -- no application containerization/deployment setup
-exists yet. These arrive starting Phase 3A3.3 per `DECISIONS.md` #31
+As of Phase 3A3.2 (CLOSED and merged to `main`): `ScheduleVersionRepository`
+and its `SqlAlchemyScheduleVersionRepository` adapter, and schedule
+domain <-> persistence mapping, now exist, but no
+`GenerateScheduleService` or any other `application/` service layer
+exists yet, no `POST .../schedule/generate` or `GET .../schedule/active`
+endpoint, no React timetable projection, no frontend, no auth.
+`docker-compose.yml` provides a local development PostgreSQL only -- no
+application containerization/deployment setup exists yet. These arrive
+starting Phase 3A3.3 per `DECISIONS.md` #31
 and `PROJECT_STATE.md`.

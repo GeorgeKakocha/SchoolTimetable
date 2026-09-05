@@ -440,43 +440,44 @@ PostgreSQL: migration upgrade/downgrade/upgrade, autogenerate no-drift,
 and 15 focused schema tests, including the required direct-delete-
 rejected and whole-snapshot root-cascade proofs, all passed.
 
-**Phase 3A3.2 is implemented on feature branch
-`feature/phase-3a3-2-schedule-persistence`, pending pre-commit review --
-not yet merged to `main`.** It adds: `application.schedule_models.
-ActiveScheduleVersion` (plain frozen dataclass); `application.ports.
-ScheduleVersionRepository` (`get_active_schedule`/`persist_initial_version`,
-no generic CRUD) and `application.errors.ScheduleAlreadyExistsError`;
-`persistence.mappers`'s `schedule_entry_to_domain`/
-`locked_occurrence_to_domain` (extending `NaturalIdLookup` with a
-`reserved_blocks` lookup) re-deriving each entry's `activity_id`/
-`teacher_id`/`participant_group_id`/`resource_id`/`class_sections` from
-the referenced `TeachingRequirement`/`ReservedBlock`/`ParticipantGroup`,
-exactly as Decision #31 specifies; `persistence.schedule_repository.
+**Phase 3A3.2 is CLOSED and merged to `main`** (commit `bab831e`). It
+adds: `application.schedule_models.ActiveScheduleVersion` (plain frozen
+dataclass); `application.ports.ScheduleVersionRepository`
+(`get_active_schedule`/`persist_initial_version`, no generic CRUD) and
+`application.errors.ScheduleAlreadyExistsError`; `persistence.mappers`'s
+`schedule_entry_to_domain`/`locked_occurrence_to_domain` (extending
+`NaturalIdLookup` with a `reserved_blocks` lookup) re-deriving each
+entry's `activity_id`/`teacher_id`/`participant_group_id`/`resource_id`/
+`class_sections` from the referenced
+`TeachingRequirement`/`ReservedBlock`/`ParticipantGroup`, exactly as
+Decision #31 specifies; `persistence.schedule_repository.
 SqlAlchemyScheduleVersionRepository`, a session-factory-backed adapter
 whose `persist_initial_version` writes `Schedule` + `ScheduleVersion` 1
-+ `ScheduleEntry` rows + the active-version pointer atomically, and
-translates only a violation of the `uq_schedule_academic_year_id`
-constraint by name (via psycopg/PostgreSQL structured diagnostics) into
-`ScheduleAlreadyExistsError`, leaving every other integrity violation to
-propagate as itself; and `persistence.problem_repository.
-SessionFactorySchedulingProblemRepository`, a session-factory-backed
-second implementation of the existing `SchedulingProblemRepository`
-Protocol for future `GenerateScheduleService` use, which does not
-change or replace `SqlAlchemySchedulingProblemRepository`'s existing
-session-bound `/config` read path. Proven with 9 new live-PostgreSQL
-tests (`tests_web/test_schedule_repository.py`): exact-order round-trip,
-active-version-read (`None` before/correct after), not-found handling
-for both methods, atomicity (zero rows across all four schedule tables
-after a controlled unrelated-constraint failure), conflict translation
-(exactly one `Schedule`/`Version` survives a losing second
-`persist_initial_version`, with the real violated constraint name
-confirmed), session-close tracking, and a `SchedulingProblem` round-trip
-through the generation-safe repository. No migration/schema change, no
-`GenerateScheduleService`, no API route, no solver/verifier change --
-**Phase 3A3.3 has NOT started.** The next authorized slice is **Phase
-3A3.3 only** (`GenerateScheduleService` + generation composition), per
-the same slice-at-a-time discipline every prior Phase 3A2/3A3 slice has
-followed.
++ `ScheduleEntry` rows + the active-version pointer atomically; and
+`persistence.problem_repository.SessionFactorySchedulingProblemRepository`,
+a session-factory-backed second implementation of the existing
+`SchedulingProblemRepository` Protocol for future `GenerateScheduleService`
+use, which does not change or replace `SqlAlchemySchedulingProblemRepository`'s
+existing session-bound `/config` read path. Proven against real
+PostgreSQL: exact DB round-trip with tuple order preserved, initial
+schedule/version persistence is atomic, only the
+`uq_schedule_academic_year_id` constraint translates to
+`ScheduleAlreadyExistsError` (every other integrity violation still
+propagates as a genuine defect) -- and that clean application exception
+exposes no persistence exception through `__cause__`/`__context__`, only
+the natural school/year IDs. A persisted `Schedule` with no active
+version (or an unresolvable active pointer) is distinguished from "no
+schedule yet": it raises `persistence.schedule_repository.
+CorruptScheduleStateError`, an internal defect, never `None` and never
+`ScheduleAlreadyExistsError`. 11 focused tests
+(`tests_web/test_schedule_repository.py`) cover all of the above plus
+not-found handling, session-close tracking, and a `SchedulingProblem`
+round-trip through the generation-safe repository. No migration/schema
+change, no `GenerateScheduleService`, no API route, no solver/verifier
+change -- **Phase 3A3.3 has NOT started.** The next authorized slice is
+**Phase 3A3.3 only** (`GenerateScheduleService` + generation
+composition/orchestration), per the same slice-at-a-time discipline
+every prior Phase 3A2/3A3 slice has followed.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
