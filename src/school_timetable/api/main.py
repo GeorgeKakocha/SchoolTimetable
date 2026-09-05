@@ -1,9 +1,9 @@
-"""FastAPI application shell (Phase 3A1).
+"""FastAPI application shell (Phase 3A1+).
 
-No domain/business endpoints yet -- just the app instance and a real,
-database-backed health check (`GET /health` actually executes a query; it
-never fakes success). Application services and repository ports are
-introduced starting Phase 3A2.
+`GET /health` is a real, database-backed health check (it actually
+executes a query; it never fakes success). Phase 3A2.4 adds the first
+domain/business endpoint, `GET /schools/{school_id}/years/{year_id}/config`
+(read-only scheduling configuration) -- see `api/config_routes.py`.
 """
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from school_timetable.api.config_routes import router as config_router
 from school_timetable.persistence.db import get_session
 
 app = FastAPI(title="School Timetable API")
+app.include_router(config_router)
 
 
 class HealthResponse(BaseModel):

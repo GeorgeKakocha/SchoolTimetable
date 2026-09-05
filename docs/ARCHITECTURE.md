@@ -28,10 +28,15 @@ Protocol, `errors.py`'s `SchedulingProblemNotFoundError`) and its
 concrete adapter, `persistence/problem_repository.py`'s
 `SqlAlchemySchedulingProblemRepository` -- proven end-to-end against
 real PostgreSQL via a TEST-ONLY aggregate writer
-(`tests_web/support/problem_writer.py`). Still no domain -> persistence
-write path in production code and no config-read API -- see
-`docs/PROJECT_STATE.md` and `DECISIONS.md` #26-29 for exactly what
-Phase 3A2.1/3A2.2/3A2.3 do and do not include.
+(`tests_web/support/problem_writer.py`). Phase 3A2.4 adds the first
+domain/business endpoint, `GET /schools/{school_id}/years/{year_id}/config`
+(read-only): `api/schemas.py`'s hand-designed Pydantic response,
+`api/serializer.py`'s pure domain -> API mapper, and `api/dependencies.py`
+as the composition root wiring the Phase 3A2.3 repository into the
+route. Still no domain -> persistence write path in production code and
+no solver/schedule-generation endpoint -- see `docs/PROJECT_STATE.md`
+and `DECISIONS.md` #26-30 for exactly what Phase
+3A2.1/3A2.2/3A2.3/3A2.4 do and do not include.
 
 ```
 src/school_timetable/
@@ -43,7 +48,7 @@ src/school_timetable/
 ├── config.py         Web/persistence settings (Phase 3). Never imported by the four packages above.
 ├── application/       Repository ports + errors (Phase 3). Imports domain/ only.
 ├── persistence/       SQLAlchemy engine/session + Alembic + ORM models + mappers + repository adapter (Phase 3).
-└── api/                FastAPI app shell (Phase 3). No domain endpoints yet.
+└── api/                FastAPI app: health check + read-only config endpoint + composition root (Phase 3).
 ```
 
 ## Module boundaries
@@ -103,12 +108,22 @@ src/school_timetable/
   `relationship()`/lazy-loading), reimplementing no
   preflight/solver/verifier reasoning -- see `DECISIONS.md` #29. Never
   imports `scheduling/`, `api/`, or `fixtures/`.
-- **api/** (Phase 3): the FastAPI app (`main.py`). No domain/business
-  endpoints yet -- just `GET /health`, which genuinely executes `SELECT 1`
-  against the database (returning 503 with a generic, non-sensitive body
-  if unreachable -- see `DECISIONS.md` #25 -- never a faked 200).
+- **api/** (Phase 3): the FastAPI app (`main.py`). `GET /health`
+  genuinely executes `SELECT 1` against the database (returning 503
+  with a generic, non-sensitive body if unreachable -- see
+  `DECISIONS.md` #25 -- never a faked 200). (Phase 3A2.4) the first
+  domain/business endpoint, `GET /schools/{school_id}/years/{year_id}/config`
+  (`config_routes.py`) -- read-only, natural-ID path parameters, typed
+  against `application.ports.SchedulingProblemRepository` (never the
+  concrete adapter). `schemas.py`/`serializer.py` hand-design the public
+  JSON contract explicitly (never `dataclasses.asdict()` or ORM-row
+  serialization) and import no SQLAlchemy/`persistence.models`/
+  `fixtures/`. `dependencies.py` is the one composition root importing
+  both `application/` and `persistence/` together, wrapping the
+  existing per-request `persistence.db.get_session` to construct the
+  concrete repository adapter -- see `DECISIONS.md` #30.
 
-## Locked direction: ports and adapters (implemented from Phase 3A2.3)
+## Locked direction: ports and adapters (implemented from Phase 3A2.3, wired to `api/` in Phase 3A2.4)
 
 The dependency direction, now with its first real instance
 (`SchedulingProblemRepository`, Phase 3A2.3) implemented:
@@ -134,11 +149,16 @@ implements those interfaces against a real `Session`, converting to/from
 explicitly, never the same classes (`domain/` staying frozen/immutable
 is load-bearing for Phase 2C's editing/re-optimization safety
 guarantees, which ORM change-tracking would fight). The composition root
-wiring a concrete adapter into a service (e.g. via FastAPI `Depends`)
-lives in `api/` and is the only place that imports both `application/`
-and `persistence/` together -- not yet implemented (Phase 3A2.4).
-Repository Protocols are created one at a time, alongside the first
-concrete use case that needs each one, never as speculative scaffolding
+wiring a concrete adapter into a route (via FastAPI `Depends`) lives in
+`api/dependencies.py` and is the only place that imports both
+`application/` and `persistence/` together (Phase 3A2.4). No
+application *service* layer exists yet -- the current read-only route
+calls the repository port directly, since a pass-through use case does
+not yet justify one (Decision #12); a real service is added only when a
+genuine use case needs one, e.g. combining `scheduling/` with a
+repository. Repository Protocols are created one at a time, alongside
+the first concrete use case that needs each one, never as speculative
+scaffolding
 -- see `DECISIONS.md` #12, #29.
 
 ## Why isolate the solver like this
@@ -152,10 +172,10 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A2.3: no domain -> persistence write path in production
-code, no business/domain REST endpoints (including no config-read API
-yet), no API composition-root wiring of the new repository, no
-frontend, no auth. `docker-compose.yml` provides a local development
-PostgreSQL only -- no application containerization/deployment setup
-exists yet. These arrive in later Phase 3 slices per `DECISIONS.md` and
-`PROJECT_STATE.md`.
+As of Phase 3A2.4: no domain -> persistence write path in production
+code, no solver/schedule-generation endpoint
+(`POST /generate`/`POST /solve`/`GET /schedule`), no application service
+layer, no frontend, no auth. `docker-compose.yml` provides a local
+development PostgreSQL only -- no application
+containerization/deployment setup exists yet. These arrive in later
+Phase 3 slices per `DECISIONS.md` and `PROJECT_STATE.md`.

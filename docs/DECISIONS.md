@@ -415,3 +415,68 @@ this implementation followed them as given.
     `run_preflight` with no errors, `solve()`s to the same
     `SolverStatus`, and passes the independent `verify()` -- proven
     against real PostgreSQL in `tests_web/test_problem_repository.py`.
+
+30. **Phase 3A2.4's `GET /schools/{school_id}/years/{year_id}/config` is
+    the first domain/business endpoint, and it is deliberately
+    read-only and configuration-only.** No `POST /generate`,
+    `POST /solve`, or `GET /schedule` exists or is implied by it; no
+    solver/preflight is invoked from the route (that proof already
+    exists in Phase 3A2.3's repository round-trip test). Path
+    parameters (`school_id`, `year_id`) are natural/domain IDs -- the
+    same `School.id`/`AcademicYear.id` strings `SchedulingProblemRepository`
+    already takes -- never a persistence surrogate ID.
+
+    The public JSON contract (`api/schemas.py`'s `SchedulingConfigResponse`
+    and its nested models) is **hand-designed, one Pydantic model per
+    current domain concept**, built by one pure, explicit
+    `api/serializer.py` function
+    (`config_response_from_problem(problem) -> SchedulingConfigResponse`)
+    -- never `dataclasses.asdict()`, never generic reflection, never an
+    ORM row serialized directly. This is deliberate: a future domain
+    field added to `SchedulingProblem` must never silently appear in
+    the public API contract; someone has to decide to expose it, by
+    adding it to both `schemas.py` and `serializer.py`. The serializer
+    itself never re-sorts or re-groups anything -- exact tuple order is
+    inherited verbatim from the domain tuples `SchedulingProblemRepository`
+    already assembled correctly (Decision #29); enums serialize as
+    their existing string values (`AvailabilityStatus`, `ActivityKind`,
+    `BlockPolicyMode`, `PreferenceWeight` -- unchanged from `domain/`,
+    never a new API-only enum). No ORM `ordinal` value is ever exposed
+    -- it is persistence infrastructure, not a public concept.
+
+    `api/dependencies.py` is the composition root: the one place
+    importing both `application/` and `persistence/` together (per the
+    locked ports-and-adapters direction). It wraps the existing,
+    already-correct `persistence.db.get_session` FastAPI dependency
+    (one `Session` per request, always closed after) to construct
+    `SqlAlchemySchedulingProblemRepository` per request -- no global
+    long-lived `Session`, no new session-lifecycle code. The route
+    itself (`api/config_routes.py`) is typed against
+    `application.ports.SchedulingProblemRepository` (the Protocol), not
+    the concrete adapter class, so a future alternative adapter could
+    be substituted without touching the route. No application service
+    layer was introduced for this one pass-through use case (Decision
+    #12) -- the route calls the repository port directly; a real
+    service will be added only when a genuine use case needs one
+    (e.g. combining `scheduling/` with persistence).
+
+    `application.errors.SchedulingProblemNotFoundError` maps to a
+    generic HTTP 404 (`{"detail": "Scheduling configuration not
+    found"}`) identically whether the school or the academic year is
+    the part that doesn't resolve (matching the not-found contract
+    already locked in Decision #29) -- no other exception is caught in
+    the route, so an unexpected DB/programming failure still surfaces
+    as a 500, never silently reinterpreted as "not found."
+
+    Proven against real PostgreSQL through a real FastAPI `TestClient`:
+    the existing TEST-ONLY writer seeds `build_valid_fixture()`, the
+    `get_session` dependency is overridden (the same
+    `app.dependency_overrides` pattern `test_health.py` already
+    established) so the route's repository sees the identical seeding
+    Session/transaction rather than an independently-committed one, and
+    the full JSON response is asserted equal to the same serializer's
+    output built directly from the original in-memory
+    `SchedulingProblem` -- a complete-contract proof, not scattered
+    field checks. A recursive test walks the entire response
+    confirming no `academic_year_id`/`ordinal` key and no non-string
+    `id`/`*_id` value appears anywhere.
