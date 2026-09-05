@@ -2,9 +2,15 @@
 
 ## Current milestone
 
-Phase 2C: manual schedule editing, locking, and re-optimization. No
-FastAPI, database, UI, or persistence introduced; no existing HARD/SOFT
-semantics changed. Still an isolated Python CP-SAT solver/domain codebase.
+Phase 3A1: backend/database foundation. Adds `config.py`, `persistence/`
+(SQLAlchemy engine/session + Alembic, one empty baseline revision), and
+`api/` (FastAPI app shell + a real, database-backed `GET /health`) --
+infrastructure only. No domain ORM tables, no `application/` layer, no
+repository ports/adapters, no business endpoints, no React, and no
+change to any existing domain/scheduling/validation/verification
+semantics (Phase 2C's 104 tests, 3 demo scripts, and school-scale
+benchmark all still pass unmodified). See `docs/ARCHITECTURE.md` for the
+locked ports-and-adapters direction Phase 3A2 will build against.
 
 ## Implemented capabilities
 
@@ -83,6 +89,30 @@ semantics changed. Still an isolated Python CP-SAT solver/domain codebase.
 - A narrated demonstration, `python -m school_timetable.run_editing_demo`,
   walking through generate -> validate a move -> apply -> lock ->
   re-optimize -> verify.
+- **Backend/database foundation** (Phase 3A1; `config.py`, `persistence/`,
+  `api/`): `Settings`/`get_settings()` reading `DATABASE_URL` from the
+  environment/`.env` (PostgreSQL only, never SQLite -- see
+  `DECISIONS.md`); a SQLAlchemy `Engine`/`sessionmaker`/`get_session()`
+  FastAPI dependency (`persistence/db.py`) and an empty `Base` for future
+  ORM models (`persistence/base.py`); Alembic wired to the same
+  `DATABASE_URL` with one empty baseline revision applied via
+  `alembic upgrade head`; a FastAPI app (`api/main.py`) with
+  `GET /health` that genuinely executes `SELECT 1` (200 `{"status":"ok",
+  "database":"ok"}` when reachable, 503 `{"status":"error",
+  "database":"unreachable"}` -- deliberately generic, no connection
+  string/host/exception detail -- when not; never a faked success).
+  `docker-compose.yml` provides a local development PostgreSQL 16 with a
+  second database for the test suite, bound to `127.0.0.1` only by
+  default; the app's `Settings` has no hard-coded credential default
+  (required from the environment/`.env`), while `.env.example` and
+  `docker-compose.yml` document environment-overridable local-development
+  placeholder values, per the credential policy in `DECISIONS.md` #24.
+  Live-validated end-to-end this
+  session (`docker compose up -d db`, real PostgreSQL 16): both
+  databases created, `alembic upgrade head`/`alembic current` against
+  the live instance, real 200 and 503 responses (503 body confirmed free
+  of the probe's credentials/host), and all 7 `tests_web` tests passing
+  with zero skips.
 
 ## Test baseline
 
@@ -109,6 +139,16 @@ newly conflicts with it via `FixedPlacement`, resource capacity,
 placement-feasibility-vs-structure distinction as the teacher-
 availability scenario.
 
+Separately, `tests_web/` (Phase 3A1; needs the `web` extras, and a
+PostgreSQL for the database-backed tests) covers configuration loading
+(3 tests, no database needed) and the engine/session/health-check
+plumbing (4 tests requiring a live database, which skip cleanly rather
+than fail if one isn't reachable). Not part of `pytest -q`'s default
+collection -- run explicitly with `pytest -q tests_web`. This suite does
+not count toward, or affect, the 104/99/5 figures above. Live-validated
+this session against a real `docker compose up -d db` PostgreSQL 16:
+**7 collected, 7 passed, 0 skipped.**
+
 ## Known limitations
 
 - `PREFERRED` intentionally still supports only the Phase-1 shape (at
@@ -126,7 +166,21 @@ availability scenario.
   block length as the target occupant); anything else is rejected with a
   specific code rather than attempted via a more complex cascade -- see
   `docs/SCHEDULE_EDITING.md`.
-- No persistence, API, or UI -- by design, per `DECISIONS.md`.
+- No domain persistence, no application services, no business API
+  endpoints, no UI -- Phase 3A1 is infrastructure only; see
+  `docs/ARCHITECTURE.md` for what Phase 3A2 adds next.
+- Live PostgreSQL validation is now complete (previously the open item
+  here): `docker compose up -d db` against real PostgreSQL 16, both the
+  `school_timetable` and `school_timetable_test` databases confirmed
+  present, `alembic upgrade head`/`alembic current` run against the live
+  development database (now at `e2cbe4786a14`, the empty baseline head),
+  a real 200 `GET /health` against it, a real 503 against a genuinely
+  unreachable database with the response body confirmed free of the
+  probe's credentials/host, and `pytest -q tests_web` at 7/7 passed with
+  zero skips. Full regression (`pytest -q -m ""` on `tests/`) still
+  104/104 passed, and `run_poc.py`/`run_scale_benchmark.py`/
+  `run_editing_demo.py` all still run clean -- none of this depends on
+  or touches the web/persistence layer.
 
 ## Development note (for future maintainers)
 
@@ -143,6 +197,10 @@ why verification is a hard requirement, not a formality.
 
 ## Next step
 
-Await review of this Phase 2C slice. Candidate next step: introducing the
-FastAPI/SQLAlchemy/PostgreSQL layer around this existing domain model,
-solver, and editing/re-optimization application layer -- not started.
+Await final pre-commit review of this Phase 3A1 slice (live-PostgreSQL
+validation is now complete -- see "Known limitations" above). Candidate
+next step, Phase 3A2: the first domain ORM models
+(school/calendar/teachers/requirements), the first repository
+`Protocol`s in `application/` alongside the first real use case that
+needs them, and a `problem_loader` mapping persisted rows to a
+`SchedulingProblem` -- not started.

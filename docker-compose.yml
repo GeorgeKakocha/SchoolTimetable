@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-school_timetable}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-school_timetable}
+      POSTGRES_DB: ${POSTGRES_DB:-school_timetable}
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - school_timetable_pgdata:/var/lib/postgresql/data
+      - ./docker/init-test-db.sh:/docker-entrypoint-initdb.d/init-test-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-school_timetable} -d ${POSTGRES_DB:-school_timetable}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  school_timetable_pgdata:

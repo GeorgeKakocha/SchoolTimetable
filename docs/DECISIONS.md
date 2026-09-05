@@ -145,3 +145,83 @@ this implementation followed them as given.
     HARD rule is encoded. The trade-off (reaching across a module's
     "private" naming convention) was judged lower-risk than duplicating
     ~150 lines of constraint-building logic that must stay in lockstep.
+
+20. **Phase 3: ports-and-adapters, locked in before any repository code
+    exists.** The dependency direction is `api -> application ->
+    repository ports (interfaces application/ defines) <- persistence
+    (adapters implementing them)`; `application` depends only on those
+    interfaces plus `domain`/`scheduling`, never on `persistence` or
+    `sqlalchemy` directly, even transitively. This makes "persistence
+    must not become the domain" a structural property (application
+    literally cannot import an ORM model) rather than a convention to
+    remember. Concrete repository `Protocol`s are deliberately **not**
+    created in Phase 3A1 as empty scaffolding -- with no application use
+    case yet, their real required methods aren't known, and guessing them
+    now would be premature abstraction (Decision #12). They arrive in
+    Phase 3A2 alongside the first real persistence use case.
+
+21. **SQLAlchemy ORM models are separate classes from `domain/`'s
+    dataclasses, mapped explicitly -- never the same classes.** Every
+    `domain/` type is a frozen dataclass, and that immutability is
+    load-bearing: Phase 2C's stale-`MovePlan` safety, `_plans_equivalent`,
+    and `Schedule.with_entries`/`with_locked` all depend on domain objects
+    never being mutated in place, which fights directly against a
+    SQLAlchemy ORM instance's mutable, session-tracked identity. Making
+    `TeachingRequirement` etc. also an ORM model would either break that
+    immutability or force an awkward half-frozen shape, and would pull
+    `sqlalchemy` straight into `domain/`, which must stay dependency-free
+    (`run_poc.py`/`run_scale_benchmark.py`/`run_editing_demo.py`, and the
+    entire `tests/` suite, must keep working with zero web/DB
+    dependencies installed -- verified as part of every Phase 3 slice's
+    validation, not just assumed).
+
+22. **PostgreSQL is the only supported database, in every environment,
+    including local development and the automated web/persistence test
+    suite.** No SQLite stand-in, ever -- Postgres-specific behavior
+    (constraint semantics, connection/session behavior) must be exercised
+    by the same engine used in production from day one. Phase 3A1 ships a
+    single `docker-compose.yml` Postgres 16 service with two databases
+    (the app's own, plus a separate one for `tests_web/`, created by
+    `docker/init-test-db.sh`) rather than two different engines.
+
+23. **The web/persistence test suite (`tests_web/`) is a separate suite
+    from `tests/`, not collected by a plain `pytest -q`.** `tests/`
+    (the pure domain/solver suite) must stay exactly as fast and
+    dependency-free as it already is -- it needs neither the `web` extras
+    nor a database. `tests_web/` needs both, and skips (never fails)
+    tests that require a live PostgreSQL when one isn't reachable, so it
+    behaves correctly whether or not `docker compose up -d db` has been
+    run.
+
+24. **Credential policy.** Python/application configuration must never
+    hard-code a `DATABASE_URL`, username, password, or other credential
+    default -- `Settings.database_url` (`config.py`) has no default, and
+    every environment, including local development, must set
+    `DATABASE_URL` explicitly via `.env` (gitignored) or the environment.
+    `.env.example` *may* (and does) contain clearly documented
+    local-development placeholder credentials, since it is not itself
+    read as configuration (it is a template a developer copies to
+    `.env`) and is never committed with real values. `docker-compose.yml`
+    *may* similarly provide clearly documented local-development fallback
+    values for its Postgres service, provided they are
+    environment-overridable (`${POSTGRES_USER:-school_timetable}` etc. --
+    a real deployment can override every one without editing the compose
+    file) and never presented as production credentials. The container's
+    published port is loopback-only by default
+    (`${POSTGRES_BIND_HOST:-127.0.0.1}`), so even the placeholder
+    credentials are not reachable off the host by default. Real
+    production credentials are never committed anywhere in this
+    repository.
+
+25. **`GET /health`'s 503 body is generic, never diagnostic.** On a
+    database connectivity failure the response is exactly
+    `{"status": "error", "database": "unreachable"}` -- the underlying
+    `SQLAlchemyError` (which can embed the connection string, host, or
+    driver-level detail) is caught and discarded, never interpolated
+    into the response. `/health` is deliberately unauthenticated (that's
+    the point of a health check), so its failure body must never leak
+    anything an attacker could use; real diagnostics belong in server
+    logs, not the HTTP response. Verified in this session with a live
+    PostgreSQL: 200 `{"status": "ok", "database": "ok"}` when reachable,
+    and 503 with the generic body (asserted free of the probe
+    credentials/host used to trigger it) when not.
