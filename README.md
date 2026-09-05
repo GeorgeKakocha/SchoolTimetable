@@ -102,8 +102,10 @@ docker-compose's defaults):
 cp .env.example .env
 ```
 
-Apply migrations (Phase 3A1 ships one empty baseline revision -- no
-domain tables exist yet):
+Apply migrations (Phase 3A2.1 adds the persisted scheduling-configuration
+schema -- 17 tables covering the complete `SchedulingProblem` input
+surface, see `docs/DECISIONS.md` #26; no repository/mapper/API reads or
+writes it yet):
 
 ```bash
 alembic upgrade head
@@ -148,8 +150,8 @@ src/school_timetable/
 ├── fixtures/         Deterministic synthetic fixtures
 │   └── school_scale/  Realistic school-scale fixture generator (Phase 2B)
 ├── config.py         Web/persistence-layer settings (DATABASE_URL, etc.) -- Phase 3
-├── persistence/       SQLAlchemy engine/session + Alembic migrations -- Phase 3
-│   └── migrations/     Alembic environment + revisions (one empty baseline so far)
+├── persistence/       SQLAlchemy engine/session + ORM models + Alembic migrations -- Phase 3
+│   └── migrations/     Alembic environment + revisions (empty baseline, then Phase 3A2.1's schema)
 ├── api/                FastAPI app shell + GET /health -- Phase 3
 ├── run_poc.py        Manual end-to-end demo (small Phase-1 fixture)
 ├── run_scale_benchmark.py  School-scale benchmark runner (Phase 2B)

@@ -14,12 +14,16 @@
 The solver core (`domain/`, `scheduling/`, `validation/`, `verification/`,
 `fixtures/`) is unchanged since Phase 2C and remains fully independent:
 no web framework, no database, no UI dependency, importable and testable
-on its own. Phase 3A1 adds the first slice of the web/persistence
-foundation *alongside* it -- config, a database engine/session, Alembic
-migration wiring, and a FastAPI app shell with a real (not faked)
-database-backed health check. No domain ORM tables, no application
-services, and no repository ports exist yet; see `docs/PROJECT_STATE.md`
-for exactly what Phase 3A1 does and does not include.
+on its own. Phase 3A1 added the web/persistence foundation *alongside*
+it (config, a database engine/session, Alembic migration wiring, a
+FastAPI app shell with a real database-backed health check). Phase 3A2.1
+adds the first real persisted schema on top of that foundation: 17
+SQLAlchemy ORM tables (`persistence/models.py`) covering the complete
+current `SchedulingProblem` input surface, one Alembic migration
+(`8cdd513e16da`). No domain <-> persistence mapper, no `application/`
+repository Protocol, and no config-read API exist yet -- see
+`docs/PROJECT_STATE.md` and `DECISIONS.md` #26-27 for exactly what
+Phase 3A2.1 does and does not include.
 
 ```
 src/school_timetable/
@@ -29,7 +33,7 @@ src/school_timetable/
 ├── verification/     Independent post-hoc verifier (does not trust CP-SAT).
 ├── fixtures/         Deterministic synthetic test fixtures.
 ├── config.py         Web/persistence settings (Phase 3). Never imported by the four packages above.
-├── persistence/       SQLAlchemy engine/session + Alembic (Phase 3). No ORM models yet.
+├── persistence/       SQLAlchemy engine/session + Alembic + ORM models (Phase 3). No mappers/repository yet.
 └── api/                FastAPI app shell (Phase 3). No domain endpoints yet.
 ```
 
@@ -59,11 +63,19 @@ src/school_timetable/
   web/persistence-only setting) is read from the environment. Not
   imported by `domain/`, `scheduling/`, `validation/`, or `verification/`.
 - **persistence/** (Phase 3): SQLAlchemy engine/session construction
-  (`db.py`) and the declarative `Base` (`base.py`) migrations run
-  against. No ORM models yet (Phase 3A1) -- `Base.metadata` is real but
-  empty, so `alembic revision --autogenerate` has something correct to
-  diff against from the first model onward. Never imports `scheduling/`
-  or `api/`.
+  (`db.py`), the declarative `Base` (`base.py`), and (Phase 3A2.1) the
+  ORM models themselves (`models.py`) -- 17 tables persisting the
+  complete current `SchedulingProblem` input surface as one
+  `academic_year_id`-scoped configuration snapshot, with same-year
+  composite-FK isolation, typed (never JSONB) policy columns, and
+  exact tuple-order preservation; see `DECISIONS.md` #26 for the full
+  locked schema rules. `persistence/__init__.py` imports `models` so
+  that importing `persistence.base.Base` (as `migrations/env.py` does)
+  always sees every table -- this is what keeps
+  `alembic revision --autogenerate` picking up new models automatically
+  with no further `env.py` changes. No domain <-> persistence mapper
+  and no repository adapter exist yet (Phase 3A2.2+ -- see
+  `DECISIONS.md` #27). Never imports `scheduling/` or `api/`.
 - **api/** (Phase 3): the FastAPI app (`main.py`). No domain/business
   endpoints yet -- just `GET /health`, which genuinely executes `SELECT 1`
   against the database (returning 503 with a generic, non-sensitive body
@@ -109,9 +121,9 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A1: no domain ORM tables, no `application/` layer, no
-repository ports/adapters, no business/domain REST endpoints, no
-frontend, no auth. `docker-compose.yml` provides a local development
-PostgreSQL only -- no application containerization/deployment setup
-exists yet. These arrive in later Phase 3 slices per `DECISIONS.md` and
-`PROJECT_STATE.md`.
+As of Phase 3A2.1: no `application/` layer, no repository ports/adapters,
+no domain <-> persistence mapper, no business/domain REST endpoints
+(including no config-read API yet), no frontend, no auth.
+`docker-compose.yml` provides a local development PostgreSQL only -- no
+application containerization/deployment setup exists yet. These arrive
+in later Phase 3 slices per `DECISIONS.md` and `PROJECT_STATE.md`.

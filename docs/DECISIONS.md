@@ -225,3 +225,104 @@ this implementation followed them as given.
     PostgreSQL: 200 `{"status": "ok", "database": "ok"}` when reachable,
     and 503 with the generic body (asserted free of the probe
     credentials/host used to trigger it) when not.
+
+26. **Phase 3A2.1 locked persistence schema for the complete
+    `SchedulingProblem` input surface** (`persistence/models.py`, one
+    Alembic revision `8cdd513e16da` on top of the empty baseline
+    `e2cbe4786a14`). No repository/mappers/API exist yet -- see #27.
+
+    - **Scope**: one `academic_year_id` is the entire persisted
+      configuration snapshot (School, AcademicYear, Day, Period,
+      ClassSection, ParticipantGroup, Teacher, TeacherAvailability,
+      Activity, Resource, TeachingRequirement, TimePreference,
+      ReservedBlock, FixedPlacement, and their child/join tables -- 17
+      tables total). No finer-grained mid-year configuration versioning
+      exists or is planned for this phase; a school-wide
+      personnel/resource directory reused *across* academic years is
+      explicitly a separate, not-yet-decided product concern, not a
+      silent change to this aggregate's scope.
+    - **Identity**: every surrogate PK is `BIGINT GENERATED ALWAYS AS
+      IDENTITY`, persistence-only, never exposed outside
+      `persistence/`. Every domain string ID is stored verbatim in a
+      `natural_id` column (`UNIQUE(natural_id)` for `school`;
+      `UNIQUE(school_id, natural_id)` for `academic_year`;
+      `UNIQUE(academic_year_id, natural_id)` for everything scoped
+      under one academic year).
+    - **Same-academic-year isolation, enforced by PostgreSQL, not just
+      Python**: every cross-entity reference within one academic year
+      is a composite FK, `FOREIGN KEY (academic_year_id, x_id)
+      REFERENCES x (academic_year_id, id)`, requiring the target table
+      to also carry `UNIQUE(academic_year_id, id)`. A row in one
+      academic year can never reference a sibling entity belonging to
+      a different academic year -- proven by
+      `test_cross_academic_year_references_are_rejected` in
+      `tests_web/test_persistence_schema.py` against a real
+      PostgreSQL, not merely asserted.
+    - **No JSONB anywhere.** `LessonBlockPolicy.mode` /
+      `DistributionPolicy`'s two fields / `ResourceRequirement.resource_id`
+      are typed scalar columns directly on `teaching_requirement`;
+      `LessonBlockPolicy.block_sizes` and
+      `TimePreference.preferred_periods` are `SMALLINT[]` (arrays
+      preserve order natively, so need no extra ordinal column);
+      `TimePreference` (genuine 0..N cardinality per requirement) is a
+      normalized child table. `split_group_id` stays a bare
+      synchronization label with no FK -- no `SplitGroup` entity exists,
+      matching the domain's own choice.
+    - **Enums are `TEXT + CHECK`**, never native PostgreSQL `ENUM`
+      types, for every one of the four enum fields
+      (`TeacherAvailability.status`, `Activity.kind`,
+      `TeachingRequirement.block_mode`, `TimePreference.weight`).
+    - **Exact tuple order is preserved on every persisted domain
+      tuple.** `Day.idx`/`Period.idx` are the domain's own ordering
+      fields and double as the order-preserving column for
+      `SchedulingProblem.days`/`.periods`. Every other top-level
+      collection that has no intrinsic domain ordering
+      (`class_section`, `participant_group`, `teacher`,
+      `teacher_availability`, `activity`, `resource`,
+      `teaching_requirement`, `reserved_block`, `fixed_placement`)
+      carries an explicit `ordinal SMALLINT NOT NULL` +
+      `UNIQUE(academic_year_id, ordinal)`. Nested tuple collections
+      (`ParticipantGroup.class_sections`, `TeachingRequirement.
+      time_preferences`, `ReservedBlock.class_sections`,
+      `ReservedBlock.slots`) use the same `ordinal` pattern scoped to
+      their parent row (`PRIMARY KEY (parent_id, ordinal)`), plus a
+      separate structural-duplicate-prevention `UNIQUE` constraint
+      (e.g. `UNIQUE(participant_group_id, class_section_id)`) so the
+      same child can never appear twice in one parent's tuple.
+    - **Delete semantics are aggregate-oriented, not blanket CASCADE**:
+      (A) every table's direct `academic_year_id` FK is `ON DELETE
+      CASCADE` (deleting a whole configuration snapshot removes
+      everything under it); (B) true owned-child edges are `CASCADE`
+      (`participant_group -> participant_group_class_section`,
+      `teacher -> teacher_availability`, `teaching_requirement ->
+      time_preference`/`fixed_placement`, `reserved_block ->
+      reserved_block_class_section`/`reserved_block_slot`); (C) every
+      other cross-entity reference, including both optional ones
+      (`teaching_requirement.resource_id`, `reserved_block.teacher_id`),
+      is `ON DELETE RESTRICT` -- deleting a referenced teacher,
+      activity, participant group, resource, class section, day, or
+      period must never silently cascade away or null out an unrelated
+      curriculum object; that stays an explicit future application
+      operation, not implicit database mutation. Verified against a
+      real PostgreSQL in `tests_web/test_persistence_schema.py`
+      (owned-child CASCADE, cross-entity RESTRICT including the two
+      optional edges never silently nulling).
+    - **Migration discipline**: the ORM models and the Alembic
+      migration were produced in the same slice
+      (`alembic revision --autogenerate` against `Base.metadata`, then
+      hand-reviewed) so they cannot drift apart from the start;
+      confirmed via a second `--autogenerate` run against the
+      migrated-to-head database producing an empty diff (no operations),
+      and via upgrade/downgrade/upgrade round-tripped against the real
+      PostgreSQL *test* database (never the development one, to keep
+      destructive reversibility testing off the DB a developer actually
+      uses locally).
+
+27. **Phase 3A2.1 is schema-only.** No `application/` repository
+    Protocol, no domain <-> persistence mapper, no `GET /config` API,
+    and no seed/production data-loading path exist yet -- all deferred
+    to Phase 3A2.2+, per the locked repository-port design (a single
+    `SchedulingProblemRepository.load_by_school_and_year(...)`, no
+    generic CRUD). `fixtures/` remains imported only by `tests/`,
+    `tests_web/`, and the existing demo/benchmark scripts -- never by
+    `persistence/`, `application/`, or `api/`.

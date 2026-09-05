@@ -2,15 +2,24 @@
 
 ## Current milestone
 
-Phase 3A1: backend/database foundation. Adds `config.py`, `persistence/`
-(SQLAlchemy engine/session + Alembic, one empty baseline revision), and
-`api/` (FastAPI app shell + a real, database-backed `GET /health`) --
-infrastructure only. No domain ORM tables, no `application/` layer, no
-repository ports/adapters, no business endpoints, no React, and no
+Phase 3A2.1: persisted scheduling-configuration schema. Adds
+`persistence/models.py` -- 17 SQLAlchemy ORM tables persisting the
+complete current `SchedulingProblem` input surface (School, AcademicYear,
+Day, Period, ClassSection, ParticipantGroup [+ its class-section
+membership join table], Teacher, TeacherAvailability, Activity, Resource,
+TeachingRequirement, TimePreference, ReservedBlock [+ its class-section
+and slot join tables], FixedPlacement), one Alembic migration
+(`8cdd513e16da`, on top of Phase 3A1's empty baseline
+`e2cbe4786a14`). Schema only: no domain <-> persistence mapper, no
+`application/` repository Protocol, no config-read API, no
+`Schedule`/`ScheduleVersion`/`ScheduleEntry` persistence, no React. No
 change to any existing domain/scheduling/validation/verification
 semantics (Phase 2C's 104 tests, 3 demo scripts, and school-scale
-benchmark all still pass unmodified). See `docs/ARCHITECTURE.md` for the
-locked ports-and-adapters direction Phase 3A2 will build against.
+benchmark all still pass unmodified). See `DECISIONS.md` #26-27 for the
+full locked schema (identity, same-year composite-FK isolation, typed
+policy columns, ordinal-based tuple-order preservation,
+CASCADE-vs-RESTRICT delete semantics) and `docs/ARCHITECTURE.md` for the
+locked ports-and-adapters direction later 3A2 slices build against.
 
 ## Implemented capabilities
 
@@ -113,6 +122,43 @@ locked ports-and-adapters direction Phase 3A2 will build against.
   the live instance, real 200 and 503 responses (503 body confirmed free
   of the probe's credentials/host), and all 7 `tests_web` tests passing
   with zero skips.
+- **Persisted scheduling-configuration schema** (Phase 3A2.1;
+  `persistence/models.py`, Alembic revision `8cdd513e16da`): 17
+  SQLAlchemy ORM tables persisting the complete current
+  `SchedulingProblem` input surface as one `academic_year_id`-scoped
+  snapshot -- see `DECISIONS.md` #26 for the full locked rules (BIGINT
+  identity surrogate PKs never exposed outside `persistence/`;
+  `natural_id` columns carrying every domain string ID verbatim;
+  same-academic-year composite foreign keys enforced by PostgreSQL
+  itself, not just Python, e.g. `FOREIGN KEY (academic_year_id,
+  teacher_id) REFERENCES teacher (academic_year_id, id)`; no JSONB --
+  `block_sizes`/`preferred_period_indexes` are `SMALLINT[]`,
+  `TimePreference` is a normalized child table, every enum is
+  `TEXT + CHECK`; exact tuple order preserved via `Day.idx`/`Period.idx`
+  or an explicit `ordinal` column with `UNIQUE(academic_year_id,
+  ordinal)`; aggregate-oriented delete semantics -- whole-snapshot and
+  true-owned-child edges `CASCADE`, every other cross-entity reference
+  (including the two optional ones) `RESTRICT`, never `SET NULL`).
+  ORM models and the Alembic migration were produced together in one
+  slice (autogenerate against `Base.metadata`, hand-reviewed); a
+  second autogenerate run against the migrated database produced an
+  empty diff (no drift). Migration reversibility (baseline -> upgrade
+  -> downgrade -1 -> upgrade) proven against the real PostgreSQL *test*
+  database, then applied once (no destructive testing) to the
+  development database. 9 new focused `tests_web` tests prove, against
+  real PostgreSQL: valid same-year inserts succeed; cross-academic-year
+  references are rejected at the database level; `natural_id`
+  uniqueness is per-academic-year (same ID across two years is
+  allowed); `Day.idx`/`Period.idx` duplicates are rejected;
+  invalid enum values and non-positive `weekly_periods`/`capacity` are
+  rejected; an owned-child `CASCADE` delete actually removes the child
+  row; a cross-entity `RESTRICT` blocks a destructive sibling delete
+  for both a required and an optional reference (proving no silent
+  `SET NULL`); and ordered-child-table ordinal/membership uniqueness is
+  enforced. No domain <-> persistence mapper, no `application/`
+  repository Protocol, and no config-read API exist yet (Phase 3A2.2+
+  -- see `DECISIONS.md` #27); `fixtures/` remains imported only by
+  `tests/`, `tests_web/`, and the existing demo/benchmark scripts.
 
 ## Test baseline
 
@@ -139,15 +185,19 @@ newly conflicts with it via `FixedPlacement`, resource capacity,
 placement-feasibility-vs-structure distinction as the teacher-
 availability scenario.
 
-Separately, `tests_web/` (Phase 3A1; needs the `web` extras, and a
+Separately, `tests_web/` (Phase 3A1+; needs the `web` extras, and a
 PostgreSQL for the database-backed tests) covers configuration loading
-(3 tests, no database needed) and the engine/session/health-check
-plumbing (4 tests requiring a live database, which skip cleanly rather
-than fail if one isn't reachable). Not part of `pytest -q`'s default
+(3 tests, no database needed), the engine/session/health-check plumbing
+(4 tests requiring a live database, which skip cleanly rather than fail
+if one isn't reachable), and (Phase 3A2.1) 9 focused persistence-schema
+constraint tests exercising the locked schema directly against real
+PostgreSQL (same-year valid inserts, cross-academic-year rejection,
+natural-ID/ordinal uniqueness, enum/positive-value CHECK constraints,
+CASCADE/RESTRICT delete semantics). Not part of `pytest -q`'s default
 collection -- run explicitly with `pytest -q tests_web`. This suite does
 not count toward, or affect, the 104/99/5 figures above. Live-validated
 this session against a real `docker compose up -d db` PostgreSQL 16:
-**7 collected, 7 passed, 0 skipped.**
+**16 collected, 16 passed, 0 skipped.**
 
 ## Known limitations
 
@@ -166,21 +216,23 @@ this session against a real `docker compose up -d db` PostgreSQL 16:
   block length as the target occupant); anything else is rejected with a
   specific code rather than attempted via a more complex cascade -- see
   `docs/SCHEDULE_EDITING.md`.
-- No domain persistence, no application services, no business API
-  endpoints, no UI -- Phase 3A1 is infrastructure only; see
-  `docs/ARCHITECTURE.md` for what Phase 3A2 adds next.
-- Live PostgreSQL validation is now complete (previously the open item
-  here): `docker compose up -d db` against real PostgreSQL 16, both the
+- A persisted schema now exists (Phase 3A2.1) but nothing reads or
+  writes it from application code yet -- no domain <-> persistence
+  mapper, no `application/` repository Protocol, no config-read API, no
+  business API endpoints, no UI. See `docs/ARCHITECTURE.md` and
+  `DECISIONS.md` #27 for exactly what the next 3A2 slices add.
+- Live PostgreSQL validation (Phase 3A1) remains complete:
+  `docker compose up -d db` against real PostgreSQL 16, both the
   `school_timetable` and `school_timetable_test` databases confirmed
-  present, `alembic upgrade head`/`alembic current` run against the live
-  development database (now at `e2cbe4786a14`, the empty baseline head),
-  a real 200 `GET /health` against it, a real 503 against a genuinely
-  unreachable database with the response body confirmed free of the
-  probe's credentials/host, and `pytest -q tests_web` at 7/7 passed with
-  zero skips. Full regression (`pytest -q -m ""` on `tests/`) still
-  104/104 passed, and `run_poc.py`/`run_scale_benchmark.py`/
-  `run_editing_demo.py` all still run clean -- none of this depends on
-  or touches the web/persistence layer.
+  present, a real 200 `GET /health` against it, a real 503 against a
+  genuinely unreachable database with the response body confirmed free
+  of the probe's credentials/host. Full regression (`pytest -q -m ""` on
+  `tests/`) still 104/104 passed, and `run_poc.py`/
+  `run_scale_benchmark.py`/`run_editing_demo.py` all still run clean --
+  none of this depends on or touches the web/persistence layer. Both
+  databases are now migrated to Phase 3A2.1 head (`8cdd513e16da`);
+  migration reversibility was proven against the test database only
+  (never destructively tested against the development one).
 
 ## Development note (for future maintainers)
 
@@ -197,10 +249,14 @@ why verification is a hard requirement, not a formality.
 
 ## Next step
 
-Await final pre-commit review of this Phase 3A1 slice (live-PostgreSQL
-validation is now complete -- see "Known limitations" above). Candidate
-next step, Phase 3A2: the first domain ORM models
-(school/calendar/teachers/requirements), the first repository
-`Protocol`s in `application/` alongside the first real use case that
-needs them, and a `problem_loader` mapping persisted rows to a
-`SchedulingProblem` -- not started.
+Await final pre-commit review of this Phase 3A2.1 slice. Candidate next
+step, Phase 3A2.2: domain <-> persistence mapper functions
+(`persistence/` ORM row -> frozen `domain/` object) plus reusable
+scalar/enum/array conversion helpers -- no domain-to-persistence
+direction yet (that needs a full identity-resolution context, deferred
+to a test-only aggregate writer in 3A2.3, per `DECISIONS.md` #27).
+Then 3A2.3: the `SchedulingProblemRepository` Protocol
+(`load_by_school_and_year` only, no CRUD) and its concrete adapter,
+proven against real PostgreSQL by a full round-trip + re-solve
+integration test. Then 3A2.4: the `GET /schools/{school_id}/years/
+{year_id}/config` read API, exposing only natural IDs.

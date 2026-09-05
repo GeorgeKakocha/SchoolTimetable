@@ -1,0 +1,558 @@
+"""SQLAlchemy ORM models for the Phase 3A2 persisted scheduling-configuration
+schema.
+
+Persists the complete current `SchedulingProblem` input surface (School,
+AcademicYear, Day, Period, ClassSection, ParticipantGroup, Teacher,
+TeacherAvailability, Activity, Resource, TeachingRequirement,
+TimePreference, ReservedBlock, FixedPlacement, and their child/join
+tables) as a snapshot scoped to one `academic_year_id` -- see
+`docs/DECISIONS.md` #26 and `docs/ARCHITECTURE.md` for the locked
+schema/identity/isolation/ordering/delete-semantics rules these models
+implement exactly. `Schedule`/`ScheduleVersion`/`ScheduleEntry` are not
+part of this phase.
+
+Deliberately separate classes from `domain/`'s frozen dataclasses (see
+`persistence/base.py`); no domain <-> persistence mapping exists yet
+(that is Phase 3A2.2). These classes carry no `relationship()`
+navigation on purpose -- nothing in this phase reads the ORM object
+graph, only plain columns/constraints, so adding `relationship()` now
+would be unused surface area.
+
+Identity rule: every table's surrogate `id` (where one exists) is a
+`BIGINT GENERATED ALWAYS AS IDENTITY`, persistence-only, never exposed
+outside `persistence/`. Every domain string ID is stored verbatim in a
+`natural_id` column. Cross-entity references within one academic year
+are enforced by PostgreSQL itself via composite foreign keys of the form
+`FOREIGN KEY (academic_year_id, x_id) REFERENCES x (academic_year_id,
+id)` -- every table that is a valid FK target additionally carries
+`UNIQUE(academic_year_id, id)` to serve as that composite target.
+"""
+from __future__ import annotations
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    ForeignKeyConstraint,
+    Identity,
+    Index,
+    Integer,
+    PrimaryKeyConstraint,
+    SmallInteger,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.orm import Mapped, mapped_column
+
+from school_timetable.persistence.base import Base
+
+
+class School(Base):
+    __tablename__ = "school"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("natural_id", name="uq_school_natural_id"),
+    )
+
+
+class AcademicYear(Base):
+    __tablename__ = "academic_year"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    school_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("school_id", "natural_id", name="uq_academic_year_school_natural_id"),
+        ForeignKeyConstraint(
+            ["school_id"], ["school.id"], ondelete="CASCADE", name="fk_academic_year_school"
+        ),
+    )
+
+
+class Day(Base):
+    """One school day. `idx` is the domain's own ordering field
+    (`Day.index`) and doubles as the tuple-order-preserving column for
+    `SchedulingProblem.days` -- no separate `ordinal` is needed here."""
+
+    __tablename__ = "day"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    idx: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_day_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "idx", name="uq_day_ay_idx"),
+        UniqueConstraint("academic_year_id", "id", name="uq_day_ay_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_day_academic_year"
+        ),
+    )
+
+
+class Period(Base):
+    """One instructional period slot shared across every day of the week.
+    `idx` is the domain's own ordering field (`Period.index`); `block_id`
+    is a bare grouping label (no separate `Block` entity exists)."""
+
+    __tablename__ = "period"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    idx: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    block_id: Mapped[str] = mapped_column(Text, nullable=False)
+    is_instructional: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_period_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "idx", name="uq_period_ay_idx"),
+        UniqueConstraint("academic_year_id", "id", name="uq_period_ay_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_period_academic_year"
+        ),
+        Index("ix_period_ay_block", "academic_year_id", "block_id"),
+    )
+
+
+class ClassSection(Base):
+    __tablename__ = "class_section"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_class_section_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_class_section_ay_ordinal"),
+        UniqueConstraint("academic_year_id", "id", name="uq_class_section_ay_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_class_section_academic_year"
+        ),
+    )
+
+
+class ParticipantGroup(Base):
+    __tablename__ = "participant_group"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_participant_group_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_participant_group_ay_ordinal"),
+        UniqueConstraint("academic_year_id", "id", name="uq_participant_group_ay_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_participant_group_academic_year",
+        ),
+    )
+
+
+class ParticipantGroupClassSection(Base):
+    """Child rows for `ParticipantGroup.class_sections` (a tuple).
+    `ordinal` preserves exact tuple order; no surrogate `id` is needed --
+    this row has no identity beyond "the Nth class of this group" and is
+    never referenced from elsewhere."""
+
+    __tablename__ = "participant_group_class_section"
+
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    participant_group_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    class_section_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("participant_group_id", "ordinal", name="pk_participant_group_class_section"),
+        UniqueConstraint(
+            "participant_group_id", "class_section_id", name="uq_pgcs_group_class"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_pgcs_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "participant_group_id"],
+            ["participant_group.academic_year_id", "participant_group.id"],
+            ondelete="CASCADE",
+            name="fk_pgcs_participant_group",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "class_section_id"],
+            ["class_section.academic_year_id", "class_section.id"],
+            ondelete="RESTRICT",
+            name="fk_pgcs_class_section",
+        ),
+    )
+
+
+class Teacher(Base):
+    __tablename__ = "teacher"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_teacher_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_teacher_ay_ordinal"),
+        UniqueConstraint("academic_year_id", "id", name="uq_teacher_ay_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_teacher_academic_year"
+        ),
+    )
+
+
+class TeacherAvailability(Base):
+    """An availability override for one teacher at one (day, period).
+    Identity mirrors the domain's own natural composite key exactly --
+    no surrogate `id`."""
+
+    __tablename__ = "teacher_availability"
+
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    teacher_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    period_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("teacher_id", "day_id", "period_id", name="pk_teacher_availability"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_teacher_availability_ay_ordinal"),
+        CheckConstraint(
+            "status IN ('AVAILABLE', 'PREFER_NOT', 'UNAVAILABLE')",
+            name="ck_teacher_availability_status",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_teacher_availability_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "teacher_id"],
+            ["teacher.academic_year_id", "teacher.id"],
+            ondelete="CASCADE",
+            name="fk_teacher_availability_teacher",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "day_id"],
+            ["day.academic_year_id", "day.id"],
+            ondelete="RESTRICT",
+            name="fk_teacher_availability_day",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "period_id"],
+            ["period.academic_year_id", "period.id"],
+            ondelete="RESTRICT",
+            name="fk_teacher_availability_period",
+        ),
+        Index("ix_teacher_availability_teacher", "teacher_id"),
+    )
+
+
+class Activity(Base):
+    __tablename__ = "activity"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="ORDINARY")
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_activity_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_activity_ay_ordinal"),
+        UniqueConstraint("academic_year_id", "id", name="uq_activity_ay_id"),
+        CheckConstraint("kind IN ('ORDINARY', 'CLUB')", name="ck_activity_kind"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_activity_academic_year"
+        ),
+    )
+
+
+class Resource(Base):
+    __tablename__ = "resource"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_resource_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_resource_ay_ordinal"),
+        UniqueConstraint("academic_year_id", "id", name="uq_resource_ay_id"),
+        CheckConstraint("capacity > 0", name="ck_resource_capacity_positive"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_resource_academic_year"
+        ),
+    )
+
+
+class TeachingRequirement(Base):
+    """The core scheduling input. Embeds `LessonBlockPolicy`
+    (`block_mode`, `block_sizes`), `DistributionPolicy`
+    (`min_distinct_days`, `max_periods_per_day`), and `ResourceRequirement`
+    (`resource_id`) as typed columns -- see docs/DECISIONS.md #26 for why
+    none of this is JSONB. `split_group_id` is a bare synchronization
+    label, never a FK (no `SplitGroup` entity exists)."""
+
+    __tablename__ = "teaching_requirement"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    teacher_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    activity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    participant_group_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    weekly_periods: Mapped[int] = mapped_column(Integer, nullable=False)
+    block_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="FLEXIBLE")
+    block_sizes: Mapped[list[int]] = mapped_column(
+        ARRAY(SmallInteger), nullable=False, server_default="{}"
+    )
+    min_distinct_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    max_periods_per_day: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    resource_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    split_group_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_teaching_requirement_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_teaching_requirement_ay_ordinal"),
+        UniqueConstraint("academic_year_id", "id", name="uq_teaching_requirement_ay_id"),
+        CheckConstraint("weekly_periods > 0", name="ck_teaching_requirement_weekly_periods_positive"),
+        CheckConstraint(
+            "block_mode IN ('REQUIRED', 'PREFERRED', 'FLEXIBLE')", name="ck_teaching_requirement_block_mode"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_teaching_requirement_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "teacher_id"],
+            ["teacher.academic_year_id", "teacher.id"],
+            ondelete="RESTRICT",
+            name="fk_teaching_requirement_teacher",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "activity_id"],
+            ["activity.academic_year_id", "activity.id"],
+            ondelete="RESTRICT",
+            name="fk_teaching_requirement_activity",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "participant_group_id"],
+            ["participant_group.academic_year_id", "participant_group.id"],
+            ondelete="RESTRICT",
+            name="fk_teaching_requirement_participant_group",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "resource_id"],
+            ["resource.academic_year_id", "resource.id"],
+            ondelete="RESTRICT",
+            name="fk_teaching_requirement_resource",
+        ),
+        Index("ix_teaching_requirement_ay_teacher", "academic_year_id", "teacher_id"),
+        Index("ix_teaching_requirement_ay_participant_group", "academic_year_id", "participant_group_id"),
+        Index(
+            "ix_teaching_requirement_ay_split_group",
+            "academic_year_id",
+            "split_group_id",
+            postgresql_where=text("split_group_id IS NOT NULL"),
+        ),
+    )
+
+
+class TimePreference(Base):
+    """Child rows for `TeachingRequirement.time_preferences` (a tuple,
+    0..N per requirement). `preferred_period_indexes` stores
+    `TimePreference.preferred_periods` -- `Period.index` integers, not
+    `Period.id` references -- exactly as the domain models it."""
+
+    __tablename__ = "time_preference"
+
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    teaching_requirement_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    preferred_period_indexes: Mapped[list[int]] = mapped_column(ARRAY(SmallInteger), nullable=False)
+    weight: Mapped[str] = mapped_column(Text, nullable=False, server_default="MEDIUM")
+
+    __table_args__ = (
+        PrimaryKeyConstraint("teaching_requirement_id", "ordinal", name="pk_time_preference"),
+        CheckConstraint("weight IN ('LOW', 'MEDIUM', 'HIGH')", name="ck_time_preference_weight"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_time_preference_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "teaching_requirement_id"],
+            ["teaching_requirement.academic_year_id", "teaching_requirement.id"],
+            ondelete="CASCADE",
+            name="fk_time_preference_teaching_requirement",
+        ),
+    )
+
+
+class ReservedBlock(Base):
+    __tablename__ = "reserved_block"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    activity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    teacher_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_reserved_block_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_reserved_block_ay_ordinal"),
+        UniqueConstraint("academic_year_id", "id", name="uq_reserved_block_ay_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_reserved_block_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "activity_id"],
+            ["activity.academic_year_id", "activity.id"],
+            ondelete="RESTRICT",
+            name="fk_reserved_block_activity",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "teacher_id"],
+            ["teacher.academic_year_id", "teacher.id"],
+            ondelete="RESTRICT",
+            name="fk_reserved_block_teacher",
+        ),
+    )
+
+
+class ReservedBlockClassSection(Base):
+    """Child rows for `ReservedBlock.class_sections` (a tuple)."""
+
+    __tablename__ = "reserved_block_class_section"
+
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reserved_block_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    class_section_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("reserved_block_id", "ordinal", name="pk_reserved_block_class_section"),
+        UniqueConstraint("reserved_block_id", "class_section_id", name="uq_rbcs_block_class"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_rbcs_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "reserved_block_id"],
+            ["reserved_block.academic_year_id", "reserved_block.id"],
+            ondelete="CASCADE",
+            name="fk_rbcs_reserved_block",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "class_section_id"],
+            ["class_section.academic_year_id", "class_section.id"],
+            ondelete="RESTRICT",
+            name="fk_rbcs_class_section",
+        ),
+    )
+
+
+class ReservedBlockSlot(Base):
+    """Child rows for `ReservedBlock.slots` (a tuple of `TimeSlot`)."""
+
+    __tablename__ = "reserved_block_slot"
+
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reserved_block_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    period_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("reserved_block_id", "ordinal", name="pk_reserved_block_slot"),
+        UniqueConstraint("reserved_block_id", "day_id", "period_id", name="uq_rbs_block_day_period"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_rbs_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "reserved_block_id"],
+            ["reserved_block.academic_year_id", "reserved_block.id"],
+            ondelete="CASCADE",
+            name="fk_rbs_reserved_block",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "day_id"],
+            ["day.academic_year_id", "day.id"],
+            ondelete="RESTRICT",
+            name="fk_rbs_day",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "period_id"],
+            ["period.academic_year_id", "period.id"],
+            ondelete="RESTRICT",
+            name="fk_rbs_period",
+        ),
+    )
+
+
+class FixedPlacement(Base):
+    """Pins one lesson of a `TeachingRequirement` to an exact slot."""
+
+    __tablename__ = "fixed_placement"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    natural_id: Mapped[str] = mapped_column(Text, nullable=False)
+    teaching_requirement_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    period_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "natural_id", name="uq_fixed_placement_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "ordinal", name="uq_fixed_placement_ay_ordinal"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_fixed_placement_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "teaching_requirement_id"],
+            ["teaching_requirement.academic_year_id", "teaching_requirement.id"],
+            ondelete="CASCADE",
+            name="fk_fixed_placement_teaching_requirement",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "day_id"],
+            ["day.academic_year_id", "day.id"],
+            ondelete="RESTRICT",
+            name="fk_fixed_placement_day",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "period_id"],
+            ["period.academic_year_id", "period.id"],
+            ondelete="RESTRICT",
+            name="fk_fixed_placement_period",
+        ),
+        Index("ix_fixed_placement_teaching_requirement", "teaching_requirement_id"),
+    )
