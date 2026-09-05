@@ -337,7 +337,7 @@ this implementation followed them as given.
     different, aggregate-aware concern from mapping a single
     already-loaded row back to its domain type. That direction is
     deferred to a TEST-ONLY aggregate writer, Phase 3A2.3 (living only
-    under `tests_web/`, never importable from `persistence/`,
+    under `tests_web/`, never imported or referenced by `persistence/`,
     `application/`, or `api/`); no `save`/`create`/`upsert`/
     `from_domain`/generic-CRUD function exists anywhere in
     `mappers.py`.
@@ -362,3 +362,56 @@ this implementation followed them as given.
     through `NaturalIdLookup` as if they were `Period.id` references,
     preserving the domain's own index-based semantics exactly (see
     Decision #26's `TimePreference` note).
+
+29. **Phase 3A2.3's `SchedulingProblemRepository` is the first real
+    `application/` use case, and it stays exactly that -- one method,
+    no generic CRUD.** `application/ports.py` defines
+    `SchedulingProblemRepository` as a `typing.Protocol` with only
+    `load_by_school_and_year(school_natural_id, academic_year_natural_id)
+    -> SchedulingProblem`; no `save`/`create`/`update`/`delete`/
+    `list_*`/`get_*` is added ahead of an actual use case that needs
+    one (Decision #12). `application/` imports only `domain/` -- never
+    SQLAlchemy, `persistence/`, FastAPI, or `fixtures/`, even
+    transitively -- matching the locked ports-and-adapters direction
+    from `docs/ARCHITECTURE.md`.
+
+    Not-found is one concept, `application/errors.py`'s
+    `SchedulingProblemNotFoundError`, carrying only the natural
+    `school_natural_id`/`academic_year_natural_id` the caller supplied
+    -- never a SQLAlchemy exception or a persistence surrogate ID.
+    `SqlAlchemySchedulingProblemRepository` (`persistence/
+    problem_repository.py`) raises it identically whether the school
+    itself doesn't resolve or the school resolves but the requested
+    academic year doesn't -- both are the same "this configuration
+    does not exist" outcome to a caller, and Phase 3A2.4's `GET /config`
+    can map either directly to one 404 without inspecting which case
+    occurred.
+
+    The adapter's loading strategy is deliberately explicit rather than
+    relying on ORM `relationship()`/lazy-loading: resolve `School` then
+    `AcademicYear` by natural ID, then one `SELECT ... WHERE
+    academic_year_id = :id` per scoped table, group child rows by
+    parent surrogate ID in plain Python, build one `NaturalIdLookup`,
+    and call Phase 3A2.2's mappers -- multiple explicit queries, never
+    a premature generic query-builder abstraction. Every top-level
+    tuple is sorted before mapping exactly per Decision #26's ordering
+    rule (`Day`/`Period` by `idx`, everything else by `ordinal`) --
+    never assumed from database return order. The repository
+    reimplements no preflight/solver/verifier reasoning: a
+    structurally loadable but domain-invalid configuration is expected
+    to load successfully and be rejected by `validation.preflight`
+    afterward, exactly like any other `SchedulingProblem`.
+
+    Proof that this is not a silently-narrowed reconstruction: a
+    TEST-ONLY aggregate writer (`tests_web/support/problem_writer.py`
+    -- domain -> persistence, identity-resolution-aware, never imported
+    or referenced by `persistence/`, `application/`, or `api/`, and
+    explicitly not a production repository "save" method, per the
+    persistence -> domain-only boundary in Decision #28) writes the
+    complete `build_valid_fixture()` graph in dependency order; the
+    production repository reads it back; the result is asserted
+    **deeply equal** to the original `SchedulingProblem` (exact tuple
+    order included, not a partial comparison), passes
+    `run_preflight` with no errors, `solve()`s to the same
+    `SolverStatus`, and passes the independent `verify()` -- proven
+    against real PostgreSQL in `tests_web/test_problem_repository.py`.

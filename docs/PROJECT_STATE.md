@@ -2,22 +2,29 @@
 
 ## Current milestone
 
-Phase 3A2.2: persistence -> domain mapping. Adds
-`persistence/mappers.py` -- pure, deterministic functions mapping
-already-loaded SQLAlchemy ORM rows (Phase 3A2.1's `persistence/models.py`,
-unchanged) to frozen `domain/` objects, plus a small persistence-only
-`NaturalIdLookup` context resolving sibling surrogate FKs to natural IDs.
-Only the persistence -> domain direction exists; domain -> persistence
-remains intentionally absent from production code (see `DECISIONS.md`
-#27-28). No `application/` repository Protocol, no config-read API, no
-`Schedule`/`ScheduleVersion`/`ScheduleEntry` persistence, no React. No
-change to any existing domain/scheduling/validation/verification
-semantics, nor to Phase 3A2.1's schema/migration (Phase 2C's 104 tests,
-3 demo scripts, and school-scale benchmark all still pass unmodified;
-migration head is still `8cdd513e16da`). See `DECISIONS.md` #26-28 for
-the full locked schema and mapper-boundary rules, and
-`docs/ARCHITECTURE.md` for the locked ports-and-adapters direction later
-3A2 slices build against.
+Phase 3A2.3: DB-backed `SchedulingProblem` repository, proven by a full
+round-trip + re-solve. Adds `application/` (the first real
+`application/` package: `ports.py`'s `SchedulingProblemRepository`
+Protocol -- `load_by_school_and_year` only, no CRUD -- and
+`errors.py`'s `SchedulingProblemNotFoundError`), and
+`persistence/problem_repository.py` (`SqlAlchemySchedulingProblemRepository`,
+the concrete adapter: explicit multi-SELECT loading, no ORM
+`relationship()`/lazy-loading, built on Phase 3A2.2's mappers). Proven
+end-to-end against real PostgreSQL by a TEST-ONLY aggregate writer
+(`tests_web/support/problem_writer.py`, domain -> persistence,
+identity-resolution-aware -- never a production write path) that writes
+`build_valid_fixture()` in, then reads it back through the production
+repository and asserts full frozen-dataclass equality, including exact
+tuple order everywhere. Read-only: still no domain -> persistence write
+path in production code, no `GET /config` API, no
+`Schedule`/`ScheduleVersion`/`ScheduleEntry` persistence, no React, and
+no change to Phase 3A2.1's schema/migration (still `8cdd513e16da`) or to
+any existing domain/scheduling/validation/verification semantics (Phase
+2C's 104 tests, 3 demo scripts, and school-scale benchmark all still
+pass unmodified). See `DECISIONS.md` #26-29 for the full locked schema,
+mapper-boundary, and repository-port rules, and `docs/ARCHITECTURE.md`
+for the ports-and-adapters direction the next 3A2 slice (the
+`GET /config` read API) wires together.
 
 ## Implemented capabilities
 
@@ -188,6 +195,47 @@ the full locked schema and mapper-boundary rules, and
   API, and no `SchedulingProblem` aggregate loader exist yet (Phase
   3A2.3+ -- see `DECISIONS.md` #28); `mappers.py` never imports
   `fixtures/`, `application/`, or `api/`.
+- **DB-backed `SchedulingProblem` repository** (Phase 3A2.3;
+  `application/ports.py`, `application/errors.py`,
+  `persistence/problem_repository.py`): the first real `application/`
+  package. `SchedulingProblemRepository` is a `Protocol` with exactly
+  one method, `load_by_school_and_year(school_natural_id,
+  academic_year_natural_id) -> SchedulingProblem` -- no generic CRUD.
+  `SchedulingProblemNotFoundError` (natural IDs only, never a
+  SQLAlchemy exception or surrogate ID) is raised identically whether
+  the school itself is unknown or the school is known but the academic
+  year is not. `application/` imports only `domain/` -- no SQLAlchemy,
+  no `persistence/`, no FastAPI, no `fixtures/`.
+  `SqlAlchemySchedulingProblemRepository` implements the port
+  structurally (no inheritance): resolves `School`/`AcademicYear` by
+  natural ID first, then issues one explicit `SELECT ... WHERE
+  academic_year_id = :id` per scoped table (no ORM `relationship()`
+  navigation, no lazy-loading), builds a `NaturalIdLookup` from the
+  fetched rows, groups child rows by parent surrogate ID in plain
+  Python, and calls Phase 3A2.2's mappers -- reimplementing none of
+  preflight/solver/verifier reasoning itself. Every top-level tuple is
+  sorted explicitly before mapping (`Day`/`Period` by `idx`, everything
+  else by `ordinal`), never assumed from database return order.
+
+  Proven end-to-end against real PostgreSQL: a TEST-ONLY aggregate
+  writer (`tests_web/support/problem_writer.py` -- domain ->
+  persistence, identity-resolution-aware, living only under
+  `tests_web/`, never imported or referenced by `persistence/`,
+  `application/`, or `api/`, and explicitly not a production repository
+  "save" method)
+  writes the complete `build_valid_fixture()` graph in dependency
+  order, assigning every `ordinal` from `enumerate(...)`. The
+  production repository then reads it back, and the result is
+  asserted **deeply equal** to the original in-memory
+  `SchedulingProblem` -- exact tuple order included, not a partial
+  comparison. The DB-loaded problem also passes `run_preflight` with no
+  errors, `solve()`s to the same `SolverStatus` as the in-memory
+  problem, and passes the independent `verify()` -- proving the
+  persisted configuration is not a silently-narrowed version of the
+  real model. A further test writes two independent snapshots sharing
+  every natural ID *except* school/academic-year and confirms each
+  loads back only its own rows, never mixing in the other's. 4 new
+  integration tests in `tests_web/test_problem_repository.py`.
 
 ## Test baseline
 
@@ -223,13 +271,15 @@ if one isn't reachable), 10 persistence-schema constraint tests
 PostgreSQL (same-year valid inserts, cross-academic-year rejection,
 natural-ID/ordinal uniqueness, enum/positive-value CHECK constraints,
 CASCADE/RESTRICT delete semantics, and the whole-snapshot root delete),
-and 14 pure persistence -> domain mapper unit tests (Phase 3A2.2,
-`test_persistence_mappers.py`) needing no live database at all. Not
-part of `pytest -q`'s default collection -- run explicitly with
-`pytest -q tests_web`. This suite does not count toward, or affect, the
-104/99/5 figures above. Live-validated this session against a real
-`docker compose up -d db` PostgreSQL 16: **31 collected, 31 passed, 0
-skipped.**
+14 pure persistence -> domain mapper unit tests (Phase 3A2.2,
+`test_persistence_mappers.py`) needing no live database at all, and
+4 repository round-trip/preflight/solve/verify/scope-isolation
+integration tests (Phase 3A2.3, `test_problem_repository.py`) against
+real PostgreSQL. Not part of `pytest -q`'s default collection -- run
+explicitly with `pytest -q tests_web`. This suite does not count
+toward, or affect, the 104/99/5 figures above. Live-validated this
+session against a real `docker compose up -d db` PostgreSQL 16:
+**35 collected, 35 passed, 0 skipped.**
 
 ## Known limitations
 
@@ -248,13 +298,15 @@ skipped.**
   block length as the target occupant); anything else is rejected with a
   specific code rather than attempted via a more complex cascade -- see
   `docs/SCHEDULE_EDITING.md`.
-- A persisted schema (Phase 3A2.1) and persistence -> domain mappers
-  (Phase 3A2.2) now exist, but nothing assembles a full
-  `SchedulingProblem` from the database yet -- no `application/`
-  repository Protocol, no config-read API, no business API endpoints,
-  no UI, and no domain -> persistence write path anywhere in production
-  code. See `docs/ARCHITECTURE.md` and `DECISIONS.md` #27-28 for
-  exactly what the next 3A2 slices add.
+- A persisted schema (Phase 3A2.1), persistence -> domain mappers
+  (Phase 3A2.2), and a proven DB-backed `SchedulingProblemRepository`
+  (Phase 3A2.3) all now exist, but nothing exposes any of this over
+  HTTP yet -- no config-read API, no business API endpoints, no UI, and
+  still no domain -> persistence write path anywhere in production code
+  (the test-only aggregate writer under `tests_web/support/` remains
+  test-only, per Decision #28). See `docs/ARCHITECTURE.md` and
+  `DECISIONS.md` #27-29 for exactly what the next 3A2 slice
+  (`GET /config`) adds.
 - Live PostgreSQL validation (Phase 3A1) remains complete:
   `docker compose up -d db` against real PostgreSQL 16, both the
   `school_timetable` and `school_timetable_test` databases confirmed
@@ -283,12 +335,11 @@ why verification is a hard requirement, not a formality.
 
 ## Next step
 
-Await final pre-commit review of this Phase 3A2.2 slice. Candidate next
-step, Phase 3A2.3: the `SchedulingProblemRepository` Protocol
-(`load_by_school_and_year` only, no CRUD), its concrete SQLAlchemy
-adapter built on Phase 3A2.2's mappers, and a TEST-ONLY aggregate writer
-(domain -> persistence, identity-resolution-aware, living only under
-`tests_web/`) -- proven against real PostgreSQL by a full round-trip +
-re-solve integration test using `build_valid_fixture()`. Then 3A2.4: the
-`GET /schools/{school_id}/years/{year_id}/config` read API, exposing
-only natural IDs.
+Await final pre-commit review of this Phase 3A2.3 slice. Candidate next
+step, Phase 3A2.4: the `GET /schools/{school_id}/years/{year_id}/config`
+read API -- a thin FastAPI endpoint, wired via `Depends` in `api/` (the
+one place that imports both `application/` and `persistence/`), calling
+`SqlAlchemySchedulingProblemRepository.load_by_school_and_year(...)`
+and returning a hand-designed Pydantic response exposing only natural
+IDs -- never an ORM row, never a surrogate ID, never a solver-internal
+field.
