@@ -326,3 +326,39 @@ this implementation followed them as given.
     generic CRUD). `fixtures/` remains imported only by `tests/`,
     `tests_web/`, and the existing demo/benchmark scripts -- never by
     `persistence/`, `application/`, or `api/`.
+
+28. **Phase 3A2.2 (`persistence/mappers.py`) implements only
+    persistence -> domain mapping; domain -> persistence is
+    intentionally absent from production code.** Domain objects
+    reference each other solely by natural string ID, while ORM rows
+    (Phase 3A2.1) reference each other by surrogate `BIGINT` FK --
+    writing therefore needs whole-graph natural-id -> surrogate-id
+    resolution across every entity in one academic year, a materially
+    different, aggregate-aware concern from mapping a single
+    already-loaded row back to its domain type. That direction is
+    deferred to a TEST-ONLY aggregate writer, Phase 3A2.3 (living only
+    under `tests_web/`, never importable from `persistence/`,
+    `application/`, or `api/`); no `save`/`create`/`upsert`/
+    `from_domain`/generic-CRUD function exists anywhere in
+    `mappers.py`.
+
+    Every mapper is a pure function of already-fetched ORM rows (plus,
+    where a sibling FK needs resolving, a `NaturalIdLookup` --
+    persistence-only, built once via `.build()` from whatever rows the
+    caller already has, never queried itself) -- no `Session`, no
+    query, no engine, no `fixtures/` import. An unresolved surrogate
+    reference raises a clear `KeyError` immediately rather than
+    silently returning the surrogate or inventing a natural ID.
+
+    Every ORM-side tuple-order-preserving `ordinal` column from
+    Decision #26 is honored explicitly in the mapper, not assumed from
+    database return order: `participant_group_to_domain`,
+    `teaching_requirement_to_domain` (for `time_preferences`), and
+    `reserved_block_to_domain` (for `class_sections` and `slots`) each
+    sort their child rows by `ordinal` before building the domain
+    tuple, proven by unit tests that deliberately supply those child
+    rows out of order. `TimePreference.preferred_periods` round-trips
+    the stored `Period.index` integers verbatim -- never resolved
+    through `NaturalIdLookup` as if they were `Period.id` references,
+    preserving the domain's own index-based semantics exactly (see
+    Decision #26's `TimePreference` note).

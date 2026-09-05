@@ -17,13 +17,15 @@ no web framework, no database, no UI dependency, importable and testable
 on its own. Phase 3A1 added the web/persistence foundation *alongside*
 it (config, a database engine/session, Alembic migration wiring, a
 FastAPI app shell with a real database-backed health check). Phase 3A2.1
-adds the first real persisted schema on top of that foundation: 17
+added the first real persisted schema on top of that foundation: 17
 SQLAlchemy ORM tables (`persistence/models.py`) covering the complete
 current `SchedulingProblem` input surface, one Alembic migration
-(`8cdd513e16da`). No domain <-> persistence mapper, no `application/`
-repository Protocol, and no config-read API exist yet -- see
-`docs/PROJECT_STATE.md` and `DECISIONS.md` #26-27 for exactly what
-Phase 3A2.1 does and does not include.
+(`8cdd513e16da`). Phase 3A2.2 adds `persistence/mappers.py`: pure
+persistence -> domain mapping functions plus a `NaturalIdLookup`
+context, with no schema/migration change. No `application/` repository
+Protocol, no domain -> persistence write path, and no config-read API
+exist yet -- see `docs/PROJECT_STATE.md` and `DECISIONS.md` #26-28 for
+exactly what Phase 3A2.1/3A2.2 do and do not include.
 
 ```
 src/school_timetable/
@@ -33,7 +35,7 @@ src/school_timetable/
 ├── verification/     Independent post-hoc verifier (does not trust CP-SAT).
 ├── fixtures/         Deterministic synthetic test fixtures.
 ├── config.py         Web/persistence settings (Phase 3). Never imported by the four packages above.
-├── persistence/       SQLAlchemy engine/session + Alembic + ORM models (Phase 3). No mappers/repository yet.
+├── persistence/       SQLAlchemy engine/session + Alembic + ORM models + mappers (Phase 3). No repository/writer yet.
 └── api/                FastAPI app shell (Phase 3). No domain endpoints yet.
 ```
 
@@ -73,9 +75,13 @@ src/school_timetable/
   that importing `persistence.base.Base` (as `migrations/env.py` does)
   always sees every table -- this is what keeps
   `alembic revision --autogenerate` picking up new models automatically
-  with no further `env.py` changes. No domain <-> persistence mapper
-  and no repository adapter exist yet (Phase 3A2.2+ -- see
-  `DECISIONS.md` #27). Never imports `scheduling/` or `api/`.
+  with no further `env.py` changes. (Phase 3A2.2) `mappers.py`: pure
+  persistence -> domain mapping functions (no `Session`, no query, no
+  `fixtures/` import) plus a `NaturalIdLookup` context resolving
+  sibling surrogate FKs to natural IDs; domain -> persistence is
+  intentionally not implemented here (see `DECISIONS.md` #28 for why).
+  No repository adapter exists yet (Phase 3A2.3+). Never imports
+  `scheduling/` or `api/`.
 - **api/** (Phase 3): the FastAPI app (`main.py`). No domain/business
   endpoints yet -- just `GET /health`, which genuinely executes `SELECT 1`
   against the database (returning 503 with a generic, non-sensitive body
@@ -121,9 +127,10 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A2.1: no `application/` layer, no repository ports/adapters,
-no domain <-> persistence mapper, no business/domain REST endpoints
-(including no config-read API yet), no frontend, no auth.
-`docker-compose.yml` provides a local development PostgreSQL only -- no
-application containerization/deployment setup exists yet. These arrive
-in later Phase 3 slices per `DECISIONS.md` and `PROJECT_STATE.md`.
+As of Phase 3A2.2: no `application/` layer, no repository ports/adapters,
+no domain -> persistence write path, no full `SchedulingProblem`
+aggregate loader, no business/domain REST endpoints (including no
+config-read API yet), no frontend, no auth. `docker-compose.yml`
+provides a local development PostgreSQL only -- no application
+containerization/deployment setup exists yet. These arrive in later
+Phase 3 slices per `DECISIONS.md` and `PROJECT_STATE.md`.

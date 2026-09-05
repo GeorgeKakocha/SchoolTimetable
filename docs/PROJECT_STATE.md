@@ -2,24 +2,22 @@
 
 ## Current milestone
 
-Phase 3A2.1: persisted scheduling-configuration schema. Adds
-`persistence/models.py` -- 17 SQLAlchemy ORM tables persisting the
-complete current `SchedulingProblem` input surface (School, AcademicYear,
-Day, Period, ClassSection, ParticipantGroup [+ its class-section
-membership join table], Teacher, TeacherAvailability, Activity, Resource,
-TeachingRequirement, TimePreference, ReservedBlock [+ its class-section
-and slot join tables], FixedPlacement), one Alembic migration
-(`8cdd513e16da`, on top of Phase 3A1's empty baseline
-`e2cbe4786a14`). Schema only: no domain <-> persistence mapper, no
-`application/` repository Protocol, no config-read API, no
+Phase 3A2.2: persistence -> domain mapping. Adds
+`persistence/mappers.py` -- pure, deterministic functions mapping
+already-loaded SQLAlchemy ORM rows (Phase 3A2.1's `persistence/models.py`,
+unchanged) to frozen `domain/` objects, plus a small persistence-only
+`NaturalIdLookup` context resolving sibling surrogate FKs to natural IDs.
+Only the persistence -> domain direction exists; domain -> persistence
+remains intentionally absent from production code (see `DECISIONS.md`
+#27-28). No `application/` repository Protocol, no config-read API, no
 `Schedule`/`ScheduleVersion`/`ScheduleEntry` persistence, no React. No
 change to any existing domain/scheduling/validation/verification
-semantics (Phase 2C's 104 tests, 3 demo scripts, and school-scale
-benchmark all still pass unmodified). See `DECISIONS.md` #26-27 for the
-full locked schema (identity, same-year composite-FK isolation, typed
-policy columns, ordinal-based tuple-order preservation,
-CASCADE-vs-RESTRICT delete semantics) and `docs/ARCHITECTURE.md` for the
-locked ports-and-adapters direction later 3A2 slices build against.
+semantics, nor to Phase 3A2.1's schema/migration (Phase 2C's 104 tests,
+3 demo scripts, and school-scale benchmark all still pass unmodified;
+migration head is still `8cdd513e16da`). See `DECISIONS.md` #26-28 for
+the full locked schema and mapper-boundary rules, and
+`docs/ARCHITECTURE.md` for the locked ports-and-adapters direction later
+3A2 slices build against.
 
 ## Implemented capabilities
 
@@ -145,7 +143,7 @@ locked ports-and-adapters direction later 3A2 slices build against.
   empty diff (no drift). Migration reversibility (baseline -> upgrade
   -> downgrade -1 -> upgrade) proven against the real PostgreSQL *test*
   database, then applied once (no destructive testing) to the
-  development database. 9 new focused `tests_web` tests prove, against
+  development database. 10 focused `tests_web` tests prove, against
   real PostgreSQL: valid same-year inserts succeed; cross-academic-year
   references are rejected at the database level; `natural_id`
   uniqueness is per-academic-year (same ID across two years is
@@ -154,11 +152,42 @@ locked ports-and-adapters direction later 3A2 slices build against.
   rejected; an owned-child `CASCADE` delete actually removes the child
   row; a cross-entity `RESTRICT` blocks a destructive sibling delete
   for both a required and an optional reference (proving no silent
-  `SET NULL`); and ordered-child-table ordinal/membership uniqueness is
-  enforced. No domain <-> persistence mapper, no `application/`
-  repository Protocol, and no config-read API exist yet (Phase 3A2.2+
-  -- see `DECISIONS.md` #27); `fixtures/` remains imported only by
-  `tests/`, `tests_web/`, and the existing demo/benchmark scripts.
+  `SET NULL`); ordered-child-table ordinal/membership uniqueness is
+  enforced; and deleting the root `AcademicYear` cascades the complete
+  interconnected snapshot (proving the whole-graph CASCADE/RESTRICT
+  interaction resolves correctly, not just isolated pairwise edges)
+  while the parent `School` survives untouched.
+- **Persistence -> domain mapping** (Phase 3A2.2; `persistence/mappers.py`):
+  pure functions mapping already-loaded Phase 3A2.1 ORM rows to frozen
+  `domain/` objects -- no `Session`, no query, no engine, deterministic.
+  A `NaturalIdLookup` context (built once from whatever rows the caller
+  already fetched, via `.build()`) resolves every sibling surrogate FK
+  to its natural ID; an unresolved surrogate fails immediately with a
+  clear `KeyError`, never silently returning the surrogate or inventing
+  an ID. Every mapper reconstructs exact tuple order from `ordinal`
+  columns (never database return order): `ParticipantGroup.class_sections`,
+  `TeachingRequirement.time_preferences`, `ReservedBlock.class_sections`,
+  `ReservedBlock.slots`. `TeachingRequirement` mapping reconstructs
+  `LessonBlockPolicy`/`DistributionPolicy`/`ResourceRequirement` exactly,
+  including a real cross-check against `build_valid_fixture()`'s actual
+  `math_8a` object for full-equality proof; `TimePreference.preferred_periods`
+  round-trips `Period.index` integers verbatim (never reinterpreted as
+  `Period.id`). Only persistence -> domain exists; domain -> persistence
+  remains intentionally absent from production code (Decision #28) --
+  writing requires whole-graph natural-id -> surrogate-id resolution,
+  deferred to a test-only aggregate writer in Phase 3A2.3. 14 new pure
+  unit tests (no live database) in `tests_web/test_persistence_mappers.py`
+  cover every mapper, both `Activity.kind` enum values, all three
+  `BlockPolicyMode`s (including a `[3, 1]` REQUIRED pattern), nullable
+  `DistributionPolicy` fields, multiple out-of-order `TimePreference`
+  rows, `ResourceRequirement` present/absent, `split_group_id`
+  preserved verbatim, out-of-order `ReservedBlock` children, optional
+  `ReservedBlock.teacher_id` `None`, `FixedPlacement` `TimeSlot`
+  reconstruction, and an unresolved surrogate reference raising a clear
+  `KeyError`. No `application/` repository Protocol, no config-read
+  API, and no `SchedulingProblem` aggregate loader exist yet (Phase
+  3A2.3+ -- see `DECISIONS.md` #28); `mappers.py` never imports
+  `fixtures/`, `application/`, or `api/`.
 
 ## Test baseline
 
@@ -189,15 +218,18 @@ Separately, `tests_web/` (Phase 3A1+; needs the `web` extras, and a
 PostgreSQL for the database-backed tests) covers configuration loading
 (3 tests, no database needed), the engine/session/health-check plumbing
 (4 tests requiring a live database, which skip cleanly rather than fail
-if one isn't reachable), and (Phase 3A2.1) 9 focused persistence-schema
-constraint tests exercising the locked schema directly against real
+if one isn't reachable), 10 persistence-schema constraint tests
+(Phase 3A2.1) exercising the locked schema directly against real
 PostgreSQL (same-year valid inserts, cross-academic-year rejection,
 natural-ID/ordinal uniqueness, enum/positive-value CHECK constraints,
-CASCADE/RESTRICT delete semantics). Not part of `pytest -q`'s default
-collection -- run explicitly with `pytest -q tests_web`. This suite does
-not count toward, or affect, the 104/99/5 figures above. Live-validated
-this session against a real `docker compose up -d db` PostgreSQL 16:
-**16 collected, 16 passed, 0 skipped.**
+CASCADE/RESTRICT delete semantics, and the whole-snapshot root delete),
+and 14 pure persistence -> domain mapper unit tests (Phase 3A2.2,
+`test_persistence_mappers.py`) needing no live database at all. Not
+part of `pytest -q`'s default collection -- run explicitly with
+`pytest -q tests_web`. This suite does not count toward, or affect, the
+104/99/5 figures above. Live-validated this session against a real
+`docker compose up -d db` PostgreSQL 16: **31 collected, 31 passed, 0
+skipped.**
 
 ## Known limitations
 
@@ -216,11 +248,13 @@ this session against a real `docker compose up -d db` PostgreSQL 16:
   block length as the target occupant); anything else is rejected with a
   specific code rather than attempted via a more complex cascade -- see
   `docs/SCHEDULE_EDITING.md`.
-- A persisted schema now exists (Phase 3A2.1) but nothing reads or
-  writes it from application code yet -- no domain <-> persistence
-  mapper, no `application/` repository Protocol, no config-read API, no
-  business API endpoints, no UI. See `docs/ARCHITECTURE.md` and
-  `DECISIONS.md` #27 for exactly what the next 3A2 slices add.
+- A persisted schema (Phase 3A2.1) and persistence -> domain mappers
+  (Phase 3A2.2) now exist, but nothing assembles a full
+  `SchedulingProblem` from the database yet -- no `application/`
+  repository Protocol, no config-read API, no business API endpoints,
+  no UI, and no domain -> persistence write path anywhere in production
+  code. See `docs/ARCHITECTURE.md` and `DECISIONS.md` #27-28 for
+  exactly what the next 3A2 slices add.
 - Live PostgreSQL validation (Phase 3A1) remains complete:
   `docker compose up -d db` against real PostgreSQL 16, both the
   `school_timetable` and `school_timetable_test` databases confirmed
@@ -249,14 +283,12 @@ why verification is a hard requirement, not a formality.
 
 ## Next step
 
-Await final pre-commit review of this Phase 3A2.1 slice. Candidate next
-step, Phase 3A2.2: domain <-> persistence mapper functions
-(`persistence/` ORM row -> frozen `domain/` object) plus reusable
-scalar/enum/array conversion helpers -- no domain-to-persistence
-direction yet (that needs a full identity-resolution context, deferred
-to a test-only aggregate writer in 3A2.3, per `DECISIONS.md` #27).
-Then 3A2.3: the `SchedulingProblemRepository` Protocol
-(`load_by_school_and_year` only, no CRUD) and its concrete adapter,
-proven against real PostgreSQL by a full round-trip + re-solve
-integration test. Then 3A2.4: the `GET /schools/{school_id}/years/
-{year_id}/config` read API, exposing only natural IDs.
+Await final pre-commit review of this Phase 3A2.2 slice. Candidate next
+step, Phase 3A2.3: the `SchedulingProblemRepository` Protocol
+(`load_by_school_and_year` only, no CRUD), its concrete SQLAlchemy
+adapter built on Phase 3A2.2's mappers, and a TEST-ONLY aggregate writer
+(domain -> persistence, identity-resolution-aware, living only under
+`tests_web/`) -- proven against real PostgreSQL by a full round-trip +
+re-solve integration test using `build_valid_fixture()`. Then 3A2.4: the
+`GET /schools/{school_id}/years/{year_id}/config` read API, exposing
+only natural IDs.
