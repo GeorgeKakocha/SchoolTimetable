@@ -105,3 +105,43 @@ this implementation followed them as given.
     problem -- so no placement decision beyond the deliberately chosen
     fixed lessons ever crosses from fixture generation into the
     benchmark under test.
+
+16. **A manual move is a validated swap, not a plain relocation
+    (Phase 2C).** Full class occupancy is HARD and unconditional; a
+    literal "move X from A to B" would leave A empty, which can never
+    pass the same independent verifier every other schedule must pass.
+    The only occupancy-preserving single-step edit is exchanging the
+    moved occurrence with whatever fully occupies the target window for
+    the same class(es). This resolves a genuine tension in the brief
+    (which lists both "move one lesson" and "full class occupancy
+    invalidated" as a rejection reason) rather than picking one
+    arbitrarily; see `docs/SCHEDULE_EDITING.md` for the full reasoning.
+    A swap is only attempted between occupants with the same class-set
+    and the same block length -- anything else is rejected with a
+    specific code, never attempted via a more complex cascade.
+
+17. **A logical occurrence requires a period to identify, never just a
+    day (Phase 2C).** Only REQUIRED and a formed PREFERRED double have a
+    CP-SAT day-cap guaranteeing a requirement's periods on one day form a
+    single block. FLEXIBLE has no such cap and, in the actual Phase-1
+    fixture, routinely places several non-adjacent periods for the same
+    requirement on the same day. `find_logical_occurrence`,
+    `OccurrenceKey`, and the move/lock API were all designed around this:
+    a day alone would silently over-glue independent FLEXIBLE
+    occurrences into one move/lock unit.
+
+18. **Re-optimization uses genuine two-phase lexicographic solving, not a
+    weighted sum (Phase 2C).** Disruption from the reference schedule
+    must strictly outrank the ordinary soft preferences. CP-SAT supports
+    this cleanly: solve once minimizing disruption alone, pin the
+    proven-optimal value with an equality constraint, solve again
+    minimizing the ordinary soft objective. No numeric-weight compromise
+    was needed, so none was made.
+
+19. **`reoptimize()` reuses `model_builder`'s HARD-constraint functions
+    directly (including its underscore-prefixed internals), rather than
+    re-implementing them.** This guarantees re-optimization can never
+    drift from what `solve()` enforces -- there is exactly one place each
+    HARD rule is encoded. The trade-off (reaching across a module's
+    "private" naming convention) was judged lower-risk than duplicating
+    ~150 lines of constraint-building logic that must stay in lockstep.

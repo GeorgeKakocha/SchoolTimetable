@@ -120,7 +120,48 @@ and `BLOCK_PATTERN_TOTAL_MISMATCH` apply to both modes.
 `verification/verifier.py` re-derives every hard constraint directly from
 the final `ScheduleEntry` list and the plain domain model -- it does not
 read CP-SAT variables and does not assume the solver's constraints were
-encoded correctly. If a solver bug exists, this is what catches it.
+encoded correctly. If a solver bug exists, this is what catches it. This
+is unchanged and applies equally to schedules produced by `solve()`, by a
+manual move, or by `reoptimize()` -- see `docs/SCHEDULE_EDITING.md`.
+
+## Re-optimization (Phase 2C)
+
+`scheduling/reoptimize.py::reoptimize(problem, reference_schedule, options=None)`
+is a second solver entry point, alongside `solve()`, for working with an
+*existing* schedule (`domain.schedule.Schedule`) rather than generating a
+fresh one:
+
+- Runs the same `run_preflight` gate as `solve()` -- `INVALID_INPUT` on
+  failure, before any model is built.
+- Additionally, independently checks `reference_schedule` has valid
+  STRUCTURE/TOPOLOGY (no double-booked entries, correct weekly counts,
+  well-formed REQUIRED blocks, synchronized splits, consistent
+  merged-group classes, full class occupancy) before building any lock
+  constraints or disruption groups from it -- `INVALID_INPUT` on failure,
+  never an unlocked fallback solve, and the reference is never mutated.
+  This is a distinct question from "is the reference *feasible* under the
+  current `problem`", which is deliberately never asked up front:
+  teacher-availability, `FixedPlacement`, resource-capacity, `ReservedBlock`,
+  and `max_periods_per_day` compliance against `problem` are excluded from
+  this check, since the reference violating exactly one of those (having
+  been valid when generated, before `problem` changed) is the normal
+  trigger for calling `reoptimize` in the first place -- the whole point
+  is to repair it, not reject it. See `docs/SCHEDULE_EDITING.md`.
+- Enforces every HARD constraint `solve()` does, reused unchanged from
+  `model_builder`, plus one more: every logical occurrence in
+  `reference_schedule.locked_occurrences` is pinned exactly to its
+  current slot.
+- Optimizes in two strict, separately-solved phases: (1) minimize
+  disruption from `reference_schedule` (a moved-occurrence count), then
+  (2) among solutions achieving that same minimal disruption, minimize
+  the ordinary soft-preference objective from `solve()`. Genuine
+  lexicographic priority, not a weighted sum -- see
+  `docs/SCHEDULE_EDITING.md` for the full rationale and mechanics.
+- Returns the same `SchedulingResult`/`SolverStatus` shape as `solve()`.
+  `metadata` additionally includes `num_moved_occurrences`,
+  `num_preserved_occurrences`, `disruption_penalty`,
+  `num_logical_occurrences`, and per-phase wall time/raw status fields
+  (`phase1_*`, `phase2_*`).
 
 ## Acceptance criteria
 

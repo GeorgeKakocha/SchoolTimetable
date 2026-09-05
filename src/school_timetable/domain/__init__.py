@@ -27,6 +27,7 @@ from school_timetable.domain.requirements import (
 )
 from school_timetable.domain.resources import Resource, ResourceRequirement
 from school_timetable.domain.result import EntrySource, ScheduleEntry, SchedulingResult, SolverStatus
+from school_timetable.domain.schedule import OccurrenceKey, Schedule
 from school_timetable.domain.school import School
 
 __all__ = [
@@ -59,5 +60,7 @@ __all__ = [
     "ScheduleEntry",
     "SchedulingResult",
     "SolverStatus",
+    "OccurrenceKey",
+    "Schedule",
     "School",
 ]
