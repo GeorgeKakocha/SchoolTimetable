@@ -28,6 +28,25 @@ tests, 3 demo scripts, and school-scale benchmark all still pass
 unmodified). See `DECISIONS.md` #26-30 for the full locked schema,
 mapper-boundary, repository-port, and public-API-contract rules.
 
+**Phase 3A3 status: design/owner decisions are complete, with ZERO
+remaining owner decisions; implementation has NOT started.** All five
+Phase 3A3 owner decisions are locked (one canonical `Schedule` per
+School+AcademicYear; Generate is initial-generation-only, conflicting
+409 if a schedule already exists; the read API is a generic flat
+`GET .../schedule/active`, no React projection yet; the solve runs with
+no DB session/connection open at all, by strict phase separation; a
+fixed, minimal solver/audit metadata set is persisted), and the
+previously-open HTTP mapping question is now also locked
+(`InvalidConfiguration` -> 422, `Infeasible` -> 409, distinguished from
+`ScheduleAlreadyExists`'s own 409 by a stable `code` field). The full
+schema/application/API design, including `schedule_entry.ordinal` for
+exact tuple-order round-trip and the concurrent double-Generate race
+handling, is recorded in `DECISIONS.md` #31. No
+`schedule`/`schedule_version`/`schedule_entry`/`locked_occurrence` ORM
+model, migration, repository, service, or API route exists yet. The
+next implementation slice is **Phase 3A3.1 only** (schedule/version
+persistence schema + migration) -- not started.
+
 ## Implemented capabilities
 
 - Typed, OR-Tools-free domain model covering every concept in the product
@@ -365,6 +384,14 @@ session against a real `docker compose up -d db` PostgreSQL 16:
   Phase 3A2.4 is deliberately configuration-read-only. See
   `docs/ARCHITECTURE.md` and `DECISIONS.md` #27-30 for exactly what
   comes next.
+- Phase 3A3's locked design (`DECISIONS.md` #31) accepts a known
+  limitation: because Phase 3A2 has no configuration versioning, a
+  future historical `ScheduleVersion` will resolve
+  teacher/activity/policy fields against the *current* configuration,
+  not necessarily the configuration that was true when that version
+  was generated. Accepted for now because no production
+  configuration-write path exists yet to make the two actually differ;
+  revisit only if/when configuration editing is introduced.
 - Live PostgreSQL validation (Phase 3A1) remains complete:
   `docker compose up -d db` against real PostgreSQL 16, both the
   `school_timetable` and `school_timetable_test` databases confirmed
@@ -400,22 +427,25 @@ why verification is a hard requirement, not a formality.
 
 ## Next step
 
-Phase 3A2.4 is awaiting final commit/merge closure.
+Phase 3A2.4 is closed (merged to `main`). Phase 3A3's design and all
+five owner decisions are now locked -- see `DECISIONS.md` #31 for the
+complete schema, application-service, port, and API design. **No Phase
+3A3 implementation exists yet.**
 
-The authoritative roadmap beyond that is locked:
+The next implementation slice is **Phase 3A3.1 only**: the
+`schedule`/`schedule_version`/`schedule_entry`/`locked_occurrence`
+persistence schema + one Alembic migration, exactly as specified in
+`DECISIONS.md` #31. It must not proceed to 3A3.2 (mappers + repository
+adapter), 3A3.3 (`GenerateScheduleService`), or 3A3.4 (API + end-to-end
+tests) until 3A3.1 has its own separate pre-commit review and merge, per
+the same slice-at-a-time discipline every prior Phase 3A2 slice
+followed.
 
-**Phase 3A3 -- schedule generation + immutable schedule-version
-persistence/API.** Connects the already-proven DB-backed
-`SchedulingProblem` (Phase 3A2.3) to the existing solver, and persists
-generated results using the already-locked schedule-versioning
-semantics: `Schedule`, immutable `ScheduleVersion`, `ScheduleEntry`,
-`active_version_id`, `parent_version_id`/`version_number` -- generated
-schedules become persisted rows, not transient solver output. The exact
-Phase 3A3 implementation slices are designed/reviewed after Phase 3A2.4
-merges, not before.
+After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
-**Phase 3B -- React/TypeScript first visual timetable**, after Phase
-3A3: a real generated/persisted 5x8 class timetable rendered in the
-browser.
+**Phase 3B -- React/TypeScript first visual timetable**: a real
+generated/persisted 5x8 class timetable rendered in the browser,
+consuming Phase 3A3's `GET .../schedule/active` (and `/config`) once
+both exist.
 
 Roadmap: **3A2.4 -> 3A3 -> 3B.**

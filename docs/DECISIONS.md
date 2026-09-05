@@ -480,3 +480,574 @@ this implementation followed them as given.
     field checks. A recursive test walks the entire response
     confirming no `academic_year_id`/`ordinal` key and no non-string
     `id`/`*_id` value appears anywhere.
+
+31. **Phase 3A3 ADR: schedule generation + immutable schedule-version
+    persistence -- design locked, implementation not yet started.**
+    Formalizes, for the first time as a numbered decision, versioning
+    semantics that had previously existed only as direct product-owner
+    instruction in conversation, not as an authoritative repository
+    record -- this entry is now that record. No ORM model, migration,
+    repository, service, or API endpoint exists yet; this is the locked
+    design the Phase 3A3.1-3A3.4 implementation slices (see
+    `docs/PROJECT_STATE.md`) must follow without redesign.
+
+    **Owner Decision 1 -- one canonical `Schedule` per School +
+    AcademicYear.** Each `academic_year_id` has exactly one `schedule`
+    row (`UNIQUE(academic_year_id)`); history is represented entirely
+    by immutable `schedule_version` rows hanging off it. Multiple
+    independent scenarios/drafts are explicitly NOT in this MVP.
+    Rationale: matches the stated Phase 3A3/3B goal exactly ("the"
+    generated/persisted timetable, not "a" timetable among several);
+    strictly simpler; does not foreclose a future scenario feature,
+    which would relax `UNIQUE(academic_year_id)` to
+    `UNIQUE(academic_year_id, natural_id)` in a later, explicit
+    migration rather than requiring a redesign of anything already
+    built on top of it.
+
+    **Owner Decision 2 -- Generate is initial-generation-only.** If a
+    `schedule` row already exists for the requested school/year,
+    `POST .../schedule/generate` returns an application-level conflict
+    mapped to HTTP 409 -- it never generates a fresh-from-scratch
+    version, never appends a version, and never silently reoptimizes.
+    Manual editing and reoptimization are a separate use case (Phase
+    3A4, not yet scoped) with their own semantics for producing new
+    versions; Generate must not be conflated with them, and doing so
+    would require locks/a reference schedule this endpoint has no
+    business assuming.
+
+    **Owner Decision 3 -- Phase 3A3's read API is generic and flat.**
+    `GET /schools/{school_id}/years/{year_id}/schedule/active` returns
+    the active persisted `ScheduleVersion` plus a flat entry list, using
+    only natural/domain IDs and the explicitly selected public fields
+    this contract needs -- structurally the same kind of hand-designed,
+    non-UI-shaped contract `/config` already is. Persisted entry
+    *order* is exact and deterministic (see the `schedule_entry.ordinal`
+    correction below); the API is free to present that ordered list as
+    a flat array without imposing any further shape on it. No
+    React-specific 5x8 class-timetable projection, and no UI-facing
+    "ordered days -> periods -> cells" shaping, is implemented in Phase
+    3A3 -- that projection contract belongs entirely to Phase 3B, once
+    a real consumer exists to validate its shape against. Phase 3A3
+    must not be described, designed, or implemented as if it already
+    produces that projection.
+
+    **Owner Decision 4 -- transaction boundary excludes the solve; no
+    DB session/connection of any kind exists during preflight, solve,
+    or verify.** The generation flow is three strictly separated phases:
+
+    - **(A) Read.** A persistence-side operation opens its own short
+      `Session`, loads the frozen `SchedulingProblem`, and closes that
+      `Session` before returning control to the application layer.
+      `GenerateScheduleService` never receives, holds, or is constructed
+      with a `Session` -- it calls a port method and gets back a plain
+      `SchedulingProblem`.
+    - **(B) Pure application work.** `run_preflight`, `solve`, `verify`
+      run entirely in-process, with **no DB `Session` or connection open
+      anywhere for the duration** -- not held, not idle-in-transaction,
+      not deferred-close. This is the actual guarantee Owner Decision 4
+      protects: a 30-second CP-SAT solve must never correspond to an
+      open database connection.
+    - **(C) Write.** Only if verification passes, a *different*
+      persistence-side operation opens a fresh short `Session`/write
+      transaction, atomically persists `Schedule` + `ScheduleVersion` +
+      entries + the active-version pointer (see the concurrency
+      correction below), commits, and closes.
+
+    No Unit-of-Work abstraction is introduced. `GenerateScheduleService`
+    must never be bound to a request-scoped SQLAlchemy `Session` the way
+    `api/dependencies.py` currently wires `get_session()` into
+    `SqlAlchemySchedulingProblemRepository` for a plain read -- doing so
+    for generation would keep FastAPI's yield-based request `Session`
+    open for the entire request, including the solve, which is exactly
+    what this decision forbids. Instead, the concrete
+    `ScheduleVersionRepository` adapter's methods (`get_active_schedule`,
+    `persist_initial_version`) each open and close their own short
+    session internally (e.g. backed by a session *factory*, not a
+    single injected `Session`) -- the API composition root may
+    construct such a session-factory-backed adapter, but
+    `GenerateScheduleService` itself remains unaware that SQLAlchemy (or
+    any database) exists at all, consistent with `application/`'s
+    existing no-SQLAlchemy boundary. Phase 3A3.3/3A3.4 must implement
+    this literally -- not "reuse the request `Session` for convenience"
+    -- since that would silently reintroduce the held-connection
+    problem this decision exists to prevent.
+
+    **Owner Decision 5 -- persisted solver/audit metadata.**
+    `schedule_version` persists `solver_status`, `total_soft_penalty`,
+    `wall_time_seconds`, `random_seed` (nullable), and `created_at`.
+    It does **not** persist `num_conflicts`, `num_branches`,
+    `num_cp_variables`, `num_cp_constraints`, `best_objective_bound`, or
+    any other CP-SAT implementation telemetry -- these are solver
+    internals with no product meaning and would couple the schema to
+    today's specific solver instrumentation. A verifier failure is
+    never persisted as a successful `ScheduleVersion` at all; the mere
+    existence of a persisted version *is* the proof verification
+    passed, so no separate "verifier result" column is needed.
+
+    **Versioning rules formalized** (previously conversation-only
+    product direction; now authoritative here):
+    - `ScheduleVersion` is immutable: no repository method ever
+      updates or deletes one once created.
+    - `Schedule` has an explicit `active_version_id`.
+    - `ScheduleVersion` has `version_number` (unique within its
+      `Schedule`) and `parent_version_id` (nullable, same-`Schedule`
+      lineage).
+    - A successful initial Generate creates `Schedule` + version
+      `version_number = 1, parent_version_id = NULL`, and makes that
+      version active, atomically.
+    - Existing versions are never mutated in place, ever, by any future
+      phase.
+    - Every future accepted manual edit (Phase 3A4) creates exactly one
+      new `ScheduleVersion`, referencing its parent; reoptimization
+      likewise creates a new version rather than mutating an old one,
+      preserving the existing disruption/lock semantics
+      (`scheduling/reoptimize.py`, unchanged) rather than behaving like
+      a from-scratch Generate.
+    - Locks belong to a specific persisted version and logical
+      occurrence (`locked_occurrence`, keyed exactly like the existing
+      in-memory `OccurrenceKey`), never to the global
+      `TeachingRequirement` -- unchanged from the already-implemented
+      Phase 2C semantics (Decision #16-19).
+
+    **Schema** (proposed now, implemented in Phase 3A3.1 -- not yet
+    created):
+
+    `schedule`: `id BIGINT IDENTITY` PK; `academic_year_id BIGINT NOT
+    NULL REFERENCES academic_year(id) ON DELETE CASCADE`;
+    `UNIQUE(academic_year_id)` (Decision 1), explicitly named
+    `uq_schedule_academic_year_id` (this exact name is required -- see
+    "Concurrent double-Generate race" below, which matches violations of
+    it by name); `UNIQUE(academic_year_id, id)` (composite-FK target for
+    `schedule_version`);
+    `active_version_id BIGINT NULL` (nullable only for the brief window
+    between creating `schedule` and creating its first version -- see
+    the active-version FK design below). **No public natural schedule
+    ID is introduced.** The canonical schedule is fully identified by
+    `(school_id, academic_year_id)` alone in every public API -- the
+    same two natural IDs `/config` already uses -- so a `natural_id`
+    column on `schedule` would have no caller that needs it; one is
+    added only if a concrete future requirement proves otherwise.
+
+    `schedule_version`: `id BIGINT IDENTITY` PK; `academic_year_id
+    BIGINT NOT NULL REFERENCES academic_year(id) ON DELETE CASCADE`
+    (denormalized down, matching every other child-of-child table in
+    this schema); `schedule_id BIGINT NOT NULL`, composite FK
+    `(academic_year_id, schedule_id) REFERENCES schedule(academic_year_id,
+    id) ON DELETE CASCADE` (a version has no meaning without its
+    schedule -- true owned child); `version_number INTEGER NOT NULL`,
+    `UNIQUE(schedule_id, version_number)`; `parent_version_id BIGINT
+    NULL`, composite FK `(schedule_id, parent_version_id) REFERENCES
+    schedule_version(schedule_id, id) ON DELETE NO ACTION` (nullable for
+    the root version; a parent is a same-`Schedule` sibling -- see "Delete
+    action for the lineage/active-version references" below for why
+    this is `NO ACTION`, not `RESTRICT`);
+    `UNIQUE(schedule_id, id)` (composite-FK target for `schedule.
+    active_version_id`, see below); `solver_status TEXT NOT NULL CHECK
+    (solver_status IN ('OPTIMAL','FEASIBLE'))` (only these two ever
+    reach persistence -- `INFEASIBLE`/`INVALID_INPUT`/`ERROR` are never
+    persisted at all, per the transaction-boundary flow);
+    `total_soft_penalty INTEGER NOT NULL`; `wall_time_seconds DOUBLE
+    PRECISION NOT NULL`; `random_seed INTEGER NULL`; `created_at
+    TIMESTAMPTZ NOT NULL DEFAULT now()`. **No public natural version
+    ID is introduced** -- `(school_id, academic_year_id, version_number)`
+    is sufficient to address any version publicly; `version_number`
+    itself is the stable, natural, human-meaningful handle.
+
+    `schedule_entry`: `id BIGINT IDENTITY` PK (no natural ID -- this row
+    has no domain-facing identity of its own, matching
+    `teacher_availability`/`time_preference`'s existing no-natural-ID
+    pattern); `academic_year_id BIGINT NOT NULL REFERENCES
+    academic_year(id) ON DELETE CASCADE`; `schedule_version_id BIGINT
+    NOT NULL`, composite FK `(academic_year_id, schedule_version_id)
+    REFERENCES schedule_version(academic_year_id, id) ON DELETE
+    CASCADE` (true owned child); `source TEXT NOT NULL CHECK (source IN
+    ('REQUIREMENT','RESERVED_BLOCK'))`; `day_id BIGINT NOT NULL`,
+    composite FK to `day(academic_year_id, id) ON DELETE RESTRICT`;
+    `period_id BIGINT NOT NULL`, composite FK to
+    `period(academic_year_id, id) ON DELETE RESTRICT`;
+    `teaching_requirement_id BIGINT NULL`, composite FK to
+    `teaching_requirement(academic_year_id, id) ON DELETE RESTRICT`;
+    `reserved_block_id BIGINT NULL`, composite FK to
+    `reserved_block(academic_year_id, id) ON DELETE RESTRICT`; `CHECK
+    ((source = 'REQUIREMENT') = (teaching_requirement_id IS NOT NULL)
+    AND (source = 'RESERVED_BLOCK') = (reserved_block_id IS NOT NULL))`
+    so exactly one of the two FK columns is populated per row, matching
+    `source`; **`ordinal SMALLINT NOT NULL`**, `UNIQUE(schedule_version_id,
+    ordinal)`. `Schedule.entries` is a `tuple[ScheduleEntry, ...]`, not
+    a set -- SQL row order is never guaranteed, so exact round-trip
+    reconstruction (Phase 3A3.2's own acceptance criterion) requires an
+    explicit ordinal, exactly the same tuple/list-needs-an-ordinal rule
+    already locked for every Phase 3A2.1 table (Decision #26). The
+    persistence writer assigns `ordinal` from `enumerate(schedule.entries)`;
+    the read path reconstructs the tuple `ORDER BY ordinal`, never by
+    unordered `SELECT` result order. **Deliberately not stored**: `activity_id`, `teacher_id`,
+    `participant_group_id`, `resource_id`, `class_sections` -- every one
+    of these is fully re-derivable at read time by joining back to the
+    referenced `teaching_requirement`/`reserved_block`, exactly as
+    `api/serializer.py` already resolves natural IDs for `/config`; no
+    concrete Phase 3A3 correctness requirement forces denormalizing
+    them, and doing so would duplicate configuration data across every
+    version indefinitely for no benefit. **Known, accepted limitation**:
+    because Phase 3A2 has no configuration versioning (one persisted
+    `SchedulingProblem` snapshot per `academic_year_id`, mutable only by
+    a not-yet-existing future write path), a historical
+    `ScheduleVersion` reloaded later will show the *current*
+    configuration's teacher/activity/policy values for its
+    `teaching_requirement_id`/`reserved_block_id` joins, not necessarily
+    the values that were true when that version was generated. This is
+    accepted for the current MVP specifically because production
+    configuration editing does not exist yet -- "current config" and
+    "config at generation time" are provably identical by construction
+    until a config-write path is introduced. Solving this (e.g. by
+    snapshotting configuration into each version) is out of scope for
+    Phase 3A3 and must not be invented speculatively now.
+
+    `locked_occurrence`: no surrogate PK -- the natural composite key
+    mirrors the domain's own `OccurrenceKey` exactly (same pattern as
+    `teacher_availability`'s no-surrogate-PK design). `academic_year_id
+    BIGINT NOT NULL REFERENCES academic_year(id) ON DELETE CASCADE`;
+    `schedule_version_id BIGINT NOT NULL`, composite FK
+    `(academic_year_id, schedule_version_id) REFERENCES
+    schedule_version(academic_year_id, id) ON DELETE CASCADE`;
+    `teaching_requirement_id BIGINT NOT NULL`, composite FK to
+    `teaching_requirement(academic_year_id, id) ON DELETE RESTRICT`;
+    `day_id BIGINT NOT NULL`, composite FK to `day(academic_year_id,
+    id) ON DELETE RESTRICT`; `anchor_period_id BIGINT NOT NULL`,
+    composite FK to `period(academic_year_id, id) ON DELETE RESTRICT`;
+    `PRIMARY KEY (schedule_version_id, teaching_requirement_id, day_id,
+    anchor_period_id)`. Deliberately **no `ordinal` column**: unlike
+    `schedule_entry.entries` (a `tuple`, needing one), the in-memory
+    type here is `Schedule.locked_occurrences: frozenset[OccurrenceKey]`
+    -- a genuine set with no order to preserve, so adding an ordinal
+    would be exactly the "column the domain type doesn't need" this
+    schema otherwise avoids. A freshly generated version 1 normally has zero rows here; the
+    table exists now purely so Phase 3A4's persisted editing/
+    reoptimization semantics (which need locks scoped to a specific
+    persisted version) do not force a schema redesign later.
+
+    **Active-version circular FK.** `schedule.active_version_id` is
+    guaranteed to belong to that same `schedule` row by a composite FK:
+    `FOREIGN KEY (id, active_version_id) REFERENCES
+    schedule_version(schedule_id, id)` (requiring `schedule_version`'s
+    `UNIQUE(schedule_id, id)` above as its target). Creation sequence,
+    exactly: (1) insert `schedule` with `active_version_id NULL` (the
+    column is nullable for exactly this reason); (2) insert the
+    `schedule_version` row for version 1 (`schedule_id` = that
+    schedule's `id`); (3) `UPDATE schedule SET active_version_id =
+    <version 1's id>`. At the moment step (3) executes, the referenced
+    `schedule_version` row from step (2) already exists as a committed
+    (or at least already-inserted, same-transaction) row -- so ordinary
+    immediate, non-deferred FK enforcement is sufficient for this
+    specific three-step sequence, and no `DEFERRABLE` constraint is
+    needed. This is a narrow claim about *this* sequence only, not a
+    general statement about when PostgreSQL checks constraints in
+    other contexts. Delete action on this FK is `NO ACTION` -- see the
+    dedicated subsection immediately below for why, and how that
+    differs from the ordinary cross-entity `RESTRICT` rule this schema
+    otherwise uses.
+
+    **Delete action for the lineage/active-version references.**
+    `schedule.active_version_id -> schedule_version` and
+    `schedule_version.parent_version_id -> schedule_version` are not
+    ordinary cross-entity references (Decision #26's category C,
+    `RESTRICT`) -- they participate in the version graph's own
+    self-lineage/back-reference cycle, while the owning
+    `academic_year -> schedule -> schedule_version -> schedule_entry`/
+    `locked_occurrence` chain must still support whole-snapshot root
+    deletion via `CASCADE` (Decision #26's category A/B, unchanged and
+    still `CASCADE` throughout). Using plain cross-entity `RESTRICT` on
+    the two lineage edges would work for a *direct*, isolated delete of
+    one `schedule_version` row, but would needlessly complicate --  or
+    on some engines outright block -- the *root* cascade that must still
+    be able to remove the entire version graph in one `academic_year`
+    (or, transitively, `schedule`) deletion, since `RESTRICT` and
+    `CASCADE` interacting on the same target row across different FK
+    paths is exactly the kind of interaction this schema otherwise
+    avoids by keeping ownership edges and lineage edges on genuinely
+    different delete actions.
+
+    Locked behavior: both `schedule.active_version_id -> schedule_version`
+    and `schedule_version.parent_version_id -> schedule_version` use
+    PostgreSQL's ordinary default, `ON DELETE NO ACTION` (i.e. no
+    explicit `ON DELETE` clause at all) -- not `RESTRICT`, not
+    `SET NULL`, not `DEFERRABLE`, no trigger. Concretely:
+    - A direct `DELETE FROM schedule_version WHERE id = <active
+      version>` fails: `schedule.active_version_id` still points at it
+      when that statement's constraints are checked, and `NO ACTION`
+      rejects exactly like `RESTRICT` would in this isolated case.
+    - A direct `DELETE FROM schedule_version WHERE id = <a parent still
+      referenced by a child's parent_version_id>` likewise fails, for
+      the same reason.
+    - A `DELETE FROM academic_year WHERE id = <this year>` (or,
+      transitively, a `schedule` row's own `CASCADE` chain) removes
+      every `schedule_version` row for that year together, in the same
+      statement, via the owning `CASCADE` edges -- by the time `NO
+      ACTION`'s check would otherwise fire, the referencing
+      `active_version_id`/`parent_version_id` values have already been
+      removed along with everything else in that one cascade, so
+      nothing is left to violate the constraint.
+    - No `SET NULL` is used (an active-version pointer or a lineage
+      link silently going `NULL` would misrepresent history); no
+      `DEFERRABLE` is used (not needed for either the creation sequence
+      above or the deletion behavior here); no trigger is used (Decision
+      #21's existing preference for application-level, not
+      database-mechanism, enforcement, reinforced by Decision #31's own
+      immutability section below).
+    - This is pure defense-in-depth, not a user-facing delete feature:
+      no repository method ever deletes a `schedule_version` directly
+      in Phase 3A3 (see the immutability section below); the only
+      delete path that must keep working is the existing whole-snapshot
+      `academic_year` root cascade Phase 3A2.1 already proved.
+
+    **Required Phase 3A3.1 live-PostgreSQL tests** (to be written when
+    that slice is implemented, not now): (1) deleting the current
+    active `schedule_version` directly is rejected; (2) deleting a
+    `schedule_version` that is still referenced as another version's
+    `parent_version_id` is rejected; (3) deleting the owning
+    `academic_year` root successfully cascades the entire `schedule` /
+    `schedule_version` / `schedule_entry` / `locked_occurrence` graph in
+    one statement, mirroring the existing Phase 3A2.1 whole-snapshot
+    delete test. If real PostgreSQL behavior during 3A3.1 implementation
+    contradicts this design (e.g. the root cascade does not in fact
+    clear the lineage/active-version references before `NO ACTION`
+    would check them), implementation must **stop and report** the
+    contradiction rather than silently altering these locked semantics.
+
+    **Concurrent double-Generate race.** Owner Decision 2 (Generate
+    only when no canonical `Schedule` exists) has an inherent
+    check-then-act race: two concurrent requests can each observe "no
+    `Schedule` exists" via `get_active_schedule` and both proceed
+    through preflight/solve/verify to `persist_initial_version`. The
+    database's `schedule.UNIQUE(academic_year_id)` constraint --
+    explicitly named **`uq_schedule_academic_year_id`**, following the
+    same deterministic `uq_<table>_<columns>` naming convention every
+    other constraint in `persistence/models.py` already uses (e.g.
+    `uq_academic_year_school_natural_id`, `uq_day_ay_natural_id`) -- is
+    the actual final concurrency guard, not the earlier application-level
+    check, which is only an optimization to fail fast in the common
+    case. Locked behavior: `persist_initial_version` is atomic -- it
+    creates `schedule` + `schedule_version` 1 + its `schedule_entry`
+    rows + the `active_version_id` pointer inside one single write
+    transaction (the three-step sequence above), never partially. If
+    that transaction's `INSERT` into `schedule` loses the race, the
+    persistence adapter must catch **specifically** a violation of the
+    `uq_schedule_academic_year_id` constraint by name -- never a bare
+    "any `IntegrityError`" -- and translate only that exact violation
+    into the same `ScheduleAlreadyExists` application-level outcome
+    Owner Decision 2 already defines for the ordinary pre-check case;
+    a raw SQLAlchemy `IntegrityError` must never propagate to the API
+    layer, and this expected, normal race must never surface as `500`.
+    The losing transaction's partial rows (whatever was written before
+    the conflicting `INSERT`) roll back automatically as part of that
+    transaction failing -- no orphaned `schedule_version`/`schedule_entry`
+    rows survive a lost race. Any *other* integrity violation caught
+    during this write (one not matching `uq_schedule_academic_year_id`
+    by name -- an unrelated FK/CHECK/UNIQUE failure) is a genuine defect
+    and must propagate as
+    one, never silently reinterpreted as `ScheduleAlreadyExists`. No
+    distributed lock, advisory lock, or job queue is introduced for
+    this in Phase 3A3 -- the unique constraint plus one atomic
+    transaction plus this one narrow exception translation is the
+    complete MVP concurrency strategy.
+
+    **Application architecture.** `application/`'s first genuine
+    orchestration service, `GenerateScheduleService` (not a generic
+    `ScheduleService`), depends only on: the existing
+    `application.ports.SchedulingProblemRepository`;
+    `validation.preflight.run_preflight`; `scheduling.solver.solve`;
+    `verification.verifier.verify`; and one new application-owned port,
+    below. It must not depend on SQLAlchemy, ORM models, concrete
+    persistence adapters, or FastAPI -- identical boundary discipline to
+    every prior `application/` rule (Decision #27, #29).
+
+    **`SchedulingProblemRepository` session-ownership clarification for
+    generation (no new port introduced).** `application/` continues to
+    own and use the existing `application.ports.SchedulingProblemRepository`
+    Protocol unchanged -- differing session-ownership semantics between
+    call sites is not, by itself, a reason to duplicate an application
+    port; the Protocol's contract (`load_by_school_and_year(...) ->
+    SchedulingProblem`) is already session-agnostic by design. What must
+    change is which *concrete* implementation of that Protocol Phase
+    3A3's generation composition wires in. The existing concrete
+    adapter, `persistence.problem_repository.SqlAlchemySchedulingProblemRepository`,
+    is **session-bound**: it is constructed with an already-open
+    `Session` (exactly how `api/dependencies.py`'s
+    `get_scheduling_problem_repository` wires it today, from the
+    request-scoped `get_session()` FastAPI dependency, for the simple
+    `GET /config` read). That construction pattern is correct and may
+    remain exactly as-is for the `/config` read path -- it is not
+    redesigned by this ADR. It **must not** be reused as-is for
+    generation: injecting a request-scoped, already-open `Session`
+    into `GenerateScheduleService`'s repository call would keep that
+    `Session` open for however long the subsequent CP-SAT solve takes,
+    directly violating Owner Decision 4.
+
+    Instead, Phase 3A3's generation composition must use a concrete
+    implementation of the *same* `SchedulingProblemRepository` Protocol
+    whose `load_by_school_and_year(...)` call **owns its own short
+    `Session` internally**, backed by a session factory rather than an
+    injected instance: it opens a `Session`, loads and fully detaches
+    the frozen `SchedulingProblem`, closes that `Session`, and only then
+    returns the plain domain object -- exactly mirroring the read
+    half of Owner Decision 4's three-phase flow. `GenerateScheduleService`
+    calls this exactly as it would call any other port implementation;
+    it receives a `SchedulingProblem`, never a `Session`, and only
+    *after* that call returns (and the `Session` behind it has already
+    closed) does preflight/solve/verify begin. The exact class/file
+    name for this session-owning implementation is a Phase 3A3.2/3A3.3
+    implementation detail, not decided here -- the one invariant locked
+    now is: **`GenerateScheduleService` receives repository *ports*,
+    never SQLAlchemy `Session`s, and both the configuration-read
+    operation and the schedule-write operation it depends on must each
+    own their own short-lived session internally**, never a session
+    handed to them from outside that could outlive their own single
+    operation.
+
+    **Minimal new application-owned port**, `ScheduleVersionRepository`
+    (named for the operation it actually performs, not a generic
+    `ScheduleRepository`):
+    ```python
+    class ScheduleVersionRepository(Protocol):
+        def get_active_schedule(
+            self, school_natural_id: str, academic_year_natural_id: str,
+        ) -> ActiveScheduleVersion | None:
+            """None if no Schedule exists yet for this school/year."""
+            ...
+
+        def persist_initial_version(
+            self,
+            school_natural_id: str,
+            academic_year_natural_id: str,
+            entries: tuple[ScheduleEntry, ...],
+            solver_status: SolverStatus,
+            total_soft_penalty: int,
+            wall_time_seconds: float,
+            random_seed: int | None,
+        ) -> ActiveScheduleVersion:
+            """Creates Schedule + its first ScheduleVersion (version_number=1,
+            parent_version_id=None) and marks it active, atomically."""
+            ...
+    ```
+    `ActiveScheduleVersion` is a plain application-owned dataclass
+    (`version_number: int`, `solver_status: SolverStatus`,
+    `total_soft_penalty: int`, `wall_time_seconds: float`,
+    `random_seed: int | None`, `created_at: datetime`,
+    `entries: tuple[ScheduleEntry, ...]`, `locked_occurrences:
+    frozenset[OccurrenceKey]`) -- never an ORM row, never Pydantic. No
+    `delete`, `update_version`, `list_all_versions`, scenario CRUD, or
+    append/reoptimize method is added -- none is needed until Phase 3A4
+    actually scopes the use case that would need it (Decision #12).
+
+    **Generation outcome model.** `GenerateScheduleService` returns one
+    of a small closed set of application-level outcomes, kept distinct
+    from internal defects:
+    - `ConfigNotFound` (school/year config does not resolve --
+      `SchedulingProblemNotFoundError` from the existing repository)
+    - `ScheduleAlreadyExists` (Owner Decision 2's conflict, including
+      the losing side of the concurrent double-Generate race above)
+    - `InvalidConfiguration` (preflight returned errors; carries the
+      `ValidationError`s, safe to surface -- they describe the school's
+      own configuration problems, never internals)
+    - `Infeasible` (CP-SAT proved no solution exists under the
+      configuration's current HARD constraints -- an expected, real
+      outcome, not a defect; distinct from `InvalidConfiguration`: the
+      configuration itself is valid, it simply admits no feasible
+      timetable)
+    - `SolverError` (internal solver/model-builder failure -- a defect;
+      never expose the raw exception string through any future API)
+    - `VerifierFailed` (solver claimed success but the independent
+      verifier disagreed -- an internal defect per Decision #11's
+      existing rule, never persisted, never returned as a valid
+      schedule)
+    - `Generated(ActiveScheduleVersion)` (success)
+
+    **HTTP contract** (to be implemented in Phase 3A3.4, not now):
+    `POST /schools/{school_id}/years/{year_id}/schedule/generate` --
+    success response carries only public/domain concepts, never a
+    surrogate `schedule_version` ID: `{"version_number": 1,
+    "solver_status": "OPTIMAL", "total_soft_penalty": 0, "created_at":
+    "...", "is_active": true}`. No raw entry list in this response --
+    that is the read endpoint's job. `GET /schools/{school_id}/years/
+    {year_id}/schedule/active` returns the active version's metadata
+    plus a flat entry list using only natural/domain IDs, ordered
+    exactly by the persisted `schedule_entry.ordinal` (that column
+    itself is never exposed in the response body -- it is
+    persistence-only ordering infrastructure, not a public field, same
+    rule as every other `ordinal` in this schema per Decision #26).
+
+    Each entry in that list carries, at minimum: `source` (`"REQUIREMENT"`
+    or `"RESERVED_BLOCK"`), `day_id`, `period_id`, `requirement_id: str |
+    None`, and `reserved_block_id: str | None` -- exactly one of the
+    latter two populated, consistent with `source`
+    (`REQUIREMENT` -> `requirement_id` set, `reserved_block_id` `None`;
+    `RESERVED_BLOCK` -> the reverse). These two fields are **not**
+    denormalized display convenience -- they are the persisted entry's
+    actual domain source identity, exactly mirroring the
+    `schedule_entry.teaching_requirement_id`/`reserved_block_id`
+    columns, and must not be dropped from the generic read contract:
+    different `TeachingRequirement` rows sharing the same derived
+    `activity_id`/`teacher_id` would otherwise be indistinguishable
+    from the response alone, and future logical-occurrence/manual-edit
+    semantics (Phase 3A4) are `requirement_id`-keyed, not
+    activity/teacher-keyed. The API additionally exposes the derived
+    natural/domain fields already established (`activity_id`,
+    `teacher_id`, `participant_group_id`, `resource_id`,
+    `class_sections`), resolved via the same join-and-serialize
+    discipline `/config` already established -- hand-designed Pydantic
+    response models, never `dataclasses.asdict()`, never an ORM row, no
+    `ordinal`/surrogate field anywhere, consistent with Decision #30.
+    This is a generic flat data contract, not a UI-shaped one -- it
+    does not group entries by day/period/class, and it is not Phase
+    3B's "ordered days -> periods -> cells" projection.
+
+    **HTTP failure mapping** (fully locked -- zero remaining owner
+    decisions): `ConfigNotFound` -> **404**, reusing the exact existing
+    `/config` not-found contract *unchanged* -- `{"detail": "Scheduling
+    configuration not found"}`, no `code` field. This ADR does **not**
+    redesign that Phase 3A2.4 contract; the generation endpoint returns
+    the identical body for the identical underlying
+    `SchedulingProblemNotFoundError`, precisely because nothing about
+    "the configuration doesn't exist" changes meaning between reading
+    it and generating from it.
+
+    The three outcomes genuinely specific to generation each carry a
+    stable, distinct `code` string precisely because they are new
+    expected-failure/conflict shapes with no existing contract to
+    reuse, and two of them share an HTTP status: `InvalidConfiguration`
+    -> **422**, body including `{"code": "INVALID_CONFIGURATION", ...}`
+    plus the safe `ValidationError` codes/messages -- means the
+    configuration itself failed preflight/semantic validation.
+    `Infeasible` -> **409**, body `{"code": "SCHEDULE_INFEASIBLE", ...}`
+    -- means the configuration is valid but its current HARD constraints
+    admit no feasible timetable. `ScheduleAlreadyExists` -> **409**,
+    body `{"code": "SCHEDULE_ALREADY_EXISTS", ...}`. `ScheduleAlreadyExists`
+    and `Infeasible` deliberately **share HTTP 409** but are different
+    outcomes with different causes and different `code` values --
+    clients must branch on `code`, not status code alone, to tell these
+    two apart. This `code` requirement is scoped to exactly these three
+    generation-specific outcomes, not a claim that every 4xx response
+    anywhere in the system already carries one (`ConfigNotFound`'s
+    reused 404 above is the explicit counterexample); unifying the
+    API's error envelope more broadly, if ever wanted, is separate
+    future work, not introduced by this ADR. `SolverError` -> 500,
+    generic body only, no `code` needed (not a client-actionable
+    outcome). `VerifierFailed` -> 500, generic body only, logged loudly
+    server-side with full violation detail, never returned to the
+    caller. No response in any of these paths ever includes SQL text,
+    stack traces, surrogate IDs, or CP-SAT-internal fields. The exact
+    JSON envelope beyond "a stable `code` string plus whatever safe
+    diagnostic fields each of the three generation-specific outcomes
+    needs" is a Phase 3A3.4 implementation detail, not fixed further
+    here.
+
+    **Immutability enforcement, MVP level**: frozen domain objects
+    (`ScheduleVersion`... already frozen at the domain level once
+    introduced) plus **no `update`/`delete` method anywhere in
+    `ScheduleVersionRepository` or its adapter** plus the relational
+    FK/uniqueness constraints above. No PostgreSQL trigger is added in
+    Phase 3A3 -- triggers would be real belt-and-suspenders but are
+    unjustified machinery at the current single-application-writer
+    scope (no second write path, no raw SQL console, no external
+    service touches these tables), matching this codebase's existing
+    preference for application-level immutability guarantees over
+    database-mechanism ones (Decision #21).
