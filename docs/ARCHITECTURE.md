@@ -38,21 +38,22 @@ no solver/schedule-generation endpoint -- see `docs/PROJECT_STATE.md`
 and `DECISIONS.md` #26-30 for exactly what Phase
 3A2.1/3A2.2/3A2.3/3A2.4 do and do not include.
 
-**Phase 3A3 (design locked, not yet implemented)** connects this
-DB-backed `SchedulingProblem` to the existing solver and persists
-generated results as immutable `ScheduleVersion` snapshots -- see
-`DECISIONS.md` #31 for the full locked schema, application-service, and
-API design. One canonical `Schedule` per School+AcademicYear;
+**Phase 3A3 (design locked; schema implemented pending review)**
+connects this DB-backed `SchedulingProblem` to the existing solver and
+persists generated results as immutable `ScheduleVersion` snapshots --
+see `DECISIONS.md` #31 for the full locked schema, application-service,
+and API design. One canonical `Schedule` per School+AcademicYear;
 generation is initial-generation-only (a second `Generate` call
 conflicts, 409, rather than reoptimizing or appending); a new
 `GenerateScheduleService` in `application/` orchestrates
 load -> preflight -> solve -> require success -> verify -> persist,
-using one new application-owned port,
-`ScheduleVersionRepository`. No `schedule`/`schedule_version`/
-`schedule_entry`/`locked_occurrence` ORM model, migration, repository
-adapter, service, or API route exists in the repository yet -- Phase
-3A3.1 (schema + migration) is the first implementation slice, not
-started.
+using one new application-owned port, `ScheduleVersionRepository`.
+Phase 3A3.1's `schedule`/`schedule_version`/`schedule_entry`/
+`locked_occurrence` ORM models and Alembic migration now exist (on
+feature branch `feature/phase-3a3-1-schedule-schema`, not yet merged);
+no repository adapter, application service, or API route exists yet --
+Phase 3A3.2 (mappers + repository adapter) is the next implementation
+slice, not started.
 
 ```
 src/school_timetable/
@@ -188,12 +189,12 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of the Phase 3A3 ADR (design locked, implementation not started):
-no domain -> persistence write path in production code, no
-`schedule`/`schedule_version`/`schedule_entry`/`locked_occurrence` ORM
-models or migration, no `GenerateScheduleService` or
-`ScheduleVersionRepository`, no `POST .../schedule/generate` or
-`GET .../schedule/active` endpoint, no application service layer of any
+As of Phase 3A3.1 (pending review, not yet merged): no domain ->
+persistence write path in production code, no `GenerateScheduleService`
+or `ScheduleVersionRepository`, no domain <-> persistence mapping or
+repository adapter for the new schedule tables, no
+`POST .../schedule/generate` or `GET .../schedule/active` endpoint, no
+application service layer of any
 kind yet, no frontend, no auth. `docker-compose.yml` provides a local
 development PostgreSQL only -- no application
 containerization/deployment setup exists yet. These arrive starting

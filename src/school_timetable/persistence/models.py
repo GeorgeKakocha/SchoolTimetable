@@ -1,5 +1,4 @@
-"""SQLAlchemy ORM models for the Phase 3A2 persisted scheduling-configuration
-schema.
+"""SQLAlchemy ORM models for the Phase 3A2/3A3 persisted scheduling schema.
 
 Persists the complete current `SchedulingProblem` input surface (School,
 AcademicYear, Day, Period, ClassSection, ParticipantGroup, Teacher,
@@ -8,15 +7,23 @@ TimePreference, ReservedBlock, FixedPlacement, and their child/join
 tables) as a snapshot scoped to one `academic_year_id` -- see
 `docs/DECISIONS.md` #26 and `docs/ARCHITECTURE.md` for the locked
 schema/identity/isolation/ordering/delete-semantics rules these models
-implement exactly. `Schedule`/`ScheduleVersion`/`ScheduleEntry` are not
-part of this phase.
+implement exactly.
+
+Phase 3A3.1 (`docs/DECISIONS.md` #31) adds `Schedule`, `ScheduleVersion`,
+`ScheduleEntry`, and `LockedOccurrence`: one immutable generated-schedule
+history per `academic_year_id`. Schema only -- no domain <-> persistence
+mapping, repository, application service, or API route exists for these
+tables yet (that is Phase 3A3.2+).
 
 Deliberately separate classes from `domain/`'s frozen dataclasses (see
-`persistence/base.py`); no domain <-> persistence mapping exists yet
-(that is Phase 3A2.2). These classes carry no `relationship()`
-navigation on purpose -- nothing in this phase reads the ORM object
-graph, only plain columns/constraints, so adding `relationship()` now
-would be unused surface area.
+`persistence/base.py`). Explicit ORM -> domain mapping for the
+configuration tables above already exists (`persistence/mappers.py`,
+Phase 3A2.2); mapping for `Schedule`/`ScheduleVersion`/`ScheduleEntry`/
+`LockedOccurrence` is not part of Phase 3A3.1 and begins in Phase
+3A3.2. These classes carry no `relationship()` navigation on purpose --
+nothing in this phase reads the ORM object graph, only plain
+columns/constraints, so adding `relationship()` now would be unused
+surface area.
 
 Identity rule: every table's surrogate `id` (where one exists) is a
 `BIGINT GENERATED ALWAYS AS IDENTITY`, persistence-only, never exposed
@@ -29,10 +36,14 @@ id)` -- every table that is a valid FK target additionally carries
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    DateTime,
+    Double,
     ForeignKeyConstraint,
     Identity,
     Index,
@@ -555,4 +566,230 @@ class FixedPlacement(Base):
             name="fk_fixed_placement_period",
         ),
         Index("ix_fixed_placement_teaching_requirement", "teaching_requirement_id"),
+    )
+
+
+class Schedule(Base):
+    """The one canonical generated-schedule aggregate for one academic
+    year (Phase 3A3.1, Decision #31 Owner Decision 1). No natural ID --
+    publicly identified by `(school_id, academic_year_id)` alone, the
+    same two natural IDs `/config` already uses. `active_version_id` is
+    nullable only for the brief window between creating this row and
+    creating its first `ScheduleVersion`."""
+
+    __tablename__ = "schedule"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    active_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", name="uq_schedule_academic_year_id"),
+        UniqueConstraint("academic_year_id", "id", name="uq_schedule_ay_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_schedule_academic_year"
+        ),
+        # Circular reference: `schedule` <-> `schedule_version` mutually
+        # reference each other. `use_alter=True` defers this specific
+        # constraint to a post-CREATE-TABLE `ALTER TABLE ADD CONSTRAINT`
+        # (and, on drop, an `ALTER TABLE DROP CONSTRAINT` before either
+        # table is dropped) -- SQLAlchemy's standard mechanism for a
+        # genuine two-table FK cycle. No `DEFERRABLE` is used or needed:
+        # the creation sequence (insert `schedule` with `active_version_id`
+        # NULL, insert version 1, then `UPDATE schedule SET
+        # active_version_id = ...`) never needs the two rows to exist
+        # simultaneously within one statement -- see Decision #31.
+        ForeignKeyConstraint(
+            ["id", "active_version_id"],
+            ["schedule_version.schedule_id", "schedule_version.id"],
+            name="fk_schedule_active_version",
+            use_alter=True,
+            # No `ondelete` -- PostgreSQL's default `NO ACTION`, per
+            # Decision #31's "Delete action for the lineage/active-version
+            # references" (deliberately not `RESTRICT`, so a whole-
+            # snapshot `academic_year` root delete can still cascade the
+            # entire version graph away in one statement).
+        ),
+    )
+
+
+class ScheduleVersion(Base):
+    """One immutable generated/edited schedule snapshot (Phase 3A3.1,
+    Decision #31). No natural ID -- publicly identified by
+    `(school_id, academic_year_id, version_number)`. `solver_status`
+    only ever persists `OPTIMAL`/`FEASIBLE`; `INFEASIBLE`/
+    `INVALID_INPUT`/`ERROR` are never persisted at all (Owner Decision 4's
+    transaction-boundary flow only writes after the independent verifier
+    has passed)."""
+
+    __tablename__ = "schedule_version"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    schedule_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    solver_status: Mapped[str] = mapped_column(Text, nullable=False)
+    total_soft_penalty: Mapped[int] = mapped_column(Integer, nullable=False)
+    wall_time_seconds: Mapped[float] = mapped_column(Double, nullable=False)
+    random_seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "version_number", name="uq_schedule_version_schedule_version_number"),
+        UniqueConstraint("schedule_id", "id", name="uq_schedule_version_schedule_id"),
+        UniqueConstraint("academic_year_id", "id", name="uq_schedule_version_ay_id"),
+        CheckConstraint(
+            "solver_status IN ('OPTIMAL', 'FEASIBLE')", name="ck_schedule_version_solver_status"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_schedule_version_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "schedule_id"],
+            ["schedule.academic_year_id", "schedule.id"],
+            ondelete="CASCADE",
+            name="fk_schedule_version_schedule",
+        ),
+        # Self-referential lineage FK -- not the schedule<->schedule_version
+        # cycle above, so no `use_alter` is needed (a table may always
+        # reference its own primary/unique key within its own CREATE
+        # TABLE). No `ondelete` -- PostgreSQL's default `NO ACTION`, same
+        # reasoning as `schedule.active_version_id` above.
+        ForeignKeyConstraint(
+            ["schedule_id", "parent_version_id"],
+            ["schedule_version.schedule_id", "schedule_version.id"],
+            name="fk_schedule_version_parent",
+        ),
+    )
+
+
+class ScheduleEntry(Base):
+    """One placed (day, period) decision within an immutable
+    `ScheduleVersion` (Phase 3A3.1, Decision #31). No natural ID -- this
+    row has no domain-facing identity of its own, matching
+    `teacher_availability`/`time_preference`'s existing no-natural-ID
+    pattern. `ordinal` exists because `Schedule.entries` is a
+    `tuple[ScheduleEntry, ...]`, not a set -- SQL row order is never
+    guaranteed, so exact round-trip reconstruction needs an explicit
+    ordinal, the same tuple-needs-an-ordinal rule as every Phase 3A2.1
+    table (Decision #26). Deliberately does NOT store `activity_id`/
+    `teacher_id`/`participant_group_id`/`resource_id`/`class_sections`
+    -- all fully re-derivable by joining back to the referenced
+    `teaching_requirement`/`reserved_block` at read time."""
+
+    __tablename__ = "schedule_entry"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    schedule_version_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    period_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    teaching_requirement_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reserved_block_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("schedule_version_id", "ordinal", name="uq_schedule_entry_version_ordinal"),
+        CheckConstraint(
+            "source IN ('REQUIREMENT', 'RESERVED_BLOCK')", name="ck_schedule_entry_source"
+        ),
+        CheckConstraint(
+            "(source = 'REQUIREMENT') = (teaching_requirement_id IS NOT NULL) "
+            "AND (source = 'RESERVED_BLOCK') = (reserved_block_id IS NOT NULL)",
+            name="ck_schedule_entry_source_reference",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_schedule_entry_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "schedule_version_id"],
+            ["schedule_version.academic_year_id", "schedule_version.id"],
+            ondelete="CASCADE",
+            name="fk_schedule_entry_schedule_version",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "day_id"],
+            ["day.academic_year_id", "day.id"],
+            ondelete="RESTRICT",
+            name="fk_schedule_entry_day",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "period_id"],
+            ["period.academic_year_id", "period.id"],
+            ondelete="RESTRICT",
+            name="fk_schedule_entry_period",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "teaching_requirement_id"],
+            ["teaching_requirement.academic_year_id", "teaching_requirement.id"],
+            ondelete="RESTRICT",
+            name="fk_schedule_entry_teaching_requirement",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "reserved_block_id"],
+            ["reserved_block.academic_year_id", "reserved_block.id"],
+            ondelete="RESTRICT",
+            name="fk_schedule_entry_reserved_block",
+        ),
+    )
+
+
+class LockedOccurrence(Base):
+    """Persisted `OccurrenceKey` set for one `ScheduleVersion` (Phase
+    3A3.1, Decision #31). No surrogate PK -- the natural composite key
+    mirrors the domain's own `OccurrenceKey(requirement_id, day_id,
+    anchor_period_id)` exactly, scoped to its version, matching
+    `teacher_availability`'s existing no-surrogate-PK design. No
+    `ordinal`: unlike `schedule_entry` (a tuple), the in-memory type
+    here is `Schedule.locked_occurrences: frozenset[OccurrenceKey]` --
+    a genuine set with no order to preserve. A freshly generated version
+    1 normally has zero rows here."""
+
+    __tablename__ = "locked_occurrence"
+
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    schedule_version_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    teaching_requirement_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    anchor_period_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "schedule_version_id", "teaching_requirement_id", "day_id", "anchor_period_id",
+            name="pk_locked_occurrence",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_locked_occurrence_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "schedule_version_id"],
+            ["schedule_version.academic_year_id", "schedule_version.id"],
+            ondelete="CASCADE",
+            name="fk_locked_occurrence_schedule_version",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "teaching_requirement_id"],
+            ["teaching_requirement.academic_year_id", "teaching_requirement.id"],
+            ondelete="RESTRICT",
+            name="fk_locked_occurrence_teaching_requirement",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "day_id"],
+            ["day.academic_year_id", "day.id"],
+            ondelete="RESTRICT",
+            name="fk_locked_occurrence_day",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "anchor_period_id"],
+            ["period.academic_year_id", "period.id"],
+            ondelete="RESTRICT",
+            name="fk_locked_occurrence_anchor_period",
+        ),
     )
