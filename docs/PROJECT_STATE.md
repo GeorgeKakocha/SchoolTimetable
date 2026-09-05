@@ -534,10 +534,50 @@ but the same status and no-`code` shape as, the existing unknown-config
 `404` (`{"detail": "Scheduling configuration not found"}`); no new
 stable `code` (e.g. `SCHEDULE_NOT_FOUND`) is introduced -- the stable
 `code` set remains exactly `INVALID_CONFIGURATION`/
-`SCHEDULE_INFEASIBLE`/`SCHEDULE_ALREADY_EXISTS`. The next authorized
-action is **Phase 3A3.4 implementation only** (the HTTP composition
-root: routes, response schemas/serialization, and application-error ->
-HTTP mapping, exactly as now locked).
+`SCHEDULE_INFEASIBLE`/`SCHEDULE_ALREADY_EXISTS`.
+
+**Phase 3A3.4 is implemented on feature branch
+`feature/phase-3a3-4-schedule-api`, pending review -- not yet merged to
+`main`.** Adds `api/schedule_routes.py`'s `POST
+/schools/{school_id}/years/{year_id}/schedule/generate` and `GET
+/schools/{school_id}/years/{year_id}/schedule/active`, implementing the
+locked contract above exactly: `api/schemas.py` gains
+`GenerateScheduleResponse`/`ActiveScheduleResponse`/
+`ScheduleEntryResponse`/`ValidationDiagnosticResponse`/
+`InvalidConfigurationResponse`/`GenerationErrorResponse` (hand-written,
+no domain/persistence imports); `api/serializer.py` gains pure
+field-by-field serializers from `ActiveScheduleVersion`/`ScheduleEntry`/
+`ValidationError` to those response models -- no DB query, no
+scheduling logic recreated, exact entry order preserved; `api/dependencies.py`
+gains `get_schedule_version_repository`/`get_generate_schedule_service`,
+both session-factory-backed against the existing `SessionLocal` (never
+`Depends(get_session)`), so `GenerateScheduleService` never receives a
+request-scoped `Session` across a solve -- the existing
+`get_scheduling_problem_repository`/`/config` dependency is unchanged.
+Both new routes depend only on `application/` ports/services, never a
+concrete `persistence/` class directly. Error mapping implemented
+exactly as locked: `SchedulingProblemNotFoundError` -> 404 (existing
+`/config`-identical body); GET's "no `Schedule` yet" -> its own distinct
+404; `ScheduleAlreadyExistsError`/`ScheduleInfeasibleError` -> 409 with
+their stable `code`; `InvalidSchedulingConfigurationError` -> 422 with
+`code` plus the validator's own diagnostics in original order;
+`ScheduleGenerationError`/`ScheduleVerificationFailedError`/
+`persistence.schedule_repository.CorruptScheduleStateError`/any other
+unexpected exception are deliberately NOT caught in the route and reach
+FastAPI's normal generic-500 behavior, never leaking internal detail.
+Proven with 5 new DB-free serializer tests
+(`tests_web/test_api_serializer.py`) and 11 new real-PostgreSQL/
+real-solver/real-verifier HTTP integration tests
+(`tests_web/test_schedule_api.py`) covering the full success/failure
+matrix (POST success/no-request-body/duplicate/invalid-config/
+infeasible/internal-solver-error/verifier-failure, GET
+success/unknown-config/no-schedule-yet/corrupt-state), each internal-500
+case proving the injected secret text never reaches the response body.
+Existing `/config` tests (`test_config_api.py`) pass unchanged. No
+migration/schema change, no solver/verifier semantic change, no
+application/persistence contract change -- **Phase 3B has NOT
+started.** The next authorized action after review/merge is Phase 3B
+only.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 

@@ -38,29 +38,28 @@ no solver/schedule-generation endpoint -- see `docs/PROJECT_STATE.md`
 and `DECISIONS.md` #26-30 for exactly what Phase
 3A2.1/3A2.2/3A2.3/3A2.4 do and do not include.
 
-**Phase 3A3 (design locked; schema, persistence mapping/adapter, and
-application orchestration all merged; no API yet)** connects this
-DB-backed `SchedulingProblem` to the existing solver and persists
-generated results as immutable `ScheduleVersion` snapshots -- see
-`DECISIONS.md` #31 for the full locked schema, application-service, and
-API design. One canonical `Schedule` per School+AcademicYear; generation
-is initial-generation-only (a second `Generate` call conflicts, 409,
-rather than reoptimizing or appending). Phase 3A3.1's
-`schedule`/`schedule_version`/`schedule_entry`/`locked_occurrence` ORM
-models and Alembic migration (`4681f7a362bd`) are merged to `main`.
-Phase 3A3.2 (schedule persistence mapping, `ScheduleVersionRepository` +
-its `SqlAlchemyScheduleVersionRepository` adapter, and a
-session-factory-backed `SchedulingProblemRepository` implementation for
-generation use) is likewise merged to `main`. Phase 3A3.3's
-`application.generate_schedule_service.GenerateScheduleService` -- the
-new application-owned orchestration service Decision #31 calls for --
-is likewise merged to `main`: it orchestrates load -> preflight ->
-solve -> require success -> verify -> persist using the two existing
-repository ports, with no API route, FastAPI dependency, or composition
-root wired yet. Phase 3A3.4's HTTP contract (routes, request/response
-shapes, status/error-code mapping) is now fully locked in `DECISIONS.md`
-#31 -- zero remaining owner decisions -- but not yet implemented; it is
-the next implementation slice, not started.
+**Phase 3A3 (design locked; schema, persistence mapping/adapter,
+application orchestration, and the HTTP API all implemented -- pending
+review, not yet merged)** connects this DB-backed `SchedulingProblem` to
+the existing solver and persists generated results as immutable
+`ScheduleVersion` snapshots -- see `DECISIONS.md` #31 for the full
+locked schema, application-service, and API design. One canonical
+`Schedule` per School+AcademicYear; generation is initial-generation-only
+(a second `Generate` call conflicts, 409, rather than reoptimizing or
+appending). Phase 3A3.1's `schedule`/`schedule_version`/`schedule_entry`/
+`locked_occurrence` ORM models and Alembic migration (`4681f7a362bd`)
+are merged to `main`. Phase 3A3.2 (schedule persistence mapping,
+`ScheduleVersionRepository` + its `SqlAlchemyScheduleVersionRepository`
+adapter, and a session-factory-backed `SchedulingProblemRepository`
+implementation for generation use) is likewise merged to `main`. Phase
+3A3.3's `application.generate_schedule_service.GenerateScheduleService`
+is likewise merged to `main`. Phase 3A3.4 (`api/schedule_routes.py`'s
+`POST .../schedule/generate`/`GET .../schedule/active`, their response
+schemas/serializers, and the composition-root wiring in
+`api/dependencies.py`) is implemented on a feature branch, pending
+review, not yet merged to `main` -- see `PROJECT_STATE.md` for the exact
+contract implemented, fully locked (zero remaining owner decisions) in
+`DECISIONS.md` #31.
 
 ```
 src/school_timetable/
@@ -171,7 +170,18 @@ src/school_timetable/
   `fixtures/`. `dependencies.py` is the one composition root importing
   both `application/` and `persistence/` together, wrapping the
   existing per-request `persistence.db.get_session` to construct the
-  concrete repository adapter -- see `DECISIONS.md` #30.
+  concrete repository adapter -- see `DECISIONS.md` #30. (Phase 3A3.4)
+  `schedule_routes.py` adds `GET .../schedule/active` and
+  `POST .../schedule/generate` (both typed against
+  `application.ports.ScheduleVersionRepository`/
+  `application.generate_schedule_service.GenerateScheduleService`, never
+  a concrete adapter); `dependencies.py` gains
+  `get_schedule_version_repository`/`get_generate_schedule_service`,
+  both session-factory-backed against `persistence.db.SessionLocal`
+  directly -- deliberately never `Depends(get_session)`, so generation
+  never holds a request-scoped `Session` open across a solve (Decision
+  #31 Owner Decision 4); `/config`'s own request-scoped dependency is
+  unchanged.
 
 ## Locked direction: ports and adapters (implemented from Phase 3A2.3, wired to `api/` in Phase 3A2.4)
 
@@ -222,11 +232,9 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A3.3 (CLOSED and merged to `main`): `GenerateScheduleService`
-now exists, but no API route, FastAPI dependency, or composition root
-wires it in yet -- no `POST .../schedule/generate` or
-`GET .../schedule/active` endpoint, no React timetable projection, no
-frontend, no auth. `docker-compose.yml` provides a local development
+As of Phase 3A3.4 (implemented on a feature branch, pending review --
+not yet merged to `main`): `POST .../schedule/generate` and
+`GET .../schedule/active` now exist, but no React timetable projection,
+no frontend, no auth. `docker-compose.yml` provides a local development
 PostgreSQL only -- no application containerization/deployment setup
-exists yet. These arrive starting
-Phase 3A3.4 per `DECISIONS.md` #31 and `PROJECT_STATE.md`.
+exists yet. These arrive starting Phase 3B per `PROJECT_STATE.md`.

@@ -1,5 +1,6 @@
 """Explicit Pydantic response models for the read-only scheduling
-configuration API (Phase 3A2.4).
+configuration API (Phase 3A2.4) and, since Phase 3A3.4, the schedule
+generation/read API (`docs/DECISIONS.md` #31's locked HTTP contract).
 
 Hand-designed, one field at a time, mirroring the current `domain/`
 dataclasses exactly -- never a generic `dataclasses.asdict()`/reflection
@@ -8,9 +9,13 @@ by accident (see `docs/DECISIONS.md` #30). Every ID here is the
 domain's own natural string ID; no persistence surrogate `BIGINT` and no
 ORM `ordinal` value is ever exposed. Deliberately imports no
 `domain/`/`persistence/` types itself -- pure wire-contract shapes; the
-mapping from domain objects to these models lives in `api/serializer.py`.
+mapping from domain/application objects to these models lives in
+`api/serializer.py`.
 """
 from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -140,3 +145,81 @@ class SchedulingConfigResponse(BaseModel):
     teacher_availabilities: tuple[TeacherAvailabilityResponse, ...]
     reserved_blocks: tuple[ReservedBlockResponse, ...]
     fixed_placements: tuple[FixedPlacementResponse, ...]
+
+
+# -- Schedule generation/read API (Phase 3A3.4, `docs/DECISIONS.md` #31's
+# locked HTTP contract). ------------------------------------------------
+
+
+class GenerateScheduleResponse(BaseModel):
+    """`POST .../schedule/generate`'s success body -- exactly these five
+    fields, locked by Decision #31: no entries, no `wall_time_seconds`,
+    no `random_seed`, no surrogate ID, no `ordinal`, no CP-SAT
+    telemetry."""
+
+    version_number: int
+    solver_status: Literal["OPTIMAL", "FEASIBLE"]
+    total_soft_penalty: int
+    created_at: datetime
+    is_active: bool
+
+
+class ScheduleEntryResponse(BaseModel):
+    """One flat, locked-shape schedule entry -- exactly one of
+    `requirement_id`/`reserved_block_id` populated, consistent with
+    `source` (Decision #31)."""
+
+    source: Literal["REQUIREMENT", "RESERVED_BLOCK"]
+    day_id: str
+    period_id: str
+    requirement_id: str | None
+    reserved_block_id: str | None
+    activity_id: str
+    teacher_id: str | None
+    participant_group_id: str | None
+    resource_id: str | None
+    class_sections: tuple[str, ...]
+
+
+class ActiveScheduleResponse(BaseModel):
+    """`GET .../schedule/active`'s success body: the same public
+    version-summary fields as `GenerateScheduleResponse`, plus `entries`
+    -- ordered exactly by the persisted `schedule_entry.ordinal`, which
+    is itself never exposed."""
+
+    version_number: int
+    solver_status: Literal["OPTIMAL", "FEASIBLE"]
+    total_soft_penalty: int
+    created_at: datetime
+    is_active: bool
+    entries: tuple[ScheduleEntryResponse, ...]
+
+
+class ValidationDiagnosticResponse(BaseModel):
+    """One safe preflight diagnostic -- mirrors `validation.errors.
+    ValidationError` field-for-field; `context` is already natural-ID-only
+    plain data, never a persistence object."""
+
+    code: str
+    message: str
+    context: dict
+
+
+class InvalidConfigurationResponse(BaseModel):
+    """`POST .../schedule/generate`'s 422 body for
+    `InvalidSchedulingConfigurationError` -- the stable `code` plus the
+    validator's own diagnostics, in their original order."""
+
+    code: Literal["INVALID_CONFIGURATION"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class GenerationErrorResponse(BaseModel):
+    """`POST .../schedule/generate`'s 409 body for
+    `ScheduleAlreadyExistsError`/`ScheduleInfeasibleError` -- a stable
+    `code` plus a safe, fixed detail string; never exception `repr`/`str`,
+    never a persistence/natural ID."""
+
+    code: str
+    detail: str

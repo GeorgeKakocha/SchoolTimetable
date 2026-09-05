@@ -1,4 +1,5 @@
-"""Explicit domain -> API mapping (Phase 3A2.4).
+"""Explicit domain/application -> API mapping (Phase 3A2.4, extended
+Phase 3A3.4).
 
 One pure function, `config_response_from_problem`, converting a frozen
 `SchedulingProblem` into the hand-designed `SchedulingConfigResponse`
@@ -8,28 +9,34 @@ leaks into the public API contract without an explicit decision to add
 it here too (see `docs/DECISIONS.md` #30).
 
 Imports no SQLAlchemy, no `persistence.models`, no `fixtures/`, no
-solver internals -- only `domain/` and this package's own schemas.
-Every top-level and nested tuple here is a direct, order-preserving
-`tuple(... for x in problem.<field>)` over the domain tuple already
-handed to it -- this function never re-sorts or re-orders anything
-itself; exact order is `SchedulingProblemRepository`'s responsibility
-(Phase 3A2.3), already proven there.
+solver internals -- only `domain/`, `application/`, and this package's
+own schemas. Every top-level and nested tuple here is a direct,
+order-preserving `tuple(... for x in ...)` over the tuple already
+handed to it -- this module never re-sorts or re-orders anything
+itself; exact order is the caller's (`SchedulingProblemRepository`/
+`ScheduleVersionRepository`) responsibility, already proven at that
+layer. These functions never query a database and never recreate any
+scheduling/preflight logic -- `ActiveScheduleVersion.entries` already
+carries every field a `ScheduleEntryResponse` needs, fully resolved.
 """
 from __future__ import annotations
 
 from school_timetable.api.schemas import (
     AcademicYearResponse,
+    ActiveScheduleResponse,
     ActivityResponse,
     ClassSectionResponse,
     DayResponse,
     DistributionPolicyResponse,
     FixedPlacementResponse,
+    GenerateScheduleResponse,
     LessonBlockPolicyResponse,
     ParticipantGroupResponse,
     PeriodResponse,
     ReservedBlockResponse,
     ResourceRequirementResponse,
     ResourceResponse,
+    ScheduleEntryResponse,
     SchedulingConfigResponse,
     SchoolResponse,
     TeacherAvailabilityResponse,
@@ -37,9 +44,13 @@ from school_timetable.api.schemas import (
     TeachingRequirementResponse,
     TimePreferenceResponse,
     TimeSlotResponse,
+    ValidationDiagnosticResponse,
 )
+from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import TeachingRequirement
+from school_timetable.domain.result import ScheduleEntry
+from school_timetable.validation.errors import ValidationError
 
 
 def config_response_from_problem(problem: SchedulingProblem) -> SchedulingConfigResponse:
@@ -126,3 +137,56 @@ def _teaching_requirement_response(requirement: TeachingRequirement) -> Teaching
         ),
         split_group_id=requirement.split_group_id,
     )
+
+
+# -- Schedule generation/read API (Phase 3A3.4). -------------------------
+
+
+def generate_response_from_active_version(version: ActiveScheduleVersion) -> GenerateScheduleResponse:
+    """`POST .../schedule/generate`'s success body -- no `entries` field
+    at all, per the locked contract."""
+    return GenerateScheduleResponse(
+        version_number=version.version_number,
+        solver_status=version.solver_status.value,
+        total_soft_penalty=version.total_soft_penalty,
+        created_at=version.created_at,
+        is_active=True,
+    )
+
+
+def schedule_entry_response_from_entry(entry: ScheduleEntry) -> ScheduleEntryResponse:
+    """Verbatim field-by-field copy -- never re-derives, never fixes up
+    a malformed entry (e.g. a `source` inconsistent with which of
+    `requirement_id`/`reserved_block_id` is populated); that would be a
+    genuine upstream defect this function must not silently paper over."""
+    return ScheduleEntryResponse(
+        source=entry.source.value,
+        day_id=entry.day_id,
+        period_id=entry.period_id,
+        requirement_id=entry.requirement_id,
+        reserved_block_id=entry.reserved_block_id,
+        activity_id=entry.activity_id,
+        teacher_id=entry.teacher_id,
+        participant_group_id=entry.participant_group_id,
+        resource_id=entry.resource_id,
+        class_sections=entry.class_sections,
+    )
+
+
+def active_schedule_response_from_active_version(version: ActiveScheduleVersion) -> ActiveScheduleResponse:
+    """`GET .../schedule/active`'s success body. `version.entries` is
+    already in exact persisted `ordinal` order (`ScheduleVersionRepository`'s
+    responsibility, already proven) -- this function preserves that
+    order verbatim, never re-sorting."""
+    return ActiveScheduleResponse(
+        version_number=version.version_number,
+        solver_status=version.solver_status.value,
+        total_soft_penalty=version.total_soft_penalty,
+        created_at=version.created_at,
+        is_active=True,
+        entries=tuple(schedule_entry_response_from_entry(e) for e in version.entries),
+    )
+
+
+def validation_diagnostic_response_from_error(error: ValidationError) -> ValidationDiagnosticResponse:
+    return ValidationDiagnosticResponse(code=error.code, message=error.message, context=error.context)
