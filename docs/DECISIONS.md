@@ -1128,3 +1128,175 @@ this implementation followed them as given.
     service touches these tables), matching this codebase's existing
     preference for application-level immutability guarantees over
     database-mechanism ones (Decision #21).
+
+32. **Phase 3B ADR: first visual class timetable -- design locked,
+    implementation not yet started.** Phase 3A3 (3A3.1-3A3.4) is CLOSED:
+    a real `POST .../schedule/generate` and `GET .../schedule/active`
+    exist on `main`, the latter deliberately generic/flat per Owner
+    Decision 3 above. This entry locks the first Phase 3B slice's
+    product/architecture decisions -- recovered from a dedicated
+    pre-implementation reconnaissance -- before any frontend or new
+    backend code is written.
+
+    **Owner Decision 1 -- the backend owns the class-timetable
+    projection; React does not reconstruct it.** `React` must not
+    perform the full `/config` + `/schedule/active` grouping itself to
+    build a class grid. Reason: current domain/solver behavior proves
+    one `ClassSection`/day/period can have **more than one**
+    `ScheduleEntry` simultaneously, because split `ParticipantGroup`
+    branches (e.g. a German/Russian split) are constraint-synchronized
+    to run in parallel at the same slot -- confirmed directly by solving
+    `fixtures/valid_fixture.py`: its `german_8a`/`russian_8a` split
+    requirements land at the identical three slots
+    (`fri/p4`, `fri/p7`, `fri/p8`) for class `8a`. A naive
+    one-entry-per-cell frontend reducer would silently lose one of the
+    two real, simultaneous lessons. The locked data flow is:
+
+    ```
+    flat persisted schedule + SchedulingProblem/config
+      -> backend APPLICATION-layer projection
+      -> UI-shaped, read-only API response
+      -> React renders the already-correct projection
+    ```
+
+    React may perform trivial presentation formatting only (e.g. layout,
+    date/label formatting) -- never grouping/cardinality/domain
+    resolution. This does not move any CP-SAT logic into the projection
+    (the solve is already finished and persisted by the time this
+    endpoint runs) and does not redesign persistence.
+
+    **Owner Decision 2 -- the first projection route.**
+    `GET /schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id}`
+    -- natural/domain IDs only, read-only, projecting the CURRENT active
+    `ScheduleVersion` for one `ClassSection`. It is explicitly **not** a
+    new schedule version, not a solver operation, not a reoptimization
+    operation, not a generic schedule explorer, and not a history
+    endpoint. Error compatibility: unknown school/year -> `404`
+    `{"detail": "Scheduling configuration not found"}` (no `code`,
+    identical to the existing contract); valid config but no active
+    schedule -> `404` `{"detail": "Active schedule not found"}` (no
+    `code`, identical to the existing `/schedule/active` contract);
+    unknown `class_section_id` -> `404`
+    `{"detail": "Class section not found"}` (no `code` -- no new stable
+    error code is introduced for this state, consistent with the
+    existing rule that only the three generation-specific outcomes
+    carry one).
+
+    **Owner Decision 3 -- cell cardinality is zero-or-more, never
+    exactly one.** A class-timetable cell is **not** modeled as exactly
+    one `ScheduleEntry`. One cell projects to zero-or-more entry rows
+    structurally; for the current full-occupancy pilot, every
+    instructional cell normally holds one-or-more. An ordinary lesson
+    produces `cell.entries = [one entry]`; a German/Russian split
+    produces `cell.entries = [German entry, Russian entry]` for class
+    `8a`'s cell at their shared slots; a merged-group lesson (one entry
+    whose `class_sections` spans multiple classes) still appears exactly
+    once within *each* individual class's own projection. Multiple
+    parallel entries in one cell must never be collapsed into one
+    synthetic lesson. `run_poc.py`'s current per-class grid printer
+    (`break`s on the first matching entry per cell) is explicitly **not**
+    a correct Phase 3B reference implementation -- it predates, and does
+    not handle, this parallel-entry case.
+
+    **Owner Decision 4 -- parallel entries render as distinct visible
+    sub-entries in the same cell.** Each parallel entry within one cell
+    must expose enough to distinguish it from its siblings -- at
+    minimum activity, the participant/subgroup label where applicable,
+    and teacher where applicable. The first UI may use a stacked or
+    side-by-side layout as a mechanical CSS choice, but must never hide
+    one branch or replace distinct lessons with one ambiguous combined
+    label.
+
+    **Owner Decision 5 -- first-slice UI scope.** The first Phase 3B
+    browser page contains only: one active-timetable page, a
+    `ClassSection` selector, the timetable grid for the selected class,
+    a loading state, a no-active-schedule state, a generic API-error
+    state, and small active-version metadata only where useful. Excluded
+    from this first slice: a Generate button, a school selector, an
+    academic-year selector, a teacher timetable, schedule history,
+    manual editing, locks, reoptimization, print/export, auth, config
+    editing, dashboards, analytics. The first product milestone remains
+    a REAL generated/persisted timetable rendered correctly in the
+    browser -- never mock/static data as the integration proof.
+
+    **Owner Decision 6 -- School/AcademicYear are pilot-fixed; ClassSection
+    is not.** For the first visual slice, `school_id`/`academic_year_id`
+    are pilot-fixed, not selectors -- but never scattered as literal IDs
+    throughout React components; the frontend receives them through
+    exactly one replaceable configuration point (its concrete form --
+    environment variable, config module, etc. -- is an implementation
+    detail for the next slice, not decided here). This is a first-slice
+    UI simplification only, not a change to the underlying multi-school
+    domain architecture. `ClassSection`, by contrast, is never fixed --
+    the class selector is populated dynamically from backend data.
+
+    **Owner Decision 7 -- calendar derivation is data-driven, never
+    hard-coded.** The projection must derive days from
+    `SchedulingProblem.days` ordered by `.index`, and periods from
+    `SchedulingProblem.periods` filtered to `is_instructional == True`
+    and ordered by `.index` -- never a hard-coded Monday-Friday or
+    periods 1-8. The current pilot naturally renders as 5x8 because its
+    persisted config happens to have 5 ordered days and 8 instructional
+    periods; lunch is not currently modeled as a `Period` at all in the
+    pilot and is therefore not a grid row. A future school with a
+    different calendar shape must not require rewriting the projection
+    algorithm.
+
+    **Owner Decision 8 -- the projection lives in the backend
+    application layer, not React, ORM models, repository SQL, Pydantic
+    schema code, or `api/serializer.py` treated as ad-hoc business
+    logic.** The application-layer projection consumes already-detached
+    `SchedulingProblem` and `ActiveScheduleVersion` and produces a plain,
+    application-owned read/view model; the API layer then performs only
+    explicit application-view-model -> Pydantic serialization, the same
+    discipline `api/serializer.py` already applies elsewhere. The
+    existing `SchedulingProblemRepository`/`ScheduleVersionRepository`
+    ports remain sufficient in principle -- no repository method is
+    added merely to perform presentation projection (Decision #12). The
+    exact service/function/class name for this projection is an
+    implementation detail for Phase 3B.1, not decided here.
+
+    **Owner Decision 9 -- local frontend dev uses a Vite proxy, not
+    CORS.** Phase 3B local development runs the Vite dev server proxying
+    to the existing FastAPI server on `localhost:8000`; no `CORSMiddleware`
+    is added to the backend solely for local development. Production
+    frontend/static-serving deployment topology remains future work,
+    out of scope for Phase 3B's first slice.
+
+    **Owner Decision 10 -- minimal first frontend dependency set.** The
+    first single-page timetable slice uses only React, TypeScript, and
+    Vite. No React Router yet (a single page needs none). No
+    Redux/Zustand/other state-management library (ordinary React
+    state/effects suffice at this data volume/shape). No component
+    library. Vitest + React Testing Library are introduced alongside the
+    first real React component, not installed as unused scaffolding
+    beforehand.
+
+    **Phase 3B sub-slices** (locked sequence; each is its own
+    implementation slice, never started early):
+    - **3B.1** -- backend class-timetable projection: the application
+      read/view model, the application projection logic/service, the
+      dedicated class-projection endpoint (Owner Decision 2), and its
+      backend tests.
+    - **3B.2** -- frontend foundation: React/TypeScript/Vite scaffold,
+      an API client, hand-written DTO types, the single school/year
+      configuration point (Owner Decision 6), the Vite proxy (Owner
+      Decision 9), with Vitest/React Testing Library introduced
+      alongside the first real component (Owner Decision 10).
+    - **3B.3** -- first real timetable page: dynamic `ClassSection`
+      selector, the live projection endpoint, the timetable grid with
+      parallel split entries shown correctly (Owner Decisions 3-4),
+      loading/no-schedule/error states (Owner Decision 5). **This is
+      the first visible milestone: a real generated/persisted class
+      timetable rendered correctly in the browser.**
+    - **3B.4** -- UX hardening: visual hierarchy, dense-grid
+      readability, parallel-cell polish, laptop-width responsiveness,
+      an accessibility/readability pass.
+
+    No broader admin UI (manual editing, locks, reoptimization,
+    schedule history, scenarios, auth, config editing, dashboards,
+    analytics) is scoped into Phase 3B by this ADR.
+
+    With Owner Decisions 1-10 locked, **Phase 3B.1 has zero remaining
+    owner decisions** -- implementation may proceed directly from this
+    ADR without further product-owner input.

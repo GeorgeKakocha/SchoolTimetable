@@ -68,6 +68,27 @@ across-solve boundary (`get_schedule_version_repository`/
 request-scoped read path is unchanged. The schedule read API remains
 generic and flat, not a Phase 3B 5x8 React projection.
 
+**Phase 3B (first-view design locked; implementation not yet started)**
+adds the first browser-rendered class timetable, per `DECISIONS.md` #32.
+The data flow is locked as: flat persisted schedule +
+`SchedulingProblem`/config -> a backend **application-layer** projection
+-> a UI-shaped, read-only API response -> React renders the
+already-correct projection. React never reconstructs the class grid
+itself -- one `ClassSection`/day/period can genuinely hold more than one
+simultaneous `ScheduleEntry` (parallel split-`ParticipantGroup`
+branches), so that grouping/cardinality logic stays in the same backend
+application layer `application/`'s existing services already occupy,
+never in `React`, ORM models, repository SQL, or `api/serializer.py`
+treated as ad-hoc business logic. The first new route,
+`GET .../schedule/active/classes/{class_section_id}`, is read-only and
+consumes the existing `SchedulingProblemRepository`/
+`ScheduleVersionRepository` ports unchanged -- no new repository method,
+no persistence/solver/verifier change. Local frontend development
+proxies through Vite to the existing FastAPI server; no CORS middleware
+is added. See `DECISIONS.md` #32 for the complete locked first-slice
+scope, cell-cardinality/display rules, calendar-derivation policy, and
+the 3B.1-3B.4 sub-slice sequence.
+
 ```
 src/school_timetable/
 ├── domain/         Pure Python domain model. No OR-Tools, no I/O.
@@ -242,7 +263,9 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 As of Phase 3A3 (CLOSED, all four slices merged to `main`): `POST
 .../schedule/generate` and `GET .../schedule/active` are real
 production routes, but no React timetable UI exists yet, no Phase 3B
-class-timetable (5x8) projection, no auth. `docker-compose.yml`
-provides a local development PostgreSQL only -- no application
-containerization/deployment setup beyond that exists yet. These arrive
-starting Phase 3B per `PROJECT_STATE.md`.
+class-timetable projection endpoint or backend view model, no auth --
+Phase 3B's first-view design is fully locked (`DECISIONS.md` #32) but
+not yet implemented. `docker-compose.yml` provides a local development
+PostgreSQL only -- no application containerization/deployment setup
+beyond that exists yet. These arrive starting Phase 3B per
+`PROJECT_STATE.md`.

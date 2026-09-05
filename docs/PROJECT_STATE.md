@@ -594,14 +594,42 @@ merged to `main`:
 - **3A3.4** -- the HTTP generation/read API (`POST .../schedule/generate`,
   `GET .../schedule/active`) closing this final report.
 
-**Phase 3B has NOT started.** The next authorized slice is **Phase 3B
-only**.
+**Phase 3B's first-view owner decisions are now locked** (`DECISIONS.md`
+#32) -- **implementation has NOT started.** Locked: the backend owns
+the class-timetable projection (React never reconstructs it from
+`/config` + `/schedule/active` itself -- proven necessary because one
+`ClassSection`/day/period can genuinely hold more than one simultaneous
+`ScheduleEntry`, e.g. a German/Russian split, empirically confirmed by
+solving `fixtures/valid_fixture.py`); the first new route is
+`GET .../schedule/active/classes/{class_section_id}` (read-only,
+natural IDs, its own distinct code-less 404s for unknown class/no active
+schedule, no new stable error code); a timetable cell is zero-or-more
+entries, never exactly one, and parallel entries render as distinct
+visible sub-entries, never collapsed or hidden; the first browser page
+is exactly one active-timetable page (class selector + grid + loading/
+no-schedule/error states) with Generate/school-selector/year-selector/
+teacher-view/history/editing/auth/dashboards all explicitly excluded;
+school/year are pilot-fixed through one replaceable configuration point
+(never scattered literal IDs) while `ClassSection` is selected
+dynamically; calendar rows/columns are derived from `/config`'s
+days/periods (ordered by `.index`, periods filtered to
+`is_instructional`), never hard-coded 5x8; the projection logic lives in
+the backend application layer, never React/ORM/repository-SQL/ad-hoc
+serializer code; local dev uses a Vite proxy to the existing FastAPI
+server, no CORS middleware; and the first frontend dependency set is
+exactly React/TypeScript/Vite (no Router, no state-management library,
+no component library yet; Vitest/RTL introduced with the first real
+component). **Phase 3B.1 is the next authorized slice only**
+(backend class-timetable projection: application read/view model,
+projection service, the new endpoint, and its tests) -- **3B.2/3B.3/3B.4
+must not start early.**
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
 **Phase 3B -- React/TypeScript first visual timetable**: a real
-generated/persisted 5x8 class timetable rendered in the browser,
-consuming Phase 3A3's `GET .../schedule/active` (and `/config`), now
-that both exist.
+generated/persisted 5x8 class timetable rendered in the browser, via a
+dedicated backend class-timetable projection endpoint (`DECISIONS.md`
+#32) consumed by React -- not a client-side projection over
+`GET .../schedule/active` (and `/config`) directly.
 
-Roadmap: **3A2.4 -> 3A3 -> 3B.**
+Roadmap: **3A2.4 -> 3A3 -> 3B (3B.1 -> 3B.2 -> 3B.3 -> 3B.4).**
