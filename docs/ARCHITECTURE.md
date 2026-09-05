@@ -38,27 +38,27 @@ no solver/schedule-generation endpoint -- see `docs/PROJECT_STATE.md`
 and `DECISIONS.md` #26-30 for exactly what Phase
 3A2.1/3A2.2/3A2.3/3A2.4 do and do not include.
 
-**Phase 3A3 (design locked; schema + persistence mapping/adapter
-merged; application orchestration implemented, pending review; no API
-yet)** connects this DB-backed `SchedulingProblem` to the existing
-solver and persists generated results as immutable `ScheduleVersion`
-snapshots -- see `DECISIONS.md` #31 for the full locked schema,
-application-service, and API design. One canonical `Schedule` per
-School+AcademicYear; generation is initial-generation-only (a second
-`Generate` call conflicts, 409, rather than reoptimizing or appending).
-Phase 3A3.1's `schedule`/`schedule_version`/`schedule_entry`/
-`locked_occurrence` ORM models and Alembic migration (`4681f7a362bd`)
-are merged to `main`. Phase 3A3.2 (schedule persistence mapping,
-`ScheduleVersionRepository` + its `SqlAlchemyScheduleVersionRepository`
-adapter, and a session-factory-backed `SchedulingProblemRepository`
-implementation for generation use) is likewise merged to `main`. Phase
-3A3.3's `application.generate_schedule_service.GenerateScheduleService`
--- the new application-owned orchestration service Decision #31 calls
-for -- is implemented on a feature branch, pending review, not yet
-merged to `main`: it orchestrates load -> preflight -> solve -> require
-success -> verify -> persist using the two existing repository ports,
-with no API route, FastAPI dependency, or composition root wired yet --
-Phase 3A3.4 is the next implementation slice, not started.
+**Phase 3A3 (design locked; schema, persistence mapping/adapter, and
+application orchestration all merged; no API yet)** connects this
+DB-backed `SchedulingProblem` to the existing solver and persists
+generated results as immutable `ScheduleVersion` snapshots -- see
+`DECISIONS.md` #31 for the full locked schema, application-service, and
+API design. One canonical `Schedule` per School+AcademicYear; generation
+is initial-generation-only (a second `Generate` call conflicts, 409,
+rather than reoptimizing or appending). Phase 3A3.1's
+`schedule`/`schedule_version`/`schedule_entry`/`locked_occurrence` ORM
+models and Alembic migration (`4681f7a362bd`) are merged to `main`.
+Phase 3A3.2 (schedule persistence mapping, `ScheduleVersionRepository` +
+its `SqlAlchemyScheduleVersionRepository` adapter, and a
+session-factory-backed `SchedulingProblemRepository` implementation for
+generation use) is likewise merged to `main`. Phase 3A3.3's
+`application.generate_schedule_service.GenerateScheduleService` -- the
+new application-owned orchestration service Decision #31 calls for --
+is likewise merged to `main`: it orchestrates load -> preflight ->
+solve -> require success -> verify -> persist using the two existing
+repository ports, with no API route, FastAPI dependency, or composition
+root wired yet -- Phase 3A3.4 is the next implementation slice, not
+started.
 
 ```
 src/school_timetable/
@@ -220,11 +220,11 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A3.3 (implemented on a feature branch, pending review --
-not yet merged to `main`): `GenerateScheduleService` now exists, but no
-API route, FastAPI dependency, or composition root wires it in yet --
-no `POST .../schedule/generate` or `GET .../schedule/active` endpoint,
-no React timetable projection, no frontend, no auth. `docker-compose.yml`
-provides a local development PostgreSQL only -- no application
-containerization/deployment setup exists yet. These arrive starting
+As of Phase 3A3.3 (CLOSED and merged to `main`): `GenerateScheduleService`
+now exists, but no API route, FastAPI dependency, or composition root
+wires it in yet -- no `POST .../schedule/generate` or
+`GET .../schedule/active` endpoint, no React timetable projection, no
+frontend, no auth. `docker-compose.yml` provides a local development
+PostgreSQL only -- no application containerization/deployment setup
+exists yet. These arrive starting
 Phase 3A3.4 per `DECISIONS.md` #31 and `PROJECT_STATE.md`.

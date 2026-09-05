@@ -476,9 +476,8 @@ round-trip through the generation-safe repository. No migration/schema
 change, no `GenerateScheduleService`, no API route, no solver/verifier
 change.
 
-**Phase 3A3.3 is implemented on feature branch
-`feature/phase-3a3-3-generate-service`, pending review -- not yet
-merged to `main`.** It adds `application.generate_schedule_service.
+**Phase 3A3.3 is CLOSED and merged to `main`** (commit `37b85c2`). It
+adds `application.generate_schedule_service.
 GenerateScheduleService`, the first genuine `application/` orchestration
 service, which composes only the existing `SchedulingProblemRepository`/
 `ScheduleVersionRepository` ports with the existing preflight
@@ -513,9 +512,10 @@ via a session-open tracker wrapped around preflight/solve/verify, that
 no repository-owned `Session` is open during that window -- the
 DB-free boundary Owner Decision 4 requires. No migration/schema change,
 no API route, no solver/verifier semantic change -- **Phase 3A3.4 has
-NOT started.** The next authorized slice after review/merge is **Phase
-3A3.4 only** (the HTTP composition root: `POST .../schedule/generate`,
-`GET .../schedule/active`, and their response/error mapping).
+NOT started.** The next authorized slice is **Phase 3A3.4 only** (the
+HTTP composition root: `POST .../schedule/generate`,
+`GET .../schedule/active`, response schemas/serialization, and
+application-error -> HTTP mapping).
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
