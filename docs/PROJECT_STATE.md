@@ -512,10 +512,32 @@ via a session-open tracker wrapped around preflight/solve/verify, that
 no repository-owned `Session` is open during that window -- the
 DB-free boundary Owner Decision 4 requires. No migration/schema change,
 no API route, no solver/verifier semantic change -- **Phase 3A3.4 has
-NOT started.** The next authorized slice is **Phase 3A3.4 only** (the
-HTTP composition root: `POST .../schedule/generate`,
-`GET .../schedule/active`, response schemas/serialization, and
-application-error -> HTTP mapping).
+NOT started.**
+
+**Phase 3A3.4's HTTP contract is now fully locked** (`DECISIONS.md` #31,
+"Phase 3A3.4 final HTTP contract details") -- zero remaining owner
+decisions, implementation itself still not started. Locked: `POST
+/schools/{school_id}/years/{year_id}/schedule/generate` returns `201
+Created` on success (no `Location` header), body exactly
+`version_number`/`solver_status`/`total_soft_penalty`/`created_at`/
+`is_active` -- no entries, no `wall_time_seconds`, no `random_seed`, no
+surrogate IDs; it has no request body, and does not expose
+`SolverOptions` (`max_time_seconds`/`num_search_workers`/`random_seed`)
+over HTTP -- `GenerateScheduleService`'s own optional `solver_options`
+parameter is unchanged and unaffected. `GET
+/schools/{school_id}/years/{year_id}/schedule/active` returns the same
+version-summary fields plus `entries` (flat, ordered by persisted
+`schedule_entry.ordinal`, itself never public) when a `Schedule` exists;
+for a valid school/year with no `Schedule` generated yet it returns
+`404` with `{"detail": "Active schedule not found"}` -- distinct from,
+but the same status and no-`code` shape as, the existing unknown-config
+`404` (`{"detail": "Scheduling configuration not found"}`); no new
+stable `code` (e.g. `SCHEDULE_NOT_FOUND`) is introduced -- the stable
+`code` set remains exactly `INVALID_CONFIGURATION`/
+`SCHEDULE_INFEASIBLE`/`SCHEDULE_ALREADY_EXISTS`. The next authorized
+action is **Phase 3A3.4 implementation only** (the HTTP composition
+root: routes, response schemas/serialization, and application-error ->
+HTTP mapping, exactly as now locked).
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 

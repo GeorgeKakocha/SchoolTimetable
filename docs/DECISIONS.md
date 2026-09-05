@@ -1040,6 +1040,83 @@ this implementation followed them as given.
     needs" is a Phase 3A3.4 implementation detail, not fixed further
     here.
 
+    **Phase 3A3.4 final HTTP contract details -- owner decisions A/B/C,
+    now locked; zero remaining.** A Phase 3A3.4 pre-implementation
+    reconnaissance identified exactly three HTTP details this ADR had
+    left genuinely unresolved (POST success status code, POST request
+    body/solver-tuning exposure, and GET active's response for a valid
+    school/year with no `Schedule` generated yet). All three are locked
+    here, closing Decision #31 completely before Phase 3A3.4
+    implementation begins.
+
+    **Owner Decision A -- POST success is `201 Created`.**
+    `POST /schools/{school_id}/years/{year_id}/schedule/generate`
+    returns HTTP `201`, not `200`, on successful initial generation --
+    the operation creates the canonical `Schedule` and its first
+    `ScheduleVersion`, and Generate is initial-generation-only (a
+    duplicate call conflicts with `409`, per Owner Decision 2), so `201`
+    communicates resource creation more precisely than a generic `200`.
+    No `Location` header is required or added in Phase 3A3.4: there is
+    not yet a public, immutable, version-by-number URI to point at --
+    `GET .../schedule/active` addresses only "whichever version is
+    currently active," not a stable per-version resource, so it is not
+    a correct `Location` target. The success response body is
+    unchanged from the shape already locked above: exactly
+    `version_number`, `solver_status`, `total_soft_penalty`,
+    `created_at`, `is_active` -- no entries, no `wall_time_seconds`, no
+    `random_seed`, no surrogate IDs, no `ordinal`, no CP-SAT telemetry.
+
+    **Owner Decision B -- POST has no request body; solver tuning is
+    not a public API input.** Phase 3A3.4's generation route calls
+    `GenerateScheduleService.generate(...)` without supplying
+    `solver_options`, so it always runs with the service's own default
+    `SolverOptions()`. `max_time_seconds`, `num_search_workers`, and
+    `random_seed` remain internal/application solver controls, never
+    exposed over HTTP in this phase -- `GenerateScheduleService`'s
+    existing optional `solver_options` parameter is unchanged and
+    remains available for internal/test/future use; this decision does
+    not remove or redesign that capability, it only declines to wire it
+    to a public HTTP input. Exposing solver tuning as a product feature
+    (e.g. a caller-supplied time budget) is separately scoped future
+    work, not introduced by Phase 3A3.4.
+
+    **Owner Decision C -- GET active before generation is `404`, with
+    its own distinct (but still code-less) body; no new stable code is
+    introduced.** For a valid School+AcademicYear configuration where
+    `ScheduleVersionRepository.get_active_schedule` returns `None` (no
+    canonical `Schedule` generated yet), `GET .../schedule/active`
+    returns HTTP `404` with exact body `{"detail": "Active schedule not
+    found"}` -- no `code` field. This is a **distinct** state from an
+    unknown School/AcademicYear configuration, which keeps its existing
+    exact compatibility contract unchanged: HTTP `404`, body
+    `{"detail": "Scheduling configuration not found"}`, also with no
+    `code` field. No `SCHEDULE_NOT_FOUND` (or any other new stable
+    code) is introduced for either case -- the stable generation-specific
+    `code` set defined above remains exactly `INVALID_CONFIGURATION`,
+    `SCHEDULE_INFEASIBLE`, `SCHEDULE_ALREADY_EXISTS`, and nothing else;
+    both 404 cases are distinguished by `detail` text alone, consistent
+    with `ConfigNotFound` already being the explicit counterexample to
+    the stable-`code` rule.
+
+    **GET active's metadata shape** (resolving the reconnaissance's
+    mechanical ambiguity): `GET .../schedule/active`'s success body
+    carries the same public version-summary fields as the POST success
+    body -- `version_number`, `solver_status`, `total_soft_penalty`,
+    `created_at`, `is_active` (always `true` for this endpoint, since it
+    only ever returns the currently-active version) -- plus `entries`,
+    the flat, ordered entry list already locked above. Never exposed:
+    `wall_time_seconds`, `random_seed`, any `schedule`/`schedule_version`
+    surrogate DB ID, `ordinal`, or any CP-SAT-internal metadata. The
+    already-locked flat entry contract (`source`, `day_id`, `period_id`,
+    `requirement_id: str | None`, `reserved_block_id: str | None`,
+    `activity_id`, `teacher_id`, `participant_group_id`, `resource_id`,
+    `class_sections`, ordered by persisted `schedule_entry.ordinal`
+    which itself is never public) is unchanged by this closure.
+
+    With Owner Decisions A, B, and C locked, **Phase 3A3.4's HTTP
+    contract has zero remaining owner decisions** -- implementation may
+    proceed directly from this ADR without further product-owner input.
+
     **Immutability enforcement, MVP level**: frozen domain objects
     (`ScheduleVersion`... already frozen at the domain level once
     introduced) plus **no `update`/`delete` method anywhere in

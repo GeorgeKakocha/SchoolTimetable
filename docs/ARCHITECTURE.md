@@ -57,8 +57,10 @@ new application-owned orchestration service Decision #31 calls for --
 is likewise merged to `main`: it orchestrates load -> preflight ->
 solve -> require success -> verify -> persist using the two existing
 repository ports, with no API route, FastAPI dependency, or composition
-root wired yet -- Phase 3A3.4 is the next implementation slice, not
-started.
+root wired yet. Phase 3A3.4's HTTP contract (routes, request/response
+shapes, status/error-code mapping) is now fully locked in `DECISIONS.md`
+#31 -- zero remaining owner decisions -- but not yet implemented; it is
+the next implementation slice, not started.
 
 ```
 src/school_timetable/
