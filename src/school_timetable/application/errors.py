@@ -22,3 +22,23 @@ class SchedulingProblemNotFoundError(Exception):
             f"no scheduling configuration for school={school_natural_id!r}, "
             f"academic_year={academic_year_natural_id!r}"
         )
+
+
+class ScheduleAlreadyExistsError(Exception):
+    """A canonical `Schedule` already exists for this school/academic-year
+    pair (`docs/DECISIONS.md` #31, Owner Decision 2 -- generation is
+    initial-generation-only). Raised identically whether an
+    application-level pre-check found the existing `Schedule` or the
+    database's `uq_schedule_academic_year_id` constraint rejected the
+    losing side of a concurrent double-generate race -- never carries the
+    underlying SQLAlchemy exception, SQL text, or any persistence
+    surrogate ID, only the natural identifiers the caller already
+    supplied."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        super().__init__(
+            f"a schedule already exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )

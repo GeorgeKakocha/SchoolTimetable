@@ -16,8 +16,17 @@ only reconstructs the persisted configuration. A structurally loadable
 but domain-invalid configuration is expected to load successfully here
 and be rejected by `validation.preflight.run_preflight` afterward, same
 as any other `SchedulingProblem` -- see `docs/DECISIONS.md` #29.
+
+Also defines `SessionFactorySchedulingProblemRepository` (Phase 3A3.2):
+a second, session-factory-backed implementation of the same
+`SchedulingProblemRepository` Protocol, for future generation use
+(Decision #31) -- see its own docstring below. It does not replace or
+change `SqlAlchemySchedulingProblemRepository`, which remains exactly as
+before for the `/config` read path.
 """
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -149,3 +158,39 @@ def _group_by(rows: list, parent_attr: str) -> dict[int, list]:
     for row in rows:
         grouped.setdefault(getattr(row, parent_attr), []).append(row)
     return grouped
+
+
+class SessionFactorySchedulingProblemRepository:
+    """Session-factory-backed implementation of `application.ports.
+    SchedulingProblemRepository` (Phase 3A3.2, Decision #31's
+    "SchedulingProblemRepository session-ownership clarification for
+    generation") -- for future `GenerateScheduleService` use (Phase
+    3A3.3), never wired into `api/` in this phase.
+
+    Unlike `SqlAlchemySchedulingProblemRepository` above, which is
+    constructed with an already-open `Session` (correct and unchanged
+    for the `/config` read path), this class is constructed with a
+    session *factory* and opens/closes its own short `Session` per call
+    -- so a caller (e.g. a future generation flow that runs a
+    long-running CP-SAT solve after this call returns) never holds a
+    database connection open beyond this one load. It deliberately does
+    not reimplement the loading logic above: it delegates to
+    `SqlAlchemySchedulingProblemRepository`, constructed fresh against
+    its own `Session`, which already returns a fully detached
+    `SchedulingProblem` of plain frozen domain objects."""
+
+    def __init__(self, session_factory: Callable[[], Session]) -> None:
+        self._session_factory = session_factory
+
+    def load_by_school_and_year(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+    ) -> SchedulingProblem:
+        session = self._session_factory()
+        try:
+            return SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
+                school_natural_id, academic_year_natural_id
+            )
+        finally:
+            session.close()

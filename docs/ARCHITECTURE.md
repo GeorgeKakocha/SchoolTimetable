@@ -38,22 +38,26 @@ no solver/schedule-generation endpoint -- see `docs/PROJECT_STATE.md`
 and `DECISIONS.md` #26-30 for exactly what Phase
 3A2.1/3A2.2/3A2.3/3A2.4 do and do not include.
 
-**Phase 3A3 (design locked; schema merged, remainder not yet
-implemented)** connects this DB-backed `SchedulingProblem` to the
-existing solver and persists generated results as immutable
-`ScheduleVersion` snapshots -- see `DECISIONS.md` #31 for the full
-locked schema, application-service, and API design. One canonical
-`Schedule` per School+AcademicYear; generation is
+**Phase 3A3 (design locked; schema merged; persistence mapping/adapter
+pending merge)** connects this DB-backed
+`SchedulingProblem` to the existing solver and persists generated
+results as immutable `ScheduleVersion` snapshots -- see `DECISIONS.md`
+#31 for the full locked schema, application-service, and API design.
+One canonical `Schedule` per School+AcademicYear; generation is
 initial-generation-only (a second `Generate` call conflicts, 409,
 rather than reoptimizing or appending); a new `GenerateScheduleService`
 in `application/` orchestrates load -> preflight -> solve -> require
 success -> verify -> persist, using one new application-owned port,
 `ScheduleVersionRepository`. Phase 3A3.1's `schedule`/`schedule_version`/
 `schedule_entry`/`locked_occurrence` ORM models and Alembic migration
-(`4681f7a362bd`) are merged to `main`; no repository adapter,
-application service, or API route exists yet -- Phase 3A3.2 (mappers +
-repository adapter) is the next implementation
-slice, not started.
+(`4681f7a362bd`) are merged to `main`. Phase 3A3.2 (schedule persistence
+mapping, `ScheduleVersionRepository` + its `SqlAlchemyScheduleVersionRepository`
+adapter, and a session-factory-backed `SchedulingProblemRepository`
+implementation for future generation use) is implemented on a feature
+branch pending review, not yet merged to `main`. No `GenerateScheduleService`,
+application service, or API route exists yet -- Phase 3A3.3
+(`GenerateScheduleService`) is the next implementation slice, not
+started.
 
 ```
 src/school_timetable/
@@ -95,13 +99,17 @@ src/school_timetable/
 - **config.py** (Phase 3): the only place `DATABASE_URL` (or any other
   web/persistence-only setting) is read from the environment. Not
   imported by `domain/`, `scheduling/`, `validation/`, or `verification/`.
-- **application/** (Phase 3A2.3): repository ports/interfaces
-  `persistence/` adapters implement, plus the errors those ports raise
-  -- `ports.py`'s `SchedulingProblemRepository` (one method,
-  `load_by_school_and_year`, no generic CRUD) and `errors.py`'s
-  `SchedulingProblemNotFoundError`. Imports only `domain/`; never
-  SQLAlchemy, `persistence/`, FastAPI, or `fixtures/`, even
-  transitively -- see `DECISIONS.md` #29.
+- **application/** (Phase 3A2.3, extended Phase 3A3.2): repository
+  ports/interfaces `persistence/` adapters implement, plus the errors
+  those ports raise, plus the plain read-model dataclasses those ports
+  return -- `ports.py`'s `SchedulingProblemRepository`
+  (`load_by_school_and_year`) and `ScheduleVersionRepository`
+  (`get_active_schedule`/`persist_initial_version`, no generic CRUD),
+  `errors.py`'s `SchedulingProblemNotFoundError`/
+  `ScheduleAlreadyExistsError`, and `schedule_models.py`'s
+  `ActiveScheduleVersion`. Imports only `domain/`; never SQLAlchemy,
+  `persistence/`, FastAPI, or `fixtures/`, even transitively -- see
+  `DECISIONS.md` #29.
 - **persistence/** (Phase 3): SQLAlchemy engine/session construction
   (`db.py`), the declarative `Base` (`base.py`), and (Phase 3A2.1) the
   ORM models themselves (`models.py`) -- 17 tables persisting the
@@ -124,7 +132,22 @@ src/school_timetable/
   inheritance) via explicit multi-`SELECT` loading (no ORM
   `relationship()`/lazy-loading), reimplementing no
   preflight/solver/verifier reasoning -- see `DECISIONS.md` #29. Never
-  imports `scheduling/`, `api/`, or `fixtures/`.
+  imports `scheduling/`, `api/`, or `fixtures/`. (Phase 3A3.2)
+  `mappers.py` additionally gains `schedule_entry_to_domain`/
+  `locked_occurrence_to_domain`, re-deriving each entry's denormalized
+  fields from configuration already loaded, per `DECISIONS.md` #31;
+  `problem_repository.py` additionally gains
+  `SessionFactorySchedulingProblemRepository`, a second,
+  session-factory-backed implementation of the same
+  `SchedulingProblemRepository` Protocol for future generation use,
+  which does not change `SqlAlchemySchedulingProblemRepository`'s
+  existing session-bound `/config` read path; and the new
+  `schedule_repository.py`'s `SqlAlchemyScheduleVersionRepository`
+  implements `application.ports.ScheduleVersionRepository`, likewise
+  session-factory-backed, atomically writing `Schedule` +
+  `ScheduleVersion` + `ScheduleEntry` rows and translating only a
+  by-name `uq_schedule_academic_year_id` violation into
+  `ScheduleAlreadyExistsError`.
 - **api/** (Phase 3): the FastAPI app (`main.py`). `GET /health`
   genuinely executes `SELECT 1` against the database (returning 503
   with a generic, non-sensitive body if unreachable -- see
@@ -189,13 +212,13 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A3.1 (closed and merged to `main`): no domain ->
-persistence write path in production code, no `GenerateScheduleService`
-or `ScheduleVersionRepository`, no domain <-> persistence mapping or
-repository adapter for the new schedule tables, no
+As of Phase 3A3.2 (implemented on a feature branch, pending review --
+not yet merged to `main`): `ScheduleVersionRepository` and its
+`SqlAlchemyScheduleVersionRepository` adapter, and schedule domain <->
+persistence mapping, now exist, but no `GenerateScheduleService` or any
+other `application/` service layer exists yet, no
 `POST .../schedule/generate` or `GET .../schedule/active` endpoint, no
-application service layer of any
-kind yet, no frontend, no auth. `docker-compose.yml` provides a local
-development PostgreSQL only -- no application
-containerization/deployment setup exists yet. These arrive starting
-Phase 3A3.1 per `DECISIONS.md` #31 and `PROJECT_STATE.md`.
+frontend, no auth. `docker-compose.yml` provides a local development
+PostgreSQL only -- no application containerization/deployment setup
+exists yet. These arrive starting Phase 3A3.3 per `DECISIONS.md` #31
+and `PROJECT_STATE.md`.
