@@ -39,27 +39,34 @@ and `DECISIONS.md` #26-30 for exactly what Phase
 3A2.1/3A2.2/3A2.3/3A2.4 do and do not include.
 
 **Phase 3A3 (design locked; schema, persistence mapping/adapter,
-application orchestration, and the HTTP API all implemented -- pending
-review, not yet merged)** connects this DB-backed `SchedulingProblem` to
-the existing solver and persists generated results as immutable
-`ScheduleVersion` snapshots -- see `DECISIONS.md` #31 for the full
-locked schema, application-service, and API design. One canonical
-`Schedule` per School+AcademicYear; generation is initial-generation-only
-(a second `Generate` call conflicts, 409, rather than reoptimizing or
-appending). Phase 3A3.1's `schedule`/`schedule_version`/`schedule_entry`/
-`locked_occurrence` ORM models and Alembic migration (`4681f7a362bd`)
-are merged to `main`. Phase 3A3.2 (schedule persistence mapping,
-`ScheduleVersionRepository` + its `SqlAlchemyScheduleVersionRepository`
-adapter, and a session-factory-backed `SchedulingProblemRepository`
-implementation for generation use) is likewise merged to `main`. Phase
-3A3.3's `application.generate_schedule_service.GenerateScheduleService`
-is likewise merged to `main`. Phase 3A3.4 (`api/schedule_routes.py`'s
-`POST .../schedule/generate`/`GET .../schedule/active`, their response
-schemas/serializers, and the composition-root wiring in
-`api/dependencies.py`) is implemented on a feature branch, pending
-review, not yet merged to `main` -- see `PROJECT_STATE.md` for the exact
-contract implemented, fully locked (zero remaining owner decisions) in
-`DECISIONS.md` #31.
+application orchestration, and the HTTP API all merged -- CLOSED)**
+connects this DB-backed `SchedulingProblem` to the existing solver and
+persists generated results as immutable `ScheduleVersion` snapshots --
+see `DECISIONS.md` #31 for the full locked schema, application-service,
+and API design. One canonical `Schedule` per School+AcademicYear;
+generation is initial-generation-only (a second `Generate` call
+conflicts, 409, rather than reoptimizing or appending). Phase 3A3.1's
+`schedule`/`schedule_version`/`schedule_entry`/`locked_occurrence` ORM
+models and Alembic migration (`4681f7a362bd`) are merged to `main`.
+Phase 3A3.2 (schedule persistence mapping, `ScheduleVersionRepository` +
+its `SqlAlchemyScheduleVersionRepository` adapter, and a
+session-factory-backed `SchedulingProblemRepository` implementation for
+generation use) is likewise merged to `main`. Phase 3A3.3's
+`application.generate_schedule_service.GenerateScheduleService` is
+likewise merged to `main`. Phase 3A3.4 (`api/schedule_routes.py`'s `POST
+/schools/{school_id}/years/{year_id}/schedule/generate`/
+`GET /schools/{school_id}/years/{year_id}/schedule/active`, their
+response schemas/serializers, and the composition-root wiring in
+`api/dependencies.py`) is likewise merged to `main` -- both are real
+production routes, exactly matching the contract fully locked (zero
+remaining owner decisions) in `DECISIONS.md` #31; see
+`PROJECT_STATE.md` for the full implemented-contract summary.
+Generation composition still preserves the no-request-scoped-session-
+across-solve boundary (`get_schedule_version_repository`/
+`get_generate_schedule_service` are session-factory-backed against
+`SessionLocal`, never `Depends(get_session)`); `/config`'s existing
+request-scoped read path is unchanged. The schedule read API remains
+generic and flat, not a Phase 3B 5x8 React projection.
 
 ```
 src/school_timetable/
@@ -232,9 +239,10 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3A3.4 (implemented on a feature branch, pending review --
-not yet merged to `main`): `POST .../schedule/generate` and
-`GET .../schedule/active` now exist, but no React timetable projection,
-no frontend, no auth. `docker-compose.yml` provides a local development
-PostgreSQL only -- no application containerization/deployment setup
-exists yet. These arrive starting Phase 3B per `PROJECT_STATE.md`.
+As of Phase 3A3 (CLOSED, all four slices merged to `main`): `POST
+.../schedule/generate` and `GET .../schedule/active` are real
+production routes, but no React timetable UI exists yet, no Phase 3B
+class-timetable (5x8) projection, no auth. `docker-compose.yml`
+provides a local development PostgreSQL only -- no application
+containerization/deployment setup beyond that exists yet. These arrive
+starting Phase 3B per `PROJECT_STATE.md`.

@@ -536,11 +536,12 @@ stable `code` (e.g. `SCHEDULE_NOT_FOUND`) is introduced -- the stable
 `code` set remains exactly `INVALID_CONFIGURATION`/
 `SCHEDULE_INFEASIBLE`/`SCHEDULE_ALREADY_EXISTS`.
 
-**Phase 3A3.4 is implemented on feature branch
-`feature/phase-3a3-4-schedule-api`, pending review -- not yet merged to
-`main`.** Adds `api/schedule_routes.py`'s `POST
-/schools/{school_id}/years/{year_id}/schedule/generate` and `GET
-/schools/{school_id}/years/{year_id}/schedule/active`, implementing the
+**Phase 3A3.4 is CLOSED and merged to `main`** (commit `50e1c1f`).
+`api/schedule_routes.py`'s `POST
+/schools/{school_id}/years/{year_id}/schedule/generate` (success `201
+Created`, no request body, no public `SolverOptions`) and `GET
+/schools/{school_id}/years/{year_id}/schedule/active` (the locked flat,
+natural-ID schedule contract) now exist on `main`, implementing the
 locked contract above exactly: `api/schemas.py` gains
 `GenerateScheduleResponse`/`ActiveScheduleResponse`/
 `ScheduleEntryResponse`/`ValidationDiagnosticResponse`/
@@ -575,15 +576,32 @@ success/unknown-config/no-schedule-yet/corrupt-state), each internal-500
 case proving the injected secret text never reaches the response body.
 Existing `/config` tests (`test_config_api.py`) pass unchanged. No
 migration/schema change, no solver/verifier semantic change, no
-application/persistence contract change -- **Phase 3B has NOT
-started.** The next authorized action after review/merge is Phase 3B
-only.
+application/persistence contract change was required.
+
+**Phase 3A3 as a whole is CLOSED.** All four slices are complete and
+merged to `main`:
+
+- **3A3.1** -- `schedule`/`schedule_version`/`schedule_entry`/
+  `locked_occurrence` persistence schema + Alembic migration
+  (`4681f7a362bd`).
+- **3A3.2** -- schedule persistence mapping (`persistence/mappers.py`)
+  and repository adapters (`ScheduleVersionRepository`,
+  `SqlAlchemyScheduleVersionRepository`,
+  `SessionFactorySchedulingProblemRepository`).
+- **3A3.3** -- `GenerateScheduleService` application orchestration
+  (existing-schedule precheck -> detached config load -> preflight ->
+  solve -> independent verify -> atomic initial-version persistence).
+- **3A3.4** -- the HTTP generation/read API (`POST .../schedule/generate`,
+  `GET .../schedule/active`) closing this final report.
+
+**Phase 3B has NOT started.** The next authorized slice is **Phase 3B
+only**.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
 **Phase 3B -- React/TypeScript first visual timetable**: a real
 generated/persisted 5x8 class timetable rendered in the browser,
-consuming Phase 3A3's `GET .../schedule/active` (and `/config`) once
-both exist.
+consuming Phase 3A3's `GET .../schedule/active` (and `/config`), now
+that both exist.
 
 Roadmap: **3A2.4 -> 3A3 -> 3B.**
