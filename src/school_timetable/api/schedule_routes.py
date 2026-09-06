@@ -1,12 +1,14 @@
-"""`GET /schools/{school_id}/years/{year_id}/schedule/active` and
+"""`GET /schools/{school_id}/years/{year_id}/schedule/active`,
 `POST /schools/{school_id}/years/{year_id}/schedule/generate` (Phase
-3A3.4, `docs/DECISIONS.md` #31's locked HTTP contract).
+3A3.4, `docs/DECISIONS.md` #31's locked HTTP contract), and
+`GET /schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id}`
+(Phase 3B.1, `docs/DECISIONS.md` #32's locked HTTP contract).
 
-Both routes depend only on `application/` Protocols/services
-(`ScheduleVersionRepository`, `GenerateScheduleService`), never on a
-concrete `persistence/` class -- the composition root wiring those
-concrete, session-factory-backed adapters lives entirely in
-`api/dependencies.py`.
+All three routes depend only on `application/` Protocols/services
+(`ScheduleVersionRepository`, `GenerateScheduleService`,
+`ClassTimetableService`), never on a concrete `persistence/` class --
+the composition root wiring those concrete, session-factory-backed
+adapters lives entirely in `api/dependencies.py`.
 
 `school_id`/`year_id` are natural/domain IDs, never surrogate ones,
 matching `/config`'s existing convention exactly.
@@ -34,25 +36,44 @@ are internal defects, never a client-actionable outcome, and are left
 to reach FastAPI's normal unhandled-exception (generic 500) behavior
 rather than importing persistence-internal defect types into this
 route merely to translate them.
+
+The class-timetable projection route's error mapping (also locked, no
+remaining owner decisions): `SchedulingProblemNotFoundError` -> 404
+(same body as above); `ClassTimetableService.project` returning `None`
+(no active `Schedule` yet) -> 404, `{"detail": "Active schedule not
+found"}` -- the identical body the plain `.../schedule/active` route
+already uses for the same underlying state; `ClassSectionNotFoundError`
+-> 404, `{"detail": "Class section not found"}` -- a third, distinct,
+still code-less 404. No new stable `code` is introduced for any of
+these three. Any other unexpected exception (including a corrupt
+persisted `Schedule` state) is, again, deliberately not caught here.
 """
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from school_timetable.api.dependencies import get_generate_schedule_service, get_schedule_version_repository
+from school_timetable.api.dependencies import (
+    get_class_timetable_service,
+    get_generate_schedule_service,
+    get_schedule_version_repository,
+)
 from school_timetable.api.schemas import (
     ActiveScheduleResponse,
+    ClassTimetableResponse,
     GenerateScheduleResponse,
     GenerationErrorResponse,
     InvalidConfigurationResponse,
 )
 from school_timetable.api.serializer import (
     active_schedule_response_from_active_version,
+    class_timetable_response_from_view,
     generate_response_from_active_version,
     validation_diagnostic_response_from_error,
 )
+from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.errors import (
+    ClassSectionNotFoundError,
     InvalidSchedulingConfigurationError,
     ScheduleAlreadyExistsError,
     ScheduleInfeasibleError,
@@ -121,3 +142,24 @@ def generate_schedule(
             ).model_dump(),
         )
     return generate_response_from_active_version(active)
+
+
+@router.get(
+    "/schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id}",
+    response_model=ClassTimetableResponse,
+)
+def get_class_timetable(
+    school_id: str,
+    year_id: str,
+    class_section_id: str,
+    service: ClassTimetableService = Depends(get_class_timetable_service),
+) -> ClassTimetableResponse:
+    try:
+        view = service.project(school_id, year_id, class_section_id)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except ClassSectionNotFoundError:
+        raise HTTPException(status_code=404, detail="Class section not found") from None
+    if view is None:
+        raise HTTPException(status_code=404, detail="Active schedule not found")
+    return class_timetable_response_from_view(view)

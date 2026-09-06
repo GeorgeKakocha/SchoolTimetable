@@ -619,10 +619,53 @@ serializer code; local dev uses a Vite proxy to the existing FastAPI
 server, no CORS middleware; and the first frontend dependency set is
 exactly React/TypeScript/Vite (no Router, no state-management library,
 no component library yet; Vitest/RTL introduced with the first real
-component). **Phase 3B.1 is the next authorized slice only**
-(backend class-timetable projection: application read/view model,
-projection service, the new endpoint, and its tests) -- **3B.2/3B.3/3B.4
-must not start early.**
+component). **3B.2/3B.3/3B.4 must not start early.**
+
+**Phase 3B.1 is implemented on feature branch
+`feature/phase-3b1-class-timetable-projection`, pending review -- not
+yet merged to `main`.** Adds `application.class_timetable_models`
+(`ClassTimetableEntry`/`DayHeader`/`ClassTimetableCell`/
+`ClassTimetableRow`/`ClassTimetableView`, plain frozen dataclasses) and
+`application.class_timetable_service.ClassTimetableService`, composed
+from the existing `SchedulingProblemRepository`/`ScheduleVersionRepository`
+ports unchanged -- no port/persistence/schema change. `project(...)`
+resolves the requested class from config (raising the new
+`application.errors.ClassSectionNotFoundError` if unknown), returns
+`None` if no `Schedule` has been generated yet, and otherwise groups
+`ActiveScheduleVersion.entries` by `(day_id, period_id)` for the
+requested class -- membership is exactly
+`class_section_id in entry.class_sections`, entries are never
+deduplicated (parallel split-group entries both survive in one cell),
+and within-cell order exactly preserves persisted entry order. Days are
+ordered by `Day.index`; periods are filtered to `is_instructional` and
+ordered by `Period.index` -- never hard-coded. Display names
+(activity/teacher/participant-group) are resolved via strict lookup
+against `SchedulingProblem`'s own tables -- a missing referenced ID
+raises (`KeyError`), never silently serializes as blank. `api/schemas.py`
+gains `DayHeaderResponse`/`ClassTimetableEntryResponse`/
+`ClassTimetableCellResponse`/`ClassTimetableRowResponse`/
+`ClassTimetableResponse`; `api/serializer.py` gains a pure
+`class_timetable_response_from_view` (no filtering/grouping/name
+resolution -- that's already done); `api/dependencies.py` gains
+`get_class_timetable_service`, session-factory-backed against
+`SessionLocal` exactly like `get_generate_schedule_service`; the new
+route, `GET /schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id}`,
+lives in the existing `api/schedule_routes.py` and maps
+`SchedulingProblemNotFoundError`/`None`/`ClassSectionNotFoundError` to
+three distinct, code-less 404 bodies, leaving any other exception to
+FastAPI's generic 500. Proven with 11 new pure application tests
+(`tests/test_class_timetable_service.py`, fakes, no database), 2 new
+DB-free serializer tests, and 8 new real-PostgreSQL/real-solver/
+real-verifier HTTP integration tests
+(`tests_web/test_class_timetable_api.py`): the real German/Russian
+split (both branches present in every shared cell, discovered from the
+actual solve rather than hard-coded), the real 9a/9b merged history
+lesson (appears exactly once in each class's own projection), the real
+`club_chess` reserved block (teacher-less, correct in both configured
+classes), full response-shape/ordering proofs, and the full 404/500
+matrix. No migration/schema change, no solver/verifier change, no
+application/persistence port redesign -- **Phase 3B.2 has NOT
+started.**
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 

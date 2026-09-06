@@ -26,6 +26,7 @@ from __future__ import annotations
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
 from school_timetable.persistence.db import SessionLocal, get_session
@@ -58,6 +59,17 @@ def get_generate_schedule_service() -> GenerateScheduleService:
     `GenerateScheduleService` needs -- never a request-scoped `Session`
     -- so preflight/solve/verify run with no DB connection held open."""
     return GenerateScheduleService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_class_timetable_service() -> ClassTimetableService:
+    """Composes the same two session-factory-backed adapters
+    `ClassTimetableService` needs -- never a request-scoped `Session`,
+    matching `get_generate_schedule_service` exactly (Phase 3B.1,
+    `docs/DECISIONS.md` #32)."""
+    return ClassTimetableService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

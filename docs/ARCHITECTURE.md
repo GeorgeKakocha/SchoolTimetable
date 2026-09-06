@@ -68,26 +68,28 @@ across-solve boundary (`get_schedule_version_repository`/
 request-scoped read path is unchanged. The schedule read API remains
 generic and flat, not a Phase 3B 5x8 React projection.
 
-**Phase 3B (first-view design locked; implementation not yet started)**
-adds the first browser-rendered class timetable, per `DECISIONS.md` #32.
-The data flow is locked as: flat persisted schedule +
-`SchedulingProblem`/config -> a backend **application-layer** projection
--> a UI-shaped, read-only API response -> React renders the
+**Phase 3B (first-view design locked; 3B.1 backend projection
+implemented, pending review; 3B.2-3B.4 -- the frontend -- not yet
+started)** adds the first browser-rendered class timetable, per
+`DECISIONS.md` #32. The data flow is locked as: flat persisted schedule
++ `SchedulingProblem`/config -> a backend **application-layer**
+projection -> a UI-shaped, read-only API response -> React renders the
 already-correct projection. React never reconstructs the class grid
 itself -- one `ClassSection`/day/period can genuinely hold more than one
 simultaneous `ScheduleEntry` (parallel split-`ParticipantGroup`
-branches), so that grouping/cardinality logic stays in the same backend
-application layer `application/`'s existing services already occupy,
-never in `React`, ORM models, repository SQL, or `api/serializer.py`
-treated as ad-hoc business logic. The first new route,
-`GET .../schedule/active/classes/{class_section_id}`, is read-only and
-consumes the existing `SchedulingProblemRepository`/
-`ScheduleVersionRepository` ports unchanged -- no new repository method,
-no persistence/solver/verifier change. Local frontend development
-proxies through Vite to the existing FastAPI server; no CORS middleware
-is added. See `DECISIONS.md` #32 for the complete locked first-slice
-scope, cell-cardinality/display rules, calendar-derivation policy, and
-the 3B.1-3B.4 sub-slice sequence.
+branches), so that grouping/cardinality logic stays in the backend
+application layer, in `application.class_timetable_service.ClassTimetableService`
+-- never in `React`, ORM models, repository SQL, or `api/serializer.py`
+treated as ad-hoc business logic. The new route,
+`GET .../schedule/active/classes/{class_section_id}`
+(`api/schedule_routes.py`), is read-only and consumes the existing
+`SchedulingProblemRepository`/`ScheduleVersionRepository` ports
+unchanged -- no repository method, persistence, solver, or verifier
+change. Local frontend development will proxy through Vite to the
+existing FastAPI server; no CORS middleware is added. See
+`DECISIONS.md` #32 for the complete locked first-slice scope,
+cell-cardinality/display rules, calendar-derivation policy, and the
+3B.1-3B.4 sub-slice sequence.
 
 ```
 src/school_timetable/

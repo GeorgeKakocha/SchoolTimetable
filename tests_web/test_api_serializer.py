@@ -1,7 +1,8 @@
 """Pure, DB-free unit tests for the domain/application -> API serializer
-(Phase 3A2.4, extended Phase 3A3.4; `api/serializer.py`). No database,
-no FastAPI TestClient -- these isolate serialization failures from
-repository/DB failures, which `test_config_api.py`/`test_schedule_api.py`
+(Phase 3A2.4, extended Phase 3A3.4/3B.1; `api/serializer.py`). No
+database, no FastAPI TestClient -- these isolate serialization failures
+from repository/DB failures, which
+`test_config_api.py`/`test_schedule_api.py`/`test_class_timetable_api.py`
 cover separately."""
 from __future__ import annotations
 
@@ -10,10 +11,18 @@ from datetime import datetime, timezone
 from school_timetable.api.schemas import ActiveScheduleResponse, GenerateScheduleResponse, ScheduleEntryResponse
 from school_timetable.api.serializer import (
     active_schedule_response_from_active_version,
+    class_timetable_response_from_view,
     config_response_from_problem,
     generate_response_from_active_version,
     schedule_entry_response_from_entry,
     validation_diagnostic_response_from_error,
+)
+from school_timetable.application.class_timetable_models import (
+    ClassTimetableCell,
+    ClassTimetableEntry,
+    ClassTimetableRow,
+    ClassTimetableView,
+    DayHeader,
 )
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.result import EntrySource, ScheduleEntry, SolverStatus
@@ -214,3 +223,82 @@ def test_validation_diagnostic_response_from_error():
     assert response.code == "UNKNOWN_TEACHER"
     assert response.message == "bad teacher"
     assert response.context == {"teacher_id": "t9"}
+
+
+# -- Phase 3B.1: class-timetable projection serializer. ------------------
+
+
+def test_class_timetable_response_preserves_order_and_metadata():
+    view = ClassTimetableView(
+        school_id="school-1", school_name="Pilot School",
+        academic_year_id="year-1", academic_year_label="2025/2026",
+        class_section_id="8a", class_section_name="8-A",
+        version_number=1, solver_status=SolverStatus.OPTIMAL, total_soft_penalty=3,
+        created_at=_CREATED_AT, is_active=True,
+        days=(DayHeader(id="mon", name="Monday"), DayHeader(id="tue", name="Tuesday")),
+        rows=(
+            ClassTimetableRow(
+                period_id="p1", period_name="Period 1",
+                cells=(
+                    ClassTimetableCell(
+                        day_id="mon",
+                        entries=(
+                            ClassTimetableEntry(
+                                source=EntrySource.REQUIREMENT, activity_id="german", activity_name="German",
+                                teacher_id="t_german", teacher_name="Teacher German",
+                                participant_group_id="g_german", participant_group_name="8-A German",
+                                requirement_id="german_8a", reserved_block_id=None, resource_id=None,
+                            ),
+                            ClassTimetableEntry(
+                                source=EntrySource.REQUIREMENT, activity_id="russian", activity_name="Russian",
+                                teacher_id="t_russian", teacher_name="Teacher Russian",
+                                participant_group_id="g_russian", participant_group_name="8-A Russian",
+                                requirement_id="russian_8a", reserved_block_id=None, resource_id=None,
+                            ),
+                        ),
+                    ),
+                    ClassTimetableCell(day_id="tue", entries=()),
+                ),
+            ),
+        ),
+    )
+
+    response = class_timetable_response_from_view(view)
+    dumped = response.model_dump(mode="json")
+
+    assert set(dumped.keys()) == {
+        "school_id", "school_name", "academic_year_id", "academic_year_label",
+        "class_section_id", "class_section_name", "version_number", "solver_status",
+        "total_soft_penalty", "created_at", "is_active", "days", "rows",
+    }
+    assert [d["id"] for d in dumped["days"]] == ["mon", "tue"]
+    assert len(dumped["rows"]) == 1
+    row = dumped["rows"][0]
+    assert row["period_id"] == "p1"
+    assert [c["day_id"] for c in row["cells"]] == ["mon", "tue"]
+
+    monday_cell = row["cells"][0]
+    assert len(monday_cell["entries"]) == 2
+    # Order-sensitive proof, not a set comparison.
+    assert [e["requirement_id"] for e in monday_cell["entries"]] == ["german_8a", "russian_8a"]
+    assert monday_cell["entries"][0]["activity_name"] == "German"
+    assert monday_cell["entries"][1]["activity_name"] == "Russian"
+
+    tuesday_cell = row["cells"][1]
+    assert tuesday_cell["entries"] == []
+
+
+def test_class_timetable_entry_no_ordinal_or_surrogate_field():
+    from school_timetable.api.schemas import (
+        ClassTimetableEntryResponse,
+        ClassTimetableResponse,
+        ClassTimetableRowResponse,
+    )
+
+    for model in (ClassTimetableEntryResponse, ClassTimetableRowResponse, ClassTimetableResponse):
+        fields = set(model.model_fields.keys())
+        assert "ordinal" not in fields
+        assert "id" not in fields
+        assert "wall_time_seconds" not in fields
+        assert "random_seed" not in fields
+        assert "resource_name" not in fields

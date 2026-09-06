@@ -1,5 +1,6 @@
 """Errors raised across the `application/` repository-port boundary and
-by `GenerateScheduleService` (Phase 3A3.3, `docs/DECISIONS.md` #31).
+by `GenerateScheduleService` (Phase 3A3.3, `docs/DECISIONS.md` #31) and
+`ClassTimetableService` (Phase 3B.1, `docs/DECISIONS.md` #32).
 
 Deliberately minimal, one error per distinct expected outcome a caller
 (eventually an HTTP layer, Phase 3A3.4) must branch on -- never a
@@ -91,5 +92,28 @@ class ScheduleInfeasibleError(Exception):
         self.academic_year_natural_id = academic_year_natural_id
         super().__init__(
             f"no feasible schedule exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class ClassSectionNotFoundError(Exception):
+    """The requested `class_section_id` does not exist in this school/
+    academic-year's persisted configuration (`docs/DECISIONS.md` #32).
+    A caller-supplied bad natural ID within an otherwise-valid
+    school/year scope -- the same kind of "this does not exist" outcome
+    `SchedulingProblemNotFoundError` already represents for school/year,
+    just one level narrower. Distinct from "no schedule generated yet"
+    (`ClassTimetableService.project` returning `None`), which is an
+    ordinary application state, not an error. Carries only the natural
+    identifiers already supplied -- no persistence surrogate ID."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, class_section_id: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.class_section_id = class_section_id
+        super().__init__(
+            f"no class section {class_section_id!r} for school={school_natural_id!r}, "
             f"academic_year={academic_year_natural_id!r}"
         )

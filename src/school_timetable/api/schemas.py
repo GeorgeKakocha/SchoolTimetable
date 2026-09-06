@@ -223,3 +223,57 @@ class GenerationErrorResponse(BaseModel):
 
     code: str
     detail: str
+
+
+# -- Class-timetable projection API (Phase 3B.1, `docs/DECISIONS.md`
+# #32). ------------------------------------------------------------
+
+
+class DayHeaderResponse(BaseModel):
+    id: str
+    name: str
+
+
+class ClassTimetableEntryResponse(BaseModel):
+    """One flat, locked-shape projected lesson within a cell -- see
+    `docs/DECISIONS.md` #32 Owner Decisions 3-4. A cell may carry more
+    than one of these (parallel split-`ParticipantGroup` branches)."""
+
+    source: Literal["REQUIREMENT", "RESERVED_BLOCK"]
+    activity_id: str
+    activity_name: str
+    teacher_id: str | None
+    teacher_name: str | None
+    participant_group_id: str | None
+    participant_group_name: str | None
+    requirement_id: str | None
+    reserved_block_id: str | None
+    resource_id: str | None
+
+
+class ClassTimetableCellResponse(BaseModel):
+    day_id: str
+    entries: tuple[ClassTimetableEntryResponse, ...]
+
+
+class ClassTimetableRowResponse(BaseModel):
+    period_id: str
+    period_name: str
+    cells: tuple[ClassTimetableCellResponse, ...]
+    """Ordered to correspond exactly to `ClassTimetableResponse.days`."""
+
+
+class ClassTimetableResponse(BaseModel):
+    school_id: str
+    school_name: str
+    academic_year_id: str
+    academic_year_label: str
+    class_section_id: str
+    class_section_name: str
+    version_number: int
+    solver_status: Literal["OPTIMAL", "FEASIBLE"]
+    total_soft_penalty: int
+    created_at: datetime
+    is_active: bool
+    days: tuple[DayHeaderResponse, ...]
+    rows: tuple[ClassTimetableRowResponse, ...]

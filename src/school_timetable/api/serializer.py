@@ -26,6 +26,11 @@ from school_timetable.api.schemas import (
     ActiveScheduleResponse,
     ActivityResponse,
     ClassSectionResponse,
+    ClassTimetableCellResponse,
+    ClassTimetableEntryResponse,
+    ClassTimetableResponse,
+    ClassTimetableRowResponse,
+    DayHeaderResponse,
     DayResponse,
     DistributionPolicyResponse,
     FixedPlacementResponse,
@@ -46,6 +51,7 @@ from school_timetable.api.schemas import (
     TimeSlotResponse,
     ValidationDiagnosticResponse,
 )
+from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import TeachingRequirement
@@ -190,3 +196,58 @@ def active_schedule_response_from_active_version(version: ActiveScheduleVersion)
 
 def validation_diagnostic_response_from_error(error: ValidationError) -> ValidationDiagnosticResponse:
     return ValidationDiagnosticResponse(code=error.code, message=error.message, context=error.context)
+
+
+# -- Class-timetable projection API (Phase 3B.1). ------------------------
+
+
+def class_timetable_response_from_view(view: ClassTimetableView) -> ClassTimetableResponse:
+    """Pure application-view-model -> Pydantic conversion only -- all
+    class-membership filtering, cell grouping, calendar ordering, and
+    name resolution already happened in `ClassTimetableService`
+    (Decision #32 Owner Decision 8). This function never re-sorts,
+    re-groups, or re-resolves anything; it preserves `view.days`/
+    `view.rows`/each row's `cells`/each cell's `entries` order exactly."""
+    return ClassTimetableResponse(
+        school_id=view.school_id,
+        school_name=view.school_name,
+        academic_year_id=view.academic_year_id,
+        academic_year_label=view.academic_year_label,
+        class_section_id=view.class_section_id,
+        class_section_name=view.class_section_name,
+        version_number=view.version_number,
+        solver_status=view.solver_status.value,
+        total_soft_penalty=view.total_soft_penalty,
+        created_at=view.created_at,
+        is_active=view.is_active,
+        days=tuple(DayHeaderResponse(id=d.id, name=d.name) for d in view.days),
+        rows=tuple(
+            ClassTimetableRowResponse(
+                period_id=row.period_id,
+                period_name=row.period_name,
+                cells=tuple(
+                    ClassTimetableCellResponse(
+                        day_id=cell.day_id,
+                        entries=tuple(_class_timetable_entry_response(e) for e in cell.entries),
+                    )
+                    for cell in row.cells
+                ),
+            )
+            for row in view.rows
+        ),
+    )
+
+
+def _class_timetable_entry_response(entry: ClassTimetableEntry) -> ClassTimetableEntryResponse:
+    return ClassTimetableEntryResponse(
+        source=entry.source.value,
+        activity_id=entry.activity_id,
+        activity_name=entry.activity_name,
+        teacher_id=entry.teacher_id,
+        teacher_name=entry.teacher_name,
+        participant_group_id=entry.participant_group_id,
+        participant_group_name=entry.participant_group_name,
+        requirement_id=entry.requirement_id,
+        reserved_block_id=entry.reserved_block_id,
+        resource_id=entry.resource_id,
+    )
