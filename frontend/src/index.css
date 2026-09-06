@@ -1,0 +1,35 @@
+/* Restrained global baseline only -- Phase 3B.4 owns real UX hardening
+   (dense-grid readability, parallel-cell polish, responsiveness,
+   accessibility pass). No branding, no color system, no timetable-grid
+   styling, no animations, no component library here. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #ffffff;
+  color: #1a1a1a;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+.app-shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.app-subtitle {
+  color: #555555;
+}

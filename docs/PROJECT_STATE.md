@@ -671,13 +671,44 @@ reused entirely unchanged, and no frontend work was introduced.
 `GET .../schedule/active/classes/{class_section_id}` route are real,
 on `main`, with parallel split entries, merged-group semantics, and
 reserved-block semantics all verified against real generated/persisted
-data (not synthetic-only). **Phase 3B.2 has NOT started** -- no
-React/Vite scaffold, no browser timetable page, no frontend API
-client/types, no frontend tests. The next authorized slice is **Phase
-3B.2 only** (frontend foundation: React/TypeScript/Vite scaffold, API
-client, hand-written DTO types, the single school/year configuration
-point, the Vite proxy, with Vitest/React Testing Library introduced
-alongside the first real component).
+data (not synthetic-only).
+
+**Phase 3B.2 is implemented on feature branch
+`feature/phase-3b2-frontend-foundation`, pending review -- not yet
+merged to `main`.** `frontend/` now exists: a manually-assembled (not
+generator-scaffolded) React 19/TypeScript 7/Vite 8 project with no demo
+assets, no router, no state-management library, no component library.
+`package-lock.json` exists and is included in the Phase 3B.2 tracked
+scope (to be committed alongside the rest of this slice once reviewed).
+`vite.config.ts` proxies the `/schools`
+route prefix to `http://127.0.0.1:8000` for local development -- no
+FastAPI `CORSMiddleware` was added. `src/config/appConfig.ts` is the
+one place `VITE_SCHOOL_ID`/`VITE_ACADEMIC_YEAR_ID` are read/interpreted
+(`frontend/.env.example` documents the two placeholders; no real
+`.env`/`.env.local` is committed). `src/api/types.ts` hand-mirrors the
+minimal `/config` index shape the class selector will need plus Phase
+3B.1's exact `ClassTimetableResponse` contract; `src/api/client.ts`
+(native `fetch`, relative URLs only) provides
+`getSchedulingConfigIndex`/`getClassTimetable`, with a small manual
+shape guard reducing the `/config` superset and a typed `ApiError`
+preserving the backend's own safe `detail` text (e.g. "Active schedule
+not found") with a generic fallback for non-JSON/malformed error
+bodies. `App.tsx` is a restrained foundation-only shell ("School
+Timetable" + a "being prepared" subtitle) -- it does not yet render a
+`ClassSection` selector, the timetable grid, live API data, a Generate
+button, or any loading/error/no-schedule state; that is Phase 3B.3.
+Vitest + React Testing Library (jsdom environment) are configured and
+passing: 15 tests across `App.test.tsx`, `config/appConfig.test.ts`,
+and `api/client.test.ts`. `npm run build` (strict `tsc` type-check +
+`vite build`) succeeds; a bounded dev-server smoke check confirmed Vite
+serves the shell (HTTP 200) and was cleanly terminated afterward -- the
+Vite-to-FastAPI proxy itself was not exercised end-to-end against a
+live backend in this slice. No backend/solver/persistence/domain/
+application code changed. **Phase 3B.3 has NOT started.** The next
+authorized slice after review/merge is **Phase 3B.3 only** (dynamic
+`ClassSection` selector, the live projection endpoint, the timetable
+grid with parallel split entries shown correctly, loading/no-schedule/
+error states -- the first visible milestone).
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
