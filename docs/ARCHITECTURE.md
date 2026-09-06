@@ -68,35 +68,41 @@ across-solve boundary (`get_schedule_version_repository`/
 request-scoped read path is unchanged. The schedule read API remains
 generic and flat, not a Phase 3B 5x8 React projection.
 
-**Phase 3B (first-view design locked; 3B.1 backend projection merged
-to `main`; 3B.2 frontend foundation implemented, pending review; 3B.3/
-3B.4 not yet started)** adds the first browser-rendered class
-timetable, per `DECISIONS.md` #32. The
-data flow is locked as: flat persisted schedule +
+**Phase 3B (first-view design locked; 3B.1 backend projection and 3B.2
+frontend foundation both merged to `main`; 3B.3/3B.4 not yet started)**
+adds the first browser-rendered class timetable, per `DECISIONS.md`
+#32. The data flow is locked as: flat persisted schedule +
 `SchedulingProblem`/config -> a backend **application-layer**
-projection -> a UI-shaped, read-only API response -> React (once it
-exists) renders the already-correct projection. React still does NOT
-reconstruct the class grid itself -- one `ClassSection`/day/period can
-genuinely hold more than one simultaneous `ScheduleEntry` (parallel
-split-`ParticipantGroup` branches, remaining zero-or-more per cell), so
-that grouping/cardinality logic stays in the backend application
-layer, in `application.class_timetable_service.ClassTimetableService`
--- the now-implemented projection service -- never in `React`, ORM
-models, repository SQL, or `api/serializer.py` treated as ad-hoc
-business logic. The route,
+projection -> a UI-shaped, read-only API response -> React renders the
+already-correct projection. React may consume the backend projection
+but does NOT recreate class membership, timetable grouping,
+parallel-entry cardinality, or calendar ordering semantics -- one
+`ClassSection`/day/period can genuinely hold more than one simultaneous
+`ScheduleEntry` (parallel split-`ParticipantGroup` branches, remaining
+zero-or-more per cell), so that grouping/cardinality logic stays in the
+backend application layer, in
+`application.class_timetable_service.ClassTimetableService` -- never in
+`React`, ORM models, repository SQL, or `api/serializer.py` treated as
+ad-hoc business logic. The route,
 `GET .../schedule/active/classes/{class_section_id}`
 (`api/schedule_routes.py`), is live on `main`, read-only, and consumes
 the existing `SchedulingProblemRepository`/`ScheduleVersionRepository`
 ports reused entirely unchanged -- no repository method, persistence,
-solver, or verifier redesign was needed. `frontend/` (React 19,
-TypeScript 7, Vite 8, no router/state-management/component library) is
-implemented in foundation form only -- no timetable grid, no class
-selector, no live API data rendered yet. Local frontend development
-proxies through Vite (`vite.config.ts`) to the existing FastAPI server
--- no CORS middleware was added. See
-`DECISIONS.md` #32 for the complete locked first-slice scope,
-cell-cardinality/display rules, calendar-derivation policy, and the
-3B.1-3B.4 sub-slice sequence.
+solver, or verifier redesign was needed.
+
+`frontend/` (React 19, TypeScript 7, Vite 8, no router/state-management/
+component library; commit `bff1c31`) is on `main` in foundation form
+only -- no timetable grid, no class selector, no live API data
+rendered yet. The local development boundary is locked as: frontend
+native `fetch` client -> a relative `/schools/...` URL -> the Vite dev
+proxy (`vite.config.ts`) -> `http://127.0.0.1:8000`. That Vite proxy
+configuration is the one and only allowed place an absolute local
+backend address appears; the frontend's own API-client/component
+request-construction code (`src/api/client.ts`) uses relative URLs
+exclusively; no FastAPI `CORSMiddleware` was added. See `DECISIONS.md`
+#32 for the complete locked first-slice scope, cell-cardinality/display
+rules, calendar-derivation policy, and the 3B.1-3B.4 sub-slice
+sequence.
 
 ```
 src/school_timetable/
@@ -269,15 +275,19 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3B.2 (implemented on a feature branch, pending review --
-not yet merged to `main`): `POST .../schedule/generate`,
+As of Phase 3B.2 (CLOSED, merged to `main`): `POST .../schedule/generate`,
 `GET .../schedule/active`, and `GET .../schedule/active/classes/{class_section_id}`
-are all real production routes, and the backend class-timetable
-projection (`ClassTimetableService`/`ClassTimetableView`) exists on
-`main`. The `frontend/` React/TypeScript/Vite foundation, hand-written
-API client/types, and the school/year config module now exist, but no
-browser-rendered timetable page exists yet: no `ClassSection` selector,
-no timetable grid, no live API data rendered, no Generate button, no
-auth. `docker-compose.yml` provides a local development PostgreSQL
-only -- no application containerization/deployment setup beyond that
-exists yet. These arrive starting Phase 3B.3 per `PROJECT_STATE.md`.
+are all real production routes, the backend class-timetable projection
+(`ClassTimetableService`/`ClassTimetableView`) exists on `main`, and the
+`frontend/` React/TypeScript/Vite foundation -- hand-written API
+client/types, the school/year config module, and the Vitest/React
+Testing Library test setup -- exists on `main` too. The missing product
+layer begins at Phase 3B.3: no `ClassSection` selector yet, no
+timetable grid yet, no live backend timetable rendered in React yet, no
+loading/no-schedule/error timetable states yet, no Generate button;
+broader admin UI (manual editing, locks, reoptimization, schedule
+history, scenarios), auth, and config editing remain out of scope as
+previously locked. `docker-compose.yml` provides a local development
+PostgreSQL only -- no application containerization/deployment setup
+beyond that exists yet. These arrive starting Phase 3B.3 per
+`PROJECT_STATE.md`.
