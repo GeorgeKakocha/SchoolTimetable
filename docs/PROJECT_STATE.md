@@ -621,9 +621,8 @@ exactly React/TypeScript/Vite (no Router, no state-management library,
 no component library yet; Vitest/RTL introduced with the first real
 component). **3B.2/3B.3/3B.4 must not start early.**
 
-**Phase 3B.1 is implemented on feature branch
-`feature/phase-3b1-class-timetable-projection`, pending review -- not
-yet merged to `main`.** Adds `application.class_timetable_models`
+**Phase 3B.1 is CLOSED and merged to `main`** (commit `8160e47`). Adds
+`application.class_timetable_models`
 (`ClassTimetableEntry`/`DayHeader`/`ClassTimetableCell`/
 `ClassTimetableRow`/`ClassTimetableView`, plain frozen dataclasses) and
 `application.class_timetable_service.ClassTimetableService`, composed
@@ -664,8 +663,21 @@ lesson (appears exactly once in each class's own projection), the real
 `club_chess` reserved block (teacher-less, correct in both configured
 classes), full response-shape/ordering proofs, and the full 404/500
 matrix. No migration/schema change, no solver/verifier change, no
-application/persistence port redesign -- **Phase 3B.2 has NOT
-started.**
+application/persistence port redesign -- the existing
+`SchedulingProblemRepository`/`ScheduleVersionRepository` ports were
+reused entirely unchanged, and no frontend work was introduced.
+
+**Phase 3B.1 is CLOSED.** `ClassTimetableService` and the dedicated
+`GET .../schedule/active/classes/{class_section_id}` route are real,
+on `main`, with parallel split entries, merged-group semantics, and
+reserved-block semantics all verified against real generated/persisted
+data (not synthetic-only). **Phase 3B.2 has NOT started** -- no
+React/Vite scaffold, no browser timetable page, no frontend API
+client/types, no frontend tests. The next authorized slice is **Phase
+3B.2 only** (frontend foundation: React/TypeScript/Vite scaffold, API
+client, hand-written DTO types, the single school/year configuration
+point, the Vite proxy, with Vitest/React Testing Library introduced
+alongside the first real component).
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
