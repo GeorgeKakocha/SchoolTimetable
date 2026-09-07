@@ -19,7 +19,7 @@ from school_timetable.application.errors import ClassSectionNotFoundError, Sched
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear, Day, Period
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import EntrySource, ScheduleEntry, SolverStatus
@@ -39,7 +39,7 @@ def _problem(**overrides) -> SchedulingProblem:
         ),
         teachers=(Teacher(id="t1", name="Teacher One"),),
         class_sections=(ClassSection(id="8a", name="8-A"), ClassSection(id="9a", name="9-A")),
-        participant_groups=(ParticipantGroup(id="g1", name="All of 8-A", class_sections=("8a",)),),
+        participant_groups=(ParticipantGroup(id="g1", name="All of 8-A", class_sections=("8a",), role=ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity(id="math", name="Mathematics"),),
         teaching_requirements=(),
     )
@@ -160,8 +160,8 @@ def test_entry_for_another_class_does_not_appear():
 def test_split_parallel_entries_both_survive_in_same_cell():
     problem = _problem(
         participant_groups=(
-            ParticipantGroup(id="g_german", name="8-A German", class_sections=("8a",)),
-            ParticipantGroup(id="g_russian", name="8-A Russian", class_sections=("8a",)),
+            ParticipantGroup(id="g_german", name="8-A German", class_sections=("8a",), role=ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup(id="g_russian", name="8-A Russian", class_sections=("8a",), role=ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity(id="german", name="German"), Activity(id="russian", name="Russian")),
         teachers=(Teacher(id="t_german", name="Teacher German"), Teacher(id="t_russian", name="Teacher Russian")),
@@ -211,7 +211,7 @@ def test_within_cell_order_matches_persisted_entry_order():
 def test_merged_entry_appears_once_in_each_affected_class_projection():
     problem = _problem(
         participant_groups=(
-            ParticipantGroup(id="g_merged", name="9-A + 9-B Merged", class_sections=("9a", "9b")),
+            ParticipantGroup(id="g_merged", name="9-A + 9-B Merged", class_sections=("9a", "9b"), role=ParticipantGroupRole.MERGED_CLASSES),
         ),
         class_sections=(ClassSection(id="9a", name="9-A"), ClassSection(id="9b", name="9-B")),
         activities=(Activity(id="history", name="History"),),

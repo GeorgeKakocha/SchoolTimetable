@@ -1325,38 +1325,51 @@ this implementation followed them as given.
     - **`MERGED_CLASSES`** -- spans two or more `ClassSection`s (e.g. a
       combined 9-A+9-B history lesson).
 
-    **Cardinality invariants** (`class_sections` tuple length):
-    `WHOLE_CLASS` and `SUBGROUP` both require exactly 1 class section;
-    `MERGED_CLASSES` requires 2 or more. These are per-row invariants --
-    they belong in **domain-level construction validation** (alongside
-    `ParticipantGroup`'s existing invariants) and in
-    **`validation.preflight`** as the pre-generation defense-in-depth
-    check (matching how split-group consistency is already validated
-    today) -- never a database `CHECK` constraint, since a `CHECK` on
-    the `participant_group` row cannot see the count of child
-    `participant_group_class_section` rows without a trigger, and this
-    codebase already has an established, explicit preference for
-    application-level invariant enforcement over database-mechanism
+    **Cardinality invariants** (distinct `class_sections` membership,
+    never raw tuple length -- a duplicated entry, e.g. `("c1", "c1")`,
+    must never let `MERGED_CLASSES` appear valid merely because the
+    tuple has length 2; preflight rejects the duplicate itself on its
+    own, independent of persistence's existing `UNIQUE` constraint on
+    the same concern):
+    `WHOLE_CLASS` and `SUBGROUP` both require exactly 1 distinct class
+    section; `MERGED_CLASSES` requires 2 or more distinct class
+    sections. These are per-row invariants,
+    owned exclusively by **`validation.preflight`** (matching how
+    split-group consistency is already validated today), never by
+    `ParticipantGroup` itself -- the dataclass stays a **plain frozen
+    data holder**, consistent with every other domain object in this
+    codebase; no `__post_init__`/self-validating construction pattern
+    is introduced (this codebase channels all structural/cross-row
+    validation through `validation/preflight.py`, never scattered
+    across dataclasses). Nor is this a database `CHECK` constraint,
+    since a `CHECK` on the `participant_group` row cannot see the count
+    of child `participant_group_class_section` rows without a trigger,
+    and this codebase already has an established, explicit preference
+    for application-level invariant enforcement over database-mechanism
     ones for exactly this kind of cross-row concern (see #21, and #31's
-    "no PostgreSQL trigger... unjustified machinery" reasoning).
+    "no PostgreSQL trigger... unjustified machinery" reasoning). The DB
+    still owns one thing here: a row-local `CHECK` that `role` is one of
+    the three valid values (matching the existing `TeacherAvailability.
+    status`/`Activity.kind` convention) -- value-validity is DB-owned,
+    cardinality is preflight-owned, never duplicated across both.
 
     **"Exactly one `WHOLE_CLASS` group per `ClassSection` per
-    `AcademicYear`" is a genuine cross-row invariant** and deserves a
-    real database-level guarantee, not application trust alone
-    (matching #26's precedent of PostgreSQL-enforced, not merely
-    Python-enforced, same-academic-year isolation). The recommended
-    mechanism for 3C.1 to evaluate: a nullable denormalized
-    `whole_class_of_class_section_id` column on `participant_group`,
-    populated only when `role = WHOLE_CLASS` (equal to that group's own
-    single `class_sections` member), with a partial unique index --
-    `UNIQUE (academic_year_id, whole_class_of_class_section_id) WHERE
-    whole_class_of_class_section_id IS NOT NULL` -- a standard,
-    idiomatic PostgreSQL pattern, not an impossible constraint. The
-    exact column/index shape is a 3C.1 implementation detail, not fixed
-    by this decision; if 3C.1 finds the denormalized column
-    unjustified, the fallback is transactional application-level
-    enforcement in the future write service, with generation-time
-    preflight as the final backstop either way.
+    `AcademicYear`" is likewise enforced by `validation.preflight`, not
+    a new database structure, for now.** 3C.1 evaluated the previously
+    "recommended" nullable denormalized `whole_class_of_class_section_id`
+    column + partial unique index and **decided against adding it**:
+    `ParticipantGroup` remains read-only reference data through the
+    entirety of 3C.1-3C.4 (Decision #34), so no write path exists yet
+    that could ever violate this invariant except the one-time,
+    developer-controlled fixture reseed -- building real DB machinery
+    to defend a write path that doesn't exist yet would be exactly the
+    premature abstraction this project has consistently avoided (#12,
+    #29, #31). This remains open to revisit once a future
+    `ParticipantGroup` write service (3C.5+) actually needs
+    transactional protection against concurrent creates; until then,
+    preflight is the sole enforcement point, and any future write
+    service re-runs the same preflight function rather than
+    reimplementing the rule.
 
     **Never inferred -- reaffirming and closing the Phase 3B.4 gap
     authoritatively.** The system must never derive `role` from: the
@@ -1370,18 +1383,32 @@ this implementation followed them as given.
     heuristics remains valid and unchanged; this decision closes the
     same gap in the domain instead of leaving it unsolved in React.
 
-    **Backfill rule.** Existing `ParticipantGroup` rows (today, only
-    ever created by the TEST-ONLY aggregate writer against
-    `fixtures/valid_fixture.py`) must **not** be classified
-    heuristically by any future migration/backfill script. Whoever
-    writes the 3C.1 migration/fixture update must assign `role`
-    explicitly and deterministically from the fixture's own authorial
-    intent (e.g. `pg_8a`/`pg_8b`/`pg_9a`/`pg_9b` are `WHOLE_CLASS` by
-    original design; `pg_8a_german`/`pg_8a_russian` are `SUBGROUP` by
-    original design; `pg_9a_9b_merged` is `MERGED_CLASSES` by original
-    design) -- never a generic string-matching pass over existing data.
-    **No migration is implemented by this decision** -- 3C.1 owns that
-    work.
+    **Backfill rule, as implemented by 3C.1.** Existing `ParticipantGroup`
+    rows (today, only ever created by the TEST-ONLY aggregate writer
+    against `fixtures/valid_fixture.py`) are **not** classified
+    heuristically by the migration. `ParticipantGroup.role`
+    (`persistence/models.py`) is `TEXT NOT NULL` with a `CHECK` for the
+    three values, added with **no `server_default` and no in-migration
+    backfill logic whatsoever** -- deliberately fail-closed: the
+    migration (`01b2ae564170`) raises against any `participant_group`
+    table that already has rows, since there is no safe, non-heuristic
+    way for generic migration code to assign an authoritative role to a
+    row it knows nothing about. `fixtures/valid_fixture.py`,
+    `fixtures/school_scale/curriculum.py`, and
+    `tests_web/support/problem_writer.py` were updated to set `role`
+    explicitly and deterministically from each fixture's own authorial
+    intent (`pg_8a`/`pg_8b`/`pg_9a`/`pg_9b` -> `WHOLE_CLASS`;
+    `pg_8a_german`/`pg_8a_russian` -> `SUBGROUP`; `pg_9a_9b_merged` ->
+    `MERGED_CLASSES`, and the school-scale generator's own
+    `whole_class_group()`/split/merged call sites analogously) -- never
+    a generic string-matching pass. The local dev database (the only
+    place any `ParticipantGroup` row existed) was backed up, then its
+    pilot config/schedule was cleared (via cascading delete from the
+    `School` row) before the migration was applied, then re-bootstrapped
+    from the now-role-aware fixture through the same TEST-ONLY writer,
+    then a real schedule was regenerated through the production
+    `POST .../schedule/generate` path -- no pilot natural ID or
+    heuristic was ever embedded in the migration file itself.
 
 34. **Owner Decision -- the first Phase 3C admin MVP is Teaching
     Assignments/Workload, narrowly scoped to ordinary `WHOLE_CLASS`

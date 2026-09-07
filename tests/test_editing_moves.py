@@ -15,7 +15,7 @@ from editing_test_support import fill_occupancy
 from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
 from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import (
@@ -77,7 +77,8 @@ def test_valid_ordinary_move_accepted():
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
-            ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",)),
+            ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
@@ -110,8 +111,9 @@ def test_teacher_collision_rejected():
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
-            ParticipantGroup("pgx", "PGX", ("cx",)), ParticipantGroup("pgy", "PGY", ("cy",)),
-            ParticipantGroup("pgx2", "PGX2", ("cx",)),
+            ParticipantGroup("pgx", "PGX", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pgy", "PGY", ("cy",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pgx2", "PGX2", ("cx",), ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity("math", "Math"),),
         teaching_requirements=(
@@ -148,8 +150,8 @@ def test_target_class_mismatch_rejected():
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cz", "CZ")),
         participant_groups=(
-            ParticipantGroup("pgx", "PGX", ("cx",)),
-            ParticipantGroup("pg_merged", "Merged", ("cx", "cz")),
+            ParticipantGroup("pgx", "PGX", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg_merged", "Merged", ("cx", "cz"), ParticipantGroupRole.MERGED_CLASSES),
         ),
         activities=(Activity("math", "Math"), Activity("civics", "Civics")),
         teaching_requirements=(
@@ -181,7 +183,8 @@ def test_unavailable_teacher_target_rejected():
     problem = _problem(
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
             TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),
@@ -211,8 +214,9 @@ def test_resource_capacity_conflict_rejected():
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2"), Teacher("t3", "T3")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
-            ParticipantGroup("pgx", "PGX", ("cx",)), ParticipantGroup("pgx2", "PGX2", ("cx",)),
-            ParticipantGroup("pgy", "PGY", ("cy",)),
+            ParticipantGroup("pgx", "PGX", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pgx2", "PGX2", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pgy", "PGY", ("cy",), ParticipantGroupRole.WHOLE_CLASS),
         ),
         activities=(Activity("sport", "Sport"), Activity("dance", "Dance"), Activity("math", "Math")),
         resources=(Resource("gym", "Gym", capacity=1),),
@@ -248,7 +252,8 @@ def test_fixed_occurrence_move_rejected():
     problem = _problem(
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
             TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),
@@ -275,7 +280,8 @@ def test_target_side_fixed_occurrence_move_rejected():
     problem = _problem(
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
             TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),
@@ -301,7 +307,8 @@ def test_target_side_locked_occurrence_move_rejected():
     problem = _problem(
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
             TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),
@@ -329,7 +336,7 @@ def test_reserved_block_conflict_rejected():
     problem = _problem(
         teachers=(Teacher("t1", "T1"),),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)),),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity("math", "Math"), Activity("club_chess", "Chess", kind=ActivityKind.CLUB)),
         teaching_requirements=(TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),),
         reserved_blocks=(
@@ -359,7 +366,8 @@ def _required_block_problem():
     return _problem(
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
             TeachingRequirement(
@@ -424,9 +432,9 @@ def _split_problem(t_german_unavailable_at=None):
         teachers=(Teacher("t_de", "DE"), Teacher("t_ru", "RU"), Teacher("t3", "T3")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
-            ParticipantGroup("pg_de", "DE branch", ("cx",)),
-            ParticipantGroup("pg_ru", "RU branch", ("cx",)),
-            ParticipantGroup("pg3", "PG3", ("cx",)),
+            ParticipantGroup("pg_de", "DE branch", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pg_ru", "RU branch", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pg3", "PG3", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
         ),
         activities=(Activity("german", "German"), Activity("russian", "Russian"), Activity("math", "Math")),
         teaching_requirements=(
@@ -482,8 +490,8 @@ def test_merged_group_move_uses_both_classes():
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
-            ParticipantGroup("pg_merged", "Merged", ("cx", "cy")),
-            ParticipantGroup("pg2", "PG2", ("cx", "cy")),
+            ParticipantGroup("pg_merged", "Merged", ("cx", "cy"), ParticipantGroupRole.MERGED_CLASSES),
+            ParticipantGroup("pg2", "PG2", ("cx", "cy"), ParticipantGroupRole.MERGED_CLASSES),
         ),
         activities=(Activity("civics", "Civics"),),
         teaching_requirements=(
@@ -513,7 +521,8 @@ def test_max_periods_per_day_violation_rejected():
     problem = _problem(
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
             TeachingRequirement(

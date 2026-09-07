@@ -1,6 +1,6 @@
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import BlockPolicyMode, LessonBlockPolicy, TeachingRequirement
@@ -45,8 +45,8 @@ def _build_resource_overcommitted_problem() -> SchedulingProblem:
         ),
         class_sections=(ClassSection(id="c1", name="C1"), ClassSection(id="c2", name="C2")),
         participant_groups=(
-            ParticipantGroup(id="pg_c1", name="PG C1", class_sections=("c1",)),
-            ParticipantGroup(id="pg_c2", name="PG C2", class_sections=("c2",)),
+            ParticipantGroup(id="pg_c1", name="PG C1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup(id="pg_c2", name="PG C2", class_sections=("c2",), role=ParticipantGroupRole.WHOLE_CLASS),
         ),
         activities=(Activity(id="gym_activity", name="Gym Activity"), Activity(id="filler", name="Filler")),
         resources=(Resource(id="gym", name="Indoor Gym", capacity=1),),

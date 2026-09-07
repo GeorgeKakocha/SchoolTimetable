@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import BlockPolicyMode, LessonBlockPolicy, TeachingRequirement
@@ -26,7 +26,9 @@ def build_impossible_fixture() -> SchedulingProblem:
     academic_year = AcademicYear(id="ay-2026", label="2026/2027")
 
     class_sections = (ClassSection(id="z", name="Z"),)
-    participant_groups = (ParticipantGroup(id="pg_z", name="All of Z", class_sections=("z",)),)
+    participant_groups = (
+        ParticipantGroup(id="pg_z", name="All of Z", class_sections=("z",), role=ParticipantGroupRole.WHOLE_CLASS),
+    )
 
     teachers = (
         Teacher(id="t_normal", name="Teacher Normal"),

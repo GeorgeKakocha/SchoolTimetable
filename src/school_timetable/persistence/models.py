@@ -163,12 +163,19 @@ class ParticipantGroup(Base):
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    """WHOLE_CLASS/SUBGROUP/MERGED_CLASSES (`DECISIONS.md` #33). No
+    `server_default` -- deliberately fail-closed: a row without an
+    explicit role must never be silently classified."""
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("academic_year_id", "natural_id", name="uq_participant_group_ay_natural_id"),
         UniqueConstraint("academic_year_id", "ordinal", name="uq_participant_group_ay_ordinal"),
         UniqueConstraint("academic_year_id", "id", name="uq_participant_group_ay_id"),
+        CheckConstraint(
+            "role IN ('WHOLE_CLASS', 'SUBGROUP', 'MERGED_CLASSES')", name="ck_participant_group_role",
+        ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
             name="fk_participant_group_academic_year",

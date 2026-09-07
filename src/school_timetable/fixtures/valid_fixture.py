@@ -26,7 +26,7 @@ from __future__ import annotations
 from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
 from school_timetable.domain.calendar import AcademicYear, TimeSlot
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import (
@@ -87,13 +87,20 @@ def build_valid_fixture() -> SchedulingProblem:
     )
 
     participant_groups = (
-        ParticipantGroup(id="pg_8a", name="All of 8-A", class_sections=("8a",)),
-        ParticipantGroup(id="pg_8b", name="All of 8-B", class_sections=("8b",)),
-        ParticipantGroup(id="pg_9a", name="All of 9-A", class_sections=("9a",)),
-        ParticipantGroup(id="pg_9b", name="All of 9-B", class_sections=("9b",)),
-        ParticipantGroup(id="pg_8a_german", name="8-A German", class_sections=("8a",)),
-        ParticipantGroup(id="pg_8a_russian", name="8-A Russian", class_sections=("8a",)),
-        ParticipantGroup(id="pg_9a_9b_merged", name="9-A + 9-B Merged History", class_sections=("9a", "9b")),
+        ParticipantGroup(id="pg_8a", name="All of 8-A", class_sections=("8a",), role=ParticipantGroupRole.WHOLE_CLASS),
+        ParticipantGroup(id="pg_8b", name="All of 8-B", class_sections=("8b",), role=ParticipantGroupRole.WHOLE_CLASS),
+        ParticipantGroup(id="pg_9a", name="All of 9-A", class_sections=("9a",), role=ParticipantGroupRole.WHOLE_CLASS),
+        ParticipantGroup(id="pg_9b", name="All of 9-B", class_sections=("9b",), role=ParticipantGroupRole.WHOLE_CLASS),
+        ParticipantGroup(
+            id="pg_8a_german", name="8-A German", class_sections=("8a",), role=ParticipantGroupRole.SUBGROUP,
+        ),
+        ParticipantGroup(
+            id="pg_8a_russian", name="8-A Russian", class_sections=("8a",), role=ParticipantGroupRole.SUBGROUP,
+        ),
+        ParticipantGroup(
+            id="pg_9a_9b_merged", name="9-A + 9-B Merged History", class_sections=("9a", "9b"),
+            role=ParticipantGroupRole.MERGED_CLASSES,
+        ),
     )
 
     teacher_availabilities = (

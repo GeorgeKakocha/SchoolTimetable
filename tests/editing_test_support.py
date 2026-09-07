@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 
 from school_timetable.domain.activities import Activity
-from school_timetable.domain.groups import ParticipantGroup
+from school_timetable.domain.groups import ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import BlockPolicyMode, LessonBlockPolicy, TeachingRequirement
@@ -51,7 +51,9 @@ def fill_occupancy(
         group_id = f"filler_group_{i}"
         req_id = f"filler_req_{i}"
         teachers.append(Teacher(teacher_id, f"Filler Teacher {i}"))
-        groups.append(ParticipantGroup(group_id, f"Filler Group {i}", (class_section.id,)))
+        groups.append(
+            ParticipantGroup(group_id, f"Filler Group {i}", (class_section.id,), ParticipantGroupRole.SUBGROUP)
+        )
         requirements.append(TeachingRequirement(
             req_id, teacher_id, FILLER_ACTIVITY_ID, group_id, len(free), FLEXIBLE,
         ))

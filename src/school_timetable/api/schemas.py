@@ -53,6 +53,7 @@ class ParticipantGroupResponse(BaseModel):
     id: str
     name: str
     class_sections: tuple[str, ...]
+    role: str
 
 
 class TeacherResponse(BaseModel):

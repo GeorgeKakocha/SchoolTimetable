@@ -11,7 +11,7 @@ import dataclasses
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
 from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import (
@@ -50,7 +50,13 @@ def _six_single_period_problem(**overrides) -> SchedulingProblem:
     each -- exactly fills class cx. Simple building block for all four
     re-optimization scenarios."""
     teachers = tuple(Teacher(f"t{i}", f"T{i}") for i in range(1, 7))
-    groups = tuple(ParticipantGroup(f"pg{i}", f"PG{i}", ("cx",)) for i in range(1, 7))
+    groups = tuple(
+        ParticipantGroup(
+            f"pg{i}", f"PG{i}", ("cx",),
+            ParticipantGroupRole.WHOLE_CLASS if i == 1 else ParticipantGroupRole.SUBGROUP,
+        )
+        for i in range(1, 7)
+    )
     activities = tuple(Activity(f"subj{i}", f"Subj{i}") for i in range(1, 7))
     requirements = tuple(
         TeachingRequirement(f"r{i}", f"t{i}", f"subj{i}", f"pg{i}", 1, FLEXIBLE) for i in range(1, 7)
@@ -216,8 +222,10 @@ def test_new_resource_capacity_conflicting_with_reference_is_repaired():
     gym = ResourceRequirement(resource_id="gym")
     teachers = (Teacher("t_a", "A"), Teacher("t_a2", "A2"), Teacher("t_b", "B"), Teacher("t_b2", "B2"))
     groups = (
-        ParticipantGroup("pg_a", "A", ("cx",)), ParticipantGroup("pg_a2", "A2", ("cx",)),
-        ParticipantGroup("pg_b", "B", ("cy",)), ParticipantGroup("pg_b2", "B2", ("cy",)),
+        ParticipantGroup("pg_a", "A", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+        ParticipantGroup("pg_a2", "A2", ("cx",), ParticipantGroupRole.SUBGROUP),
+        ParticipantGroup("pg_b", "B", ("cy",), ParticipantGroupRole.WHOLE_CLASS),
+        ParticipantGroup("pg_b2", "B2", ("cy",), ParticipantGroupRole.SUBGROUP),
     )
     activities = (Activity("subj_a", "A"), Activity("subj_a2", "A2"), Activity("subj_b", "B"), Activity("subj_b2", "B2"))
     small_days = DAYS[:2]
@@ -278,7 +286,13 @@ def test_new_reserved_block_conflicting_with_reference_is_repaired():
     # reserved does -- the same total footprint just moves.
     four_days = DAYS + (Day(id="d4", name="Day4", index=3),)
     teachers = tuple(Teacher(f"t{i}", f"T{i}") for i in range(1, 7))
-    groups = tuple(ParticipantGroup(f"pg{i}", f"PG{i}", ("cx",)) for i in range(1, 7))
+    groups = tuple(
+        ParticipantGroup(
+            f"pg{i}", f"PG{i}", ("cx",),
+            ParticipantGroupRole.WHOLE_CLASS if i == 1 else ParticipantGroupRole.SUBGROUP,
+        )
+        for i in range(1, 7)
+    )
     activities = tuple(Activity(f"subj{i}", f"Subj{i}") for i in range(1, 7)) + (Activity("club_chess", "Chess"),)
     requirements = tuple(
         TeachingRequirement(f"r{i}", f"t{i}", f"subj{i}", f"pg{i}", 1, FLEXIBLE) for i in range(1, 7)
@@ -344,7 +358,10 @@ def test_tightened_max_periods_per_day_conflicting_with_reference_is_repaired():
         days=small_days, periods=PERIODS,
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(
+            ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP),
+        ),
         activities=(Activity("subj1", "Subj1"), Activity("subj2", "Subj2")),
         teaching_requirements=(
             TeachingRequirement("r1", "t1", "subj1", "pg1", 2, FLEXIBLE),

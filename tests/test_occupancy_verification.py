@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear, Day, Period
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import BlockPolicyMode, LessonBlockPolicy, TeachingRequirement
@@ -73,7 +73,7 @@ def test_verifier_detects_a_missing_class_slot():
     even though every requirement's own weekly-count is otherwise fine."""
     problem = _problem(
         teachers=(Teacher(id="t1", name="T1"),),
-        participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",)),),
+        participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),),
         teaching_requirements=(
             TeachingRequirement(
                 id="r1", teacher_id="t1", activity_id="a1", participant_group_id="pg1",
@@ -96,8 +96,8 @@ def test_verifier_detects_a_genuine_class_double_booking():
     problem = _problem(
         teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
         participant_groups=(
-            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",)),
-            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",)),
+            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
         ),
         teaching_requirements=(
             TeachingRequirement(
@@ -126,8 +126,8 @@ def _split_problem():
     return _problem(
         teachers=(Teacher(id="t_de", name="German Teacher"), Teacher(id="t_ru", name="Russian Teacher")),
         participant_groups=(
-            ParticipantGroup(id="pg_de", name="German branch", class_sections=("c1",)),
-            ParticipantGroup(id="pg_ru", name="Russian branch", class_sections=("c1",)),
+            ParticipantGroup(id="pg_de", name="German branch", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup(id="pg_ru", name="Russian branch", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
         ),
         teaching_requirements=(
             TeachingRequirement(
@@ -191,8 +191,8 @@ def test_non_split_overlap_at_same_slot_is_still_flagged_as_double_booking():
     problem = _problem(
         teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
         participant_groups=(
-            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",)),
-            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",)),
+            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
         ),
         teaching_requirements=(
             TeachingRequirement(

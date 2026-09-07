@@ -53,7 +53,9 @@ def _seed_year(session: Session, school_natural: str, year_natural: str) -> dict
     session.add_all([day, period, class_section, teacher, activity, resource])
     session.flush()
 
-    group = m.ParticipantGroup(academic_year_id=year.id, natural_id="pg_8a", name="All 8-A", ordinal=0)
+    group = m.ParticipantGroup(
+        academic_year_id=year.id, natural_id="pg_8a", name="All 8-A", role="WHOLE_CLASS", ordinal=0,
+    )
     session.add(group)
     session.flush()
 
@@ -203,6 +205,10 @@ def test_enum_check_constraints_reject_invalid_values(db_session):
     _fails(db_session, m.TimePreference(
         academic_year_id=year.id, teaching_requirement_id=seeded["requirement"].id, ordinal=1,
         preferred_period_indexes=[0], weight="EXTREME",
+    ))
+    _fails(db_session, m.ParticipantGroup(
+        academic_year_id=year.id, natural_id="bad_role_group", name="Bad Role",
+        role="EVERYONE", ordinal=1,
     ))
 
 

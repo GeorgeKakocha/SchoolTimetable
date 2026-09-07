@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import BlockPolicyMode, LessonBlockPolicy, TeachingRequirement
@@ -30,8 +30,8 @@ def _tiny_problem(**overrides) -> SchedulingProblem:
         teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
         class_sections=(ClassSection(id="c1", name="C1"),),
         participant_groups=(
-            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",)),
-            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",)),
+            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity(id="a1", name="A1"), Activity(id="a2", name="A2")),
         resources=(Resource(id="gym", name="Gym", capacity=1),),

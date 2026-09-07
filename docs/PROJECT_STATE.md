@@ -908,7 +908,9 @@ This has since been formally approved as the first Phase 3C admin MVP
 -- see below and `DECISIONS.md` #33-#35.
 
 **Phase 3C -- scheduling configuration / admin input: design locked
-(`DECISIONS.md` #33-#35), implementation NOT started.** A dedicated
+(`DECISIONS.md` #33-#35); 3C.1 IMPLEMENTED on
+`feature/phase-3c1-participant-group-role`, pending review/commit (NOT
+committed, NOT merged, NOT pushed); 3C.2 onward NOT started.** A dedicated
 reconnaissance (read-only; zero files changed) established that all 17
 configuration tables are already fully readable in production via
 `GET /config` but have **zero** production write access -- the only
@@ -945,6 +947,74 @@ as never the template for a production write path (`DECISIONS.md`
   state, no auto-invalidation, no config snapshotting, and no
   regenerate lifecycle are built in this MVP -- only the one write-gate
   check the future lifecycle will eventually build on.
+
+**Phase 3C.1 (`ParticipantGroup` role domain/persistence contract) is
+implemented on `feature/phase-3c1-participant-group-role`.**
+`ParticipantGroupRole` (`WHOLE_CLASS`/`SUBGROUP`/`MERGED_CLASSES`,
+`domain/groups.py`) is the single authoritative source of a group's
+role -- a plain `str, Enum` matching the codebase's existing
+convention, with **no default value anywhere**, so every construction
+site must specify it explicitly. `validation/preflight.py` gained the
+new `_check_participant_group_roles` rule: `WHOLE_CLASS`/`SUBGROUP`
+groups must have exactly 1 `class_sections` member, `MERGED_CLASSES`
+must have 2 or more, and every `ClassSection` must have exactly one
+canonical `WHOLE_CLASS` group -- these invariants are owned solely by
+preflight, never by `ParticipantGroup` itself (which stays a plain
+frozen data holder, no `__post_init__`) and never by a database
+structure beyond a row-local `CHECK` on the three valid values.
+`persistence/models.py`'s `ParticipantGroup.role` is `TEXT NOT NULL`
+with `ck_participant_group_role`, added via migration `01b2ae564170`
+with **no `server_default` and no backfill** -- deliberately
+fail-closed, so it only succeeds against a `participant_group` table
+with zero existing rows. `persistence/mappers.py`, `api/schemas.py`
+(`ParticipantGroupResponse.role: str`), and `api/serializer.py` were
+updated additively; `GET /config` now exposes `role` for every
+participant group, purely additive (the current frontend's
+`SchedulingConfigIndexResponse` type doesn't even mirror
+`participant_groups` today, so this is invisible to it -- confirmed no
+frontend file needed to change). `fixtures/valid_fixture.py`,
+`fixtures/impossible_fixture.py`, `fixtures/school_scale/curriculum.py`,
+and `tests_web/support/problem_writer.py` were updated to set `role`
+explicitly per each fixture's own authorial intent -- never a
+name/pattern heuristic (`valid_fixture.py`'s 7 groups: `pg_8a`/
+`pg_8b`/`pg_9a`/`pg_9b` -> `WHOLE_CLASS`; `pg_8a_german`/
+`pg_8a_russian` -> `SUBGROUP`; `pg_9a_9b_merged` -> `MERGED_CLASSES`).
+No `ParticipantGroup` write path/CRUD exists yet -- it remains
+read-only reference data, exactly as Decision #34 scopes the first
+admin MVP. Local dev-DB procedure: the synthetic dev database was
+backed up (`pg_dump`, outside the repo) before any change; its pilot
+config and generated schedule were then cleared (cascading delete from
+the `School` row, per Decision #26's aggregate-oriented CASCADE rule);
+the fail-closed migration was applied cleanly to the now-empty table
+(both the dev and the separate test database); the dev database was
+re-seeded from the updated, role-aware `valid_fixture.py` through the
+same TEST-ONLY writer used since Phase 3B.3; and a real schedule was
+then regenerated through the production `POST .../schedule/generate`
+path (`201`, `OPTIMAL`, 160 entries) -- the live `/config` response was
+confirmed to expose the correct `role` for all 4 `WHOLE_CLASS` + 2
+`SUBGROUP` + 1 `MERGED_CLASSES` groups. Role cardinality is evaluated
+against *distinct* `ClassSection` membership, never raw tuple length: a
+directly-constructed `SchedulingProblem` (preflight is callable
+independently of persistence) can still contain a duplicated
+`class_sections` entry such as `("c1", "c1")`, which must never let
+`MERGED_CLASSES` appear structurally valid merely because the tuple
+happens to have length 2 -- `_check_participant_group_roles` rejects
+any such duplicate on its own (`PARTICIPANT_GROUP_DUPLICATE_CLASS_SECTION`),
+independent of and in addition to the per-role cardinality check;
+persistence already independently prevents this via
+`participant_group_class_section`'s existing `UNIQUE` constraint, kept
+as real defense-in-depth. Test gate: `pytest tests_web` 100 passed;
+`pytest tests -m "not slow"` **132 passed/5 deselected** (the 119
+pre-Phase-3C.1 baseline + 13 new preflight tests in
+`tests/test_preflight.py`, which itself grew from 11 to 24 tests --
+role-cardinality mismatches for all three roles at both 2+ and 0
+members, the canonical-WHOLE_CLASS-per-ClassSection checks, a valid
+mixed-role case, the duplicate-membership checks above, and a small
+dedicated `ParticipantGroupRole` enum-value test); `pytest tests -m
+slow` 5 passed; `alembic current` at `01b2ae564170 (head)` with no
+drift; `npm test` 47 passed, `npm run build` succeeds (frontend
+genuinely untouched). Nothing is committed, merged, or pushed; Phase
+3C.2 (the teaching-assignment write backend) has not started.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

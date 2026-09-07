@@ -1,7 +1,7 @@
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.blocks import FixedPlacement
 from school_timetable.domain.calendar import TimeSlot, AcademicYear
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import (
@@ -29,7 +29,7 @@ def _base_problem(**overrides):
         periods=periods,
         teachers=(Teacher(id="t1", name="T1"),),
         class_sections=(ClassSection(id="c1", name="C1"),),
-        participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",)),),
+        participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity(id="a1", name="A1"),),
         teaching_requirements=(),
     )
@@ -175,8 +175,8 @@ def test_class_occupancy_mismatch_detected():
 def test_split_group_weekly_periods_mismatch_detected():
     problem = _base_problem(
         participant_groups=(
-            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",)),
-            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",)),
+            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
         ),
         teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
         teaching_requirements=(
@@ -192,3 +192,165 @@ def test_split_group_weekly_periods_mismatch_detected():
     )
     codes = {e.code for e in run_preflight(problem)}
     assert "SPLIT_GROUP_WEEKLY_PERIODS_MISMATCH" in codes
+
+
+def test_participant_group_role_enum_has_the_three_authoritative_values():
+    assert ParticipantGroupRole.WHOLE_CLASS.value == "WHOLE_CLASS"
+    assert ParticipantGroupRole.SUBGROUP.value == "SUBGROUP"
+    assert ParticipantGroupRole.MERGED_CLASSES.value == "MERGED_CLASSES"
+
+
+def test_whole_class_group_with_two_class_sections_is_rejected():
+    problem = _base_problem(
+        class_sections=(ClassSection(id="c1", name="C1"), ClassSection(id="c2", name="C2")),
+        participant_groups=(
+            ParticipantGroup(
+                id="pg1", name="PG1", class_sections=("c1", "c2"), role=ParticipantGroupRole.WHOLE_CLASS,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" in codes
+
+
+def test_subgroup_with_two_class_sections_is_rejected():
+    problem = _base_problem(
+        class_sections=(ClassSection(id="c1", name="C1"), ClassSection(id="c2", name="C2")),
+        participant_groups=(
+            ParticipantGroup(
+                id="pg1", name="PG1", class_sections=("c1", "c2"), role=ParticipantGroupRole.SUBGROUP,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" in codes
+
+
+def test_merged_classes_group_with_only_one_class_section_is_rejected():
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(
+                id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.MERGED_CLASSES,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" in codes
+
+
+def test_whole_class_group_with_zero_class_sections_is_rejected():
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(id="pg1", name="PG1", class_sections=(), role=ParticipantGroupRole.WHOLE_CLASS),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" in codes
+
+
+def test_subgroup_with_zero_class_sections_is_rejected():
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(id="pg1", name="PG1", class_sections=(), role=ParticipantGroupRole.SUBGROUP),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" in codes
+
+
+def test_merged_classes_group_with_zero_class_sections_is_rejected():
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(id="pg1", name="PG1", class_sections=(), role=ParticipantGroupRole.MERGED_CLASSES),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" in codes
+
+
+def test_merged_classes_group_with_duplicated_same_class_is_rejected_on_both_counts():
+    # A directly-constructed SchedulingProblem can list the same
+    # ClassSection twice -- the persistence-layer UNIQUE constraint that
+    # rules this out doesn't apply here, so preflight must catch it: a
+    # duplicated tuple must never let MERGED_CLASSES appear valid merely
+    # because raw tuple length is 2 (only 1 *distinct* class here).
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(
+                id="pg1", name="PG1", class_sections=("c1", "c1"), role=ParticipantGroupRole.MERGED_CLASSES,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_DUPLICATE_CLASS_SECTION" in codes
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" in codes
+
+
+def test_whole_class_group_with_duplicated_same_class_is_rejected():
+    # Exactly 1 *distinct* class here, so WHOLE_CLASS's own cardinality
+    # requirement is technically satisfied -- but the duplicate entry
+    # itself is still a structural defect and must be flagged on its
+    # own, independent of cardinality.
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(
+                id="pg1", name="PG1", class_sections=("c1", "c1"), role=ParticipantGroupRole.WHOLE_CLASS,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_DUPLICATE_CLASS_SECTION" in codes
+
+
+def test_subgroup_with_duplicated_same_class_is_rejected():
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(
+                id="pg1", name="PG1", class_sections=("c1", "c1"), role=ParticipantGroupRole.SUBGROUP,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_DUPLICATE_CLASS_SECTION" in codes
+
+
+def test_class_section_with_no_whole_class_group_is_rejected():
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "CLASS_SECTION_WHOLE_CLASS_GROUP_COUNT_MISMATCH" in codes
+
+
+def test_class_section_with_two_whole_class_groups_is_rejected():
+    problem = _base_problem(
+        participant_groups=(
+            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "CLASS_SECTION_WHOLE_CLASS_GROUP_COUNT_MISMATCH" in codes
+
+
+def test_one_whole_class_group_per_class_section_passes_role_checks():
+    # A well-formed mix of all three roles across two classes: each class
+    # has exactly one WHOLE_CLASS group, plus a SUBGROUP split pair and a
+    # MERGED_CLASSES group spanning both -- none of this should trip the
+    # role-cardinality or canonical-WHOLE_CLASS checks.
+    problem = _base_problem(
+        class_sections=(ClassSection(id="c1", name="C1"), ClassSection(id="c2", name="C2")),
+        participant_groups=(
+            ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup(id="pg2", name="PG2", class_sections=("c2",), role=ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup(id="pg1_sub", name="PG1 sub", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup(
+                id="pg_merged", name="Merged", class_sections=("c1", "c2"), role=ParticipantGroupRole.MERGED_CLASSES,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" not in codes
+    assert "CLASS_SECTION_WHOLE_CLASS_GROUP_COUNT_MISMATCH" not in codes

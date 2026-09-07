@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import ReservedBlock
 from school_timetable.domain.calendar import TimeSlot
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.resources import Resource
 from school_timetable.domain.requirements import (
@@ -212,13 +212,13 @@ def build_curriculum(*, extra_unavailability: bool = False) -> Curriculum:
 
     participant_groups: list[ParticipantGroup] = []
 
-    def add_group(gid: str, name: str, class_ids: tuple[str, ...]) -> str:
+    def add_group(gid: str, name: str, class_ids: tuple[str, ...], role: ParticipantGroupRole) -> str:
         if not any(g.id == gid for g in participant_groups):
-            participant_groups.append(ParticipantGroup(id=gid, name=name, class_sections=class_ids))
+            participant_groups.append(ParticipantGroup(id=gid, name=name, class_sections=class_ids, role=role))
         return gid
 
     def whole_class_group(class_id: str) -> str:
-        return add_group(f"pg_{class_id}", f"All of {class_id}", (class_id,))
+        return add_group(f"pg_{class_id}", f"All of {class_id}", (class_id,), ParticipantGroupRole.WHOLE_CLASS)
 
     requirements: list[CurriculumRequirement] = []
     req_counter = 0
@@ -280,8 +280,12 @@ def build_curriculum(*, extra_unavailability: bool = False) -> Curriculum:
     russian_pool = teacher_ids_by_subject["russian"]
     for i, class_id in enumerate(SPLIT_LANGUAGE_CLASSES):
         split_group_id = f"split_lang_{class_id}"
-        german_gid = add_group(f"pg_{class_id}_german", f"{class_id} German", (class_id,))
-        russian_gid = add_group(f"pg_{class_id}_russian", f"{class_id} Russian", (class_id,))
+        german_gid = add_group(
+            f"pg_{class_id}_german", f"{class_id} German", (class_id,), ParticipantGroupRole.SUBGROUP,
+        )
+        russian_gid = add_group(
+            f"pg_{class_id}_russian", f"{class_id} Russian", (class_id,), ParticipantGroupRole.SUBGROUP,
+        )
 
         requirements.append(CurriculumRequirement(
             id=next_id("req_german_split"), teacher_ids=(german_pool[i % len(german_pool)],),
@@ -314,7 +318,10 @@ def build_curriculum(*, extra_unavailability: bool = False) -> Curriculum:
     civics_pool = teacher_ids_by_subject["civics"]
     civics_counter = 0
     for pair in MERGED_CIVICS_PAIRS:
-        merged_gid = add_group(f"pg_merged_civics_{'_'.join(pair)}", f"Merged civics {pair}", pair)
+        merged_gid = add_group(
+            f"pg_merged_civics_{'_'.join(pair)}", f"Merged civics {pair}", pair,
+            ParticipantGroupRole.MERGED_CLASSES,
+        )
         requirements.append(CurriculumRequirement(
             id=next_id("req_civics_merged"), teacher_ids=(civics_pool[civics_counter % len(civics_pool)],),
             activity_id="subject_civics", participant_group_id=merged_gid, class_ids=pair,

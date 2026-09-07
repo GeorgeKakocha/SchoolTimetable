@@ -18,7 +18,7 @@ from editing_test_support import fill_occupancy
 
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear, Day, Period
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
@@ -79,9 +79,9 @@ def _two_class_problem():
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2"), Teacher("t3", "T3")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
-            ParticipantGroup("pg1", "PG1", ("cx",)),
-            ParticipantGroup("pg2", "PG2", ("cx",)),
-            ParticipantGroup("pg3", "PG3", ("cx",)),
+            ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pg3", "PG3", ("cx",), ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity("math", "Math"), Activity("art", "Art"), Activity("music", "Music")),
         teaching_requirements=(
@@ -141,10 +141,10 @@ def test_stale_plan_rejected_when_unrelated_change_causes_teacher_conflict():
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2"), Teacher("t7", "T7")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
-            ParticipantGroup("pg1", "PG1", ("cx",)),
-            ParticipantGroup("pg2", "PG2", ("cx",)),
-            ParticipantGroup("pg6", "PG6", ("cy",)),
-            ParticipantGroup("pg7", "PG7", ("cy",)),
+            ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pg6", "PG6", ("cy",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg7", "PG7", ("cy",), ParticipantGroupRole.SUBGROUP),
         ),
         activities=(
             Activity("math", "Math"), Activity("art", "Art"),
@@ -225,7 +225,7 @@ def _malformed_required_problem_and_schedule():
     problem = _problem(
         teachers=(Teacher("t1", "T1"),),
         class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)),),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity("math", "Math"),),
         teaching_requirements=(
             TeachingRequirement("r1", "t1", "math", "pg1", 2, REQUIRED_2),

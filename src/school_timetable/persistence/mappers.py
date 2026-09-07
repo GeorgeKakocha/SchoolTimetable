@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
 from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.requirements import (
     BlockPolicyMode,
@@ -190,6 +190,7 @@ def participant_group_to_domain(
         id=row.natural_id,
         name=row.name,
         class_sections=tuple(lookup.class_section(m.class_section_id) for m in ordered),
+        role=ParticipantGroupRole(row.role),
     )
 
 

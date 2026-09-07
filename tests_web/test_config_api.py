@@ -73,6 +73,13 @@ def test_config_endpoint_representative_ordering_and_natural_ids(client, db_sess
 
     merged_group = next(g for g in body["participant_groups"] if g["id"] == "pg_9a_9b_merged")
     assert merged_group["class_sections"] == ["9a", "9b"]
+    assert merged_group["role"] == "MERGED_CLASSES"
+
+    whole_class_group = next(g for g in body["participant_groups"] if g["id"] == "pg_8a")
+    assert whole_class_group["role"] == "WHOLE_CLASS"
+
+    subgroup = next(g for g in body["participant_groups"] if g["id"] == "pg_8a_german")
+    assert subgroup["role"] == "SUBGROUP"
 
     math_8a = next(r for r in body["teaching_requirements"] if r["id"] == "math_8a")
     assert math_8a["block_policy"] == {"mode": "REQUIRED", "block_sizes": [2, 1, 1, 1]}

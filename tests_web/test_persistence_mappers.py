@@ -14,7 +14,7 @@ import pytest
 from school_timetable.domain.activities import ActivityKind
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
 from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.requirements import (
     BlockPolicyMode,
@@ -92,7 +92,8 @@ def test_teacher_availability_maps_status_enum_via_lookup():
 def test_participant_group_orders_class_sections_by_ordinal_not_input_order():
     lookup = mp.NaturalIdLookup(class_sections={10: "9a", 11: "9b"})
     group_row = orm.ParticipantGroup(
-        id=99, academic_year_id=202, natural_id="pg_9a_9b_merged", name="Merged", ordinal=0,
+        id=99, academic_year_id=202, natural_id="pg_9a_9b_merged", name="Merged",
+        role="MERGED_CLASSES", ordinal=0,
     )
     # Deliberately out of order: ordinal=1 (9b) listed before ordinal=0 (9a).
     memberships = [
@@ -100,7 +101,10 @@ def test_participant_group_orders_class_sections_by_ordinal_not_input_order():
         orm.ParticipantGroupClassSection(academic_year_id=202, participant_group_id=99, class_section_id=10, ordinal=0),
     ]
     result = mp.participant_group_to_domain(group_row, memberships, lookup)
-    assert result == ParticipantGroup(id="pg_9a_9b_merged", name="Merged", class_sections=("9a", "9b"))
+    assert result == ParticipantGroup(
+        id="pg_9a_9b_merged", name="Merged", class_sections=("9a", "9b"),
+        role=ParticipantGroupRole.MERGED_CLASSES,
+    )
 
 
 def test_time_preference_maps_array_to_tuple_and_weight_enum():

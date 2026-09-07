@@ -5,6 +5,7 @@ reasons about the plain domain objects.
 from __future__ import annotations
 
 from school_timetable.domain.calendar import period_windows
+from school_timetable.domain.groups import ParticipantGroupRole
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.people import AvailabilityStatus
 from school_timetable.domain.problem import SchedulingProblem
@@ -22,6 +23,7 @@ def run_preflight(problem: SchedulingProblem) -> list[ValidationError]:
     if errors:
         return errors
 
+    errors.extend(_check_participant_group_roles(problem))
     errors.extend(_check_block_patterns(problem, index))
     errors.extend(_check_split_group_consistency(problem, index))
     errors.extend(_check_fixed_placement_availability(problem, index))
@@ -132,6 +134,69 @@ def _check_references(problem: SchedulingProblem, index: ProblemIndex) -> list[V
                 f"Fixed placement {fp.id!r} references unknown slot "
                 f"({fp.slot.day_id!r}, {fp.slot.period_id!r})",
                 {"fixed_placement_id": fp.id},
+            ))
+
+    return errors
+
+
+def _check_participant_group_roles(problem: SchedulingProblem) -> list[ValidationError]:
+    """`ParticipantGroup.role` structural invariants (`DECISIONS.md` #33).
+    `role` itself is never inferred here or anywhere else -- this only
+    checks that an already-assigned role is structurally consistent.
+    Cardinality is always evaluated against the number of *distinct*
+    ClassSections, never raw tuple length: a directly-constructed
+    `SchedulingProblem` (preflight is callable independently of
+    persistence, where a `UNIQUE` constraint already rules this out) can
+    still contain a duplicated `class_sections` entry, e.g.
+    `("c1", "c1")` -- that must never let MERGED_CLASSES appear
+    structurally valid merely because the tuple happens to have length
+    2. WHOLE_CLASS/SUBGROUP must draw from exactly one distinct
+    ClassSection, MERGED_CLASSES from two or more distinct
+    ClassSections, and every ClassSection must have exactly one
+    canonical WHOLE_CLASS group. Assumes `_check_references` has
+    already run with no errors, so every `class_sections` entry is a
+    known-good ClassSection ID."""
+    errors: list[ValidationError] = []
+
+    whole_class_owners: dict[str, list[str]] = {c.id: [] for c in problem.class_sections}
+
+    for group in problem.participant_groups:
+        distinct_class_sections = set(group.class_sections)
+        if len(distinct_class_sections) != len(group.class_sections):
+            errors.append(ValidationError(
+                "PARTICIPANT_GROUP_DUPLICATE_CLASS_SECTION",
+                f"Participant group {group.id!r} lists the same ClassSection more than "
+                f"once in class_sections {group.class_sections!r}",
+                {"participant_group_id": group.id},
+            ))
+
+        n = len(distinct_class_sections)
+        if group.role in (ParticipantGroupRole.WHOLE_CLASS, ParticipantGroupRole.SUBGROUP):
+            if n != 1:
+                errors.append(ValidationError(
+                    "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH",
+                    f"Participant group {group.id!r} has role {group.role.value} but "
+                    f"{n} distinct class_sections {group.class_sections!r} (expected exactly 1)",
+                    {"participant_group_id": group.id, "role": group.role.value},
+                ))
+        elif group.role == ParticipantGroupRole.MERGED_CLASSES and n < 2:
+            errors.append(ValidationError(
+                "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH",
+                f"Participant group {group.id!r} has role MERGED_CLASSES but "
+                f"{n} distinct class_sections {group.class_sections!r} (expected 2 or more)",
+                {"participant_group_id": group.id, "role": group.role.value},
+            ))
+
+        if group.role == ParticipantGroupRole.WHOLE_CLASS and n == 1:
+            whole_class_owners.setdefault(group.class_sections[0], []).append(group.id)
+
+    for class_id, owners in whole_class_owners.items():
+        if len(owners) != 1:
+            errors.append(ValidationError(
+                "CLASS_SECTION_WHOLE_CLASS_GROUP_COUNT_MISMATCH",
+                f"ClassSection {class_id!r} has {len(owners)} WHOLE_CLASS participant "
+                f"groups (expected exactly 1): {owners!r}",
+                {"class_id": class_id, "whole_class_group_ids": owners},
             ))
 
     return errors

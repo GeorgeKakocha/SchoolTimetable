@@ -13,7 +13,7 @@ from collections import defaultdict
 
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear, Day, Period
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import (
@@ -71,7 +71,7 @@ def _problem_with_pattern(
         periods=periods,
         teachers=(Teacher(id="t_core", name="Core"), Teacher(id="t_filler", name="Filler")),
         class_sections=(ClassSection(id="c1", name="C1"),),
-        participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",)),),
+        participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity(id="core", name="Core"), Activity(id="filler", name="Filler")),
         teaching_requirements=(
             TeachingRequirement(

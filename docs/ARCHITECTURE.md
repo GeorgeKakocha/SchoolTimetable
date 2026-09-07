@@ -310,10 +310,15 @@ local development PostgreSQL. See `PROJECT_STATE.md` for the full
 Phase 3B.3/3B.4 proof and manual browser review record.
 
 Scheduling-configuration admin input (formerly just a forward-looking
-note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#35,
-implementation NOT started** -- see below.
+note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#35; 3C.1
+implemented on a feature branch, pending review; 3C.2 onward NOT
+started** -- see below.
 
-## Phase 3C architecture direction (design locked; nothing implemented)
+## Phase 3C architecture direction
+
+**3C.1's role contract is implemented on
+`feature/phase-3c1-participant-group-role`, pending review; 3C.2
+onward remains design-locked, not implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -330,38 +335,57 @@ api/  →  application/ (new write services)  →  new write ports
                                             persistence/ adapters (new)
 ```
 
-- **`domain/`**: `ParticipantGroup` gains a mandatory `role` field
-  (`WHOLE_CLASS`/`SUBGROUP`/`MERGED_CLASSES`, Decision #33) -- the only
-  anticipated domain-level change; frozen dataclasses remain frozen
-  (no ORM change-tracking creeps into `domain/`).
-- **`application/`**: a new, narrowly-scoped write use case (shaped
-  like `GenerateScheduleService`, not a generic repository) for
-  create/update/delete of plain `WHOLE_CLASS` `TeachingRequirement`s
-  (Decision #34), enforcing the Decision #35 schedule-exists write gate
-  by reusing the existing `ScheduleVersionRepository.
-  get_active_schedule` port method -- no new repository method for
-  that specific check. New application-level errors (e.g. duplicate
-  assignment, `ConfigurationLockedError` -> 409) follow the existing
-  `SchedulingProblemNotFoundError`/`ScheduleAlreadyExistsError` pattern
-  (Decisions #29, #31), never a raw SQLAlchemy/HTTP exception.
-- **`persistence/`**: new adapter write methods performing the natural-
-  id resolution the future write service needs -- informed by, but
-  never importing, `tests_web/support/problem_writer.py`'s approach
-  (Decision #28 already ruled that writer out as the production
-  template). The `ParticipantGroup.role` invariant ("exactly one
-  `WHOLE_CLASS` per `ClassSection` per `AcademicYear`") is a candidate
-  for a genuine schema addition (a partial unique index, Decision #33)
-  -- the first schema change this project would make since Decision
-  #26's original 17-table baseline.
-- **`api/`**: new write routes/schemas, composed the same way
-  `dependencies.py` already composes read routes -- never a second
-  composition root.
-- **`frontend/`**: a second meaningful page (Teaching Assignments)
-  makes Phase 3B's no-Router decision (#32 Owner Decision 10,
-  conditioned on there being only one page) worth revisiting in 3C.3;
-  Redux/Zustand remain unjustified in the meantime.
+- **`domain/`** (3C.1, implemented): `ParticipantGroup` gained a
+  mandatory `role: ParticipantGroupRole` field (`WHOLE_CLASS`/
+  `SUBGROUP`/`MERGED_CLASSES`, Decision #33) -- the dataclass stays a
+  plain frozen data holder with no self-validation; role is
+  **authoritative domain data**, supplied by every caller, never
+  derived. `frozen` dataclasses remain frozen (no ORM change-tracking
+  creeps into `domain/`).
+- **`validation/`** (3C.1, implemented): `preflight.py` owns every
+  structural/cross-row invariant for `role` -- per-role cardinality
+  and the "exactly one `WHOLE_CLASS` per `ClassSection`" rule -- the
+  single validation layer this codebase already channels all such
+  rules through; nothing about `role` validation lives anywhere else.
+- **`persistence/`** (3C.1, implemented): `ParticipantGroup.role` is
+  `TEXT NOT NULL` + a row-local `CHECK` for the three values (matching
+  the `Activity.kind`/`TeacherAvailability.status` convention) --
+  migration `01b2ae564170`, the first schema change since Decision
+  #26's original 17-table baseline, added with no `server_default` and
+  no backfill (fail-closed by design). The "exactly one `WHOLE_CLASS`
+  per `ClassSection`" cross-row invariant was evaluated for a
+  denormalized-column/partial-unique-index treatment and **deferred**:
+  `ParticipantGroup` has no write path yet (still read-only reference
+  data through 3C.4), so a real DB structure defending against a write
+  that can't currently happen would be premature; preflight is the
+  sole enforcement point for now, revisited only if/when a future
+  `ParticipantGroup` write service (3C.5+) needs it.
+- **`api/`** (3C.1, implemented): `GET /config`'s `ParticipantGroupResponse`
+  exposes `role` additively (`api/schemas.py`/`serializer.py`) -- no
+  new route, no change to the composition root. No frontend code
+  depends on `role` yet (the current frontend doesn't even mirror
+  `participant_groups` from `/config`), confirmed by an unmodified,
+  passing frontend test/build gate.
+- **`application/`** (3C.2, NOT implemented): a new, narrowly-scoped
+  write use case (shaped like `GenerateScheduleService`, not a generic
+  repository) for create/update/delete of plain `WHOLE_CLASS`
+  `TeachingRequirement`s (Decision #34), enforcing the Decision #35
+  schedule-exists write gate by reusing the existing
+  `ScheduleVersionRepository.get_active_schedule` port method -- no new
+  repository method for that specific check. New application-level
+  errors (e.g. duplicate assignment, `ConfigurationLockedError` -> 409)
+  will follow the existing `SchedulingProblemNotFoundError`/
+  `ScheduleAlreadyExistsError` pattern (Decisions #29, #31), never a
+  raw SQLAlchemy/HTTP exception.
+- **`api/`** write routes/schemas for 3C.2 (NOT implemented): composed
+  the same way `dependencies.py` already composes read routes -- never
+  a second composition root.
+- **`frontend/`** (3C.3, NOT implemented): a second meaningful page
+  (Teaching Assignments) will make Phase 3B's no-Router decision (#32
+  Owner Decision 10, conditioned on there being only one page) worth
+  revisiting; Redux/Zustand remain unjustified in the meantime. No
+  `ParticipantGroup` CRUD/write UI exists yet.
 
-No code under `domain/`, `application/`, `persistence/`, or `api/` has
-been touched by this decision -- see `DECISIONS.md` #33-#35 for the
-full locked rationale and `PROJECT_STATE.md` for the recommended
-3C.1-3C.5 sequencing.
+See `DECISIONS.md` #33-#35 for the full locked rationale and
+`PROJECT_STATE.md` for the 3C.1 implementation record and the
+recommended 3C.1-3C.5 sequencing.

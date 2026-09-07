@@ -93,7 +93,8 @@ def write_scheduling_problem(session: Session, problem: SchedulingProblem) -> No
     participant_group_ids: dict[str, int] = {}
     for ordinal, group in enumerate(problem.participant_groups):
         row = orm.ParticipantGroup(
-            academic_year_id=year_id, natural_id=group.id, name=group.name, ordinal=ordinal,
+            academic_year_id=year_id, natural_id=group.id, name=group.name,
+            role=group.role.value, ordinal=ordinal,
         )
         session.add(row)
         session.flush()

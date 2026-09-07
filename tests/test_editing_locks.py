@@ -4,7 +4,7 @@ from __future__ import annotations
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.blocks import FixedPlacement
 from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
-from school_timetable.domain.groups import ClassSection, ParticipantGroup
+from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import BlockPolicyMode, LessonBlockPolicy, TeachingRequirement
@@ -46,7 +46,7 @@ def _problem(**overrides) -> SchedulingProblem:
 def test_lock_ordinary_occurrence():
     problem = _problem(
         teachers=(Teacher("t1", "T1"),), class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)),), activities=(Activity("math", "Math"),),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),), activities=(Activity("math", "Math"),),
         teaching_requirements=(TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),),
     )
     schedule = Schedule(entries=(_entry("r1", "math", "d1", "q1", ("cx",), "t1", "pg1"),))
@@ -59,7 +59,7 @@ def test_lock_ordinary_occurrence():
 def test_unlock_occurrence():
     problem = _problem(
         teachers=(Teacher("t1", "T1"),), class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)),), activities=(Activity("math", "Math"),),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),), activities=(Activity("math", "Math"),),
         teaching_requirements=(TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),),
     )
     schedule = Schedule(entries=(_entry("r1", "math", "d1", "q1", ("cx",), "t1", "pg1"),))
@@ -73,7 +73,8 @@ def test_lock_split_occurrence_keeps_all_branches_coherent():
     problem = _problem(
         teachers=(Teacher("t_de", "DE"), Teacher("t_ru", "RU")), class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
-            ParticipantGroup("pg_de", "DE", ("cx",)), ParticipantGroup("pg_ru", "RU", ("cx",)),
+            ParticipantGroup("pg_de", "DE", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pg_ru", "RU", ("cx",), ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity("german", "German"), Activity("russian", "Russian")),
         teaching_requirements=(
@@ -98,7 +99,7 @@ def test_lock_split_occurrence_keeps_all_branches_coherent():
 def test_lock_multi_period_required_block_keeps_whole_block_coherent():
     problem = _problem(
         teachers=(Teacher("t1", "T1"),), class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)),), activities=(Activity("math", "Math"),),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),), activities=(Activity("math", "Math"),),
         teaching_requirements=(
             TeachingRequirement(
                 "r1", "t1", "math", "pg1", 2, LessonBlockPolicy(BlockPolicyMode.REQUIRED, block_sizes=(2,)),
@@ -127,7 +128,8 @@ def _small_full_occupancy_problem(**overrides):
     small_periods = PERIODS[:2]
     defaults = dict(
         teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")), class_sections=(ClassSection("cx", "CX"),),
-        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",)), ParticipantGroup("pg2", "PG2", ("cx",))),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+            ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
         activities=(Activity("math", "Math"), Activity("art", "Art")),
         teaching_requirements=(
             TeachingRequirement("r1", "t1", "math", "pg1", 2, FLEXIBLE),
