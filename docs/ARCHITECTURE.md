@@ -69,10 +69,9 @@ request-scoped read path is unchanged. The schedule read API remains
 generic and flat, not a Phase 3B 5x8 React projection.
 
 **Phase 3B (first-view design locked; 3B.1 backend projection, 3B.2
-frontend foundation, and 3B.3 live class timetable all merged to
-`main` -- 3B.3 at commit `831c900`; 3B.4 visual/UX hardening
-implemented on `feature/phase-3b4-timetable-ux-hardening`, pending
-review, not yet merged)** adds the
+frontend foundation, 3B.3 live class timetable, and 3B.4 UX hardening
+all merged to `main` -- 3B.3 at commit `831c900`, 3B.4 at commit
+`7c80eba`; Phase 3B is CLOSED)** adds the
 first browser-rendered class timetable, per `DECISIONS.md` #32. The
 active data path is: persisted `ScheduleVersion` -> backend
 application-layer class projection -> the read-only class projection
@@ -299,14 +298,16 @@ production routes; the backend class-timetable projection
 real `ClassSelector`, `TimetableGrid`, live backend timetable rendering
 in React, class switching, and the loading/config-error/zero-class/
 no-schedule/timetable-error UI states all exist on `main` too -- there
-is no Generate button, by design. Phase 3B.4 visual/UX hardening is
-implemented on `feature/phase-3b4-timetable-ux-hardening`, pending
-review and not yet merged. Remaining out of scope, unstarted: a
+is no Generate button, by design. Phase 3B.4 visual/UX hardening
+(narrower Period column, wider laptop-width layout, compact vertical
+density, restrained Reserved-block treatment, accessibility polish) is
+also merged to `main` at commit `7c80eba` -- **Phase 3B is CLOSED**.
+Remaining out of scope, unstarted: a
 teacher timetable view; a schedule history UI; broader admin UI
 (manual editing, locks, reoptimization web workflows, scenarios);
 config/admin UI (including a future teacher-weekly-periods editor,
 recorded as a forward-looking product note in `PROJECT_STATE.md`,
 not designed or scheduled yet); auth; export/print; and deployment
 hardening beyond `docker-compose.yml`'s local development
-PostgreSQL. See `PROJECT_STATE.md` for the full Phase 3B.3 proof and
+PostgreSQL. See `PROJECT_STATE.md` for the full Phase 3B.3/3B.4 proof and
 manual browser review record.

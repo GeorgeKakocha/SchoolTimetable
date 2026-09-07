@@ -826,9 +826,8 @@ such as "All of 8-A"; the timetable could use more of a typical laptop
 viewport's width/density; visual hierarchy/typography remain basic;
 parallel-cell visual polish can improve further.
 
-**Phase 3B.4 is implemented on
-`feature/phase-3b4-timetable-ux-hardening`, pending review** (not
-committed, not merged, not pushed). Owner decision for this slice:
+**Phase 3B.4 is CLOSED and merged to `main`** (commit `7c80eba`).
+Owner decision for this slice:
 `participant_group_scope` (or any other backend/API contract change)
 was explicitly **rejected** -- the current domain has no authoritative
 "whole class" group role (a plain, non-split `ParticipantGroup` scoped
