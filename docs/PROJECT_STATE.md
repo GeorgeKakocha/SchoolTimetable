@@ -908,9 +908,8 @@ This has since been formally approved as the first Phase 3C admin MVP
 -- see below and `DECISIONS.md` #33-#35.
 
 **Phase 3C -- scheduling configuration / admin input: design locked
-(`DECISIONS.md` #33-#35); 3C.1 IMPLEMENTED on
-`feature/phase-3c1-participant-group-role`, pending review/commit (NOT
-committed, NOT merged, NOT pushed); 3C.2 onward NOT started.** A dedicated
+(`DECISIONS.md` #33-#35); Phase 3C.1 is CLOSED and merged to `main`
+(commit `8b5b606`); 3C.2 onward NOT started.** A dedicated
 reconnaissance (read-only; zero files changed) established that all 17
 configuration tables are already fully readable in production via
 `GET /config` but have **zero** production write access -- the only
@@ -923,9 +922,11 @@ as never the template for a production write path (`DECISIONS.md`
   `role` field (`WHOLE_CLASS`/`SUBGROUP`/`MERGED_CLASSES`), closing the
   Phase 3B.4-deferred "All of 8-A" ambiguity authoritatively in the
   domain -- exactly one `WHOLE_CLASS` group per `ClassSection` per
-  `AcademicYear`, enforced by a recommended partial-unique-index
-  mechanism (or application-level fallback), never by role inference
-  from names/patterns/`split_group_id`/class-section count alone.
+  `AcademicYear`, enforced by `validation/preflight.py` (implemented in
+  3C.1, below; a denormalized-column/partial-unique-index DB mechanism
+  was evaluated and deferred as premature while `ParticipantGroup`
+  remains read-only), never by role inference from names/patterns/
+  `split_group_id`/class-section count alone.
 - **#34** -- the first admin MVP is **Teaching Assignments/Workload**:
   create/edit/delete a plain `Teacher -> WHOLE_CLASS ParticipantGroup ->
   Activity -> weekly_periods` `TeachingRequirement`, plus an assigned-
@@ -949,7 +950,8 @@ as never the template for a production write path (`DECISIONS.md`
   check the future lifecycle will eventually build on.
 
 **Phase 3C.1 (`ParticipantGroup` role domain/persistence contract) is
-implemented on `feature/phase-3c1-participant-group-role`.**
+CLOSED -- implemented, reviewed, and merged to `main` at commit
+`8b5b606`.**
 `ParticipantGroupRole` (`WHOLE_CLASS`/`SUBGROUP`/`MERGED_CLASSES`,
 `domain/groups.py`) is the single authoritative source of a group's
 role -- a plain `str, Enum` matching the codebase's existing
@@ -1013,8 +1015,10 @@ mixed-role case, the duplicate-membership checks above, and a small
 dedicated `ParticipantGroupRole` enum-value test); `pytest tests -m
 slow` 5 passed; `alembic current` at `01b2ae564170 (head)` with no
 drift; `npm test` 47 passed, `npm run build` succeeds (frontend
-genuinely untouched). Nothing is committed, merged, or pushed; Phase
-3C.2 (the teaching-assignment write backend) has not started.
+genuinely untouched). **Phase 3C.1 is implemented, reviewed, committed
+(`8b5b606` "feat: add participant group roles"), and merged to `main`
+-- not pushed.** The next implementation slice is **Phase 3C.2 only**
+(the teaching-assignment write backend) -- not started.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

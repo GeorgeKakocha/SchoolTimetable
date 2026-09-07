@@ -311,13 +311,12 @@ Phase 3B.3/3B.4 proof and manual browser review record.
 
 Scheduling-configuration admin input (formerly just a forward-looking
 note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#35; 3C.1
-implemented on a feature branch, pending review; 3C.2 onward NOT
+is CLOSED and merged to `main` at commit `8b5b606`; 3C.2 onward NOT
 started** -- see below.
 
 ## Phase 3C architecture direction
 
-**3C.1's role contract is implemented on
-`feature/phase-3c1-participant-group-role`, pending review; 3C.2
+**3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2
 onward remains design-locked, not implemented.**
 
 Today, every one of the 17 configuration tables under one
