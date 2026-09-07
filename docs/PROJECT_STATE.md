@@ -712,11 +712,8 @@ in this slice -- the smoke test only proved the Vite dev server itself
 serves the app shell. No backend/solver/persistence/domain/application
 code changed.
 
-**Phase 3B.3 is implemented on `feature/phase-3b3-first-live-timetable`
-and proven against a real local backend, pending pre-commit review --
-NOT YET committed to that branch's history in a merge/squash sense, NOT
-merged to `main`, NOT pushed** (per this slice's explicit scope, all
-changes are left uncommitted). `frontend/src/components/`
+**Phase 3B.3 is CLOSED and merged to `main`** (commit `831c900`).
+`frontend/src/components/`
 gains `ClassSelector.tsx` (a plain labeled `<select>`, natural-ID
 values, backend order preserved, no re-sort, no API call of its own)
 and `TimetableGrid.tsx` (a semantic `<table>` rendering `/config`'s
@@ -787,26 +784,50 @@ entries. With a temporarily-run local Vite dev server and
 `frontend/.env.local` (gitignored, pointing at the real
 `synthetic-school`/`ay-2026` IDs) in place, both endpoints were
 re-verified through the Vite proxy (`http://127.0.0.1:5173/...`),
-confirming the full real chain: persisted `ScheduleVersion` -> real
-class-projection endpoint -> Vite proxy -> (would reach) the frontend
-API client/React page. The real German/Russian split for class `8a`
-was located dynamically in the live projection response (Period 3 on
-both Monday and Thursday, Period 8 on Tuesday) and confirmed to contain
-two fully distinct entries (different `activity_name`/`teacher_name`/
-`participant_group_name`, never merged) in the same cell. No browser
-extension was connected in this environment, so no automated DOM-level
-render proof was possible -- the API/proxy chain is proven
-automatically; a final visual confirmation in an actual browser
-(`npm run dev` in `frontend/`, backend running, then open
-`http://127.0.0.1:5173/`) still requires a manual look. Both bounded
-processes were cleanly terminated afterward; the bootstrapped dev-DB
-config and generated schedule, and `frontend/.env.local`, are
+confirming the full real chain up to the proxy boundary: persisted
+`ScheduleVersion` -> real class-projection endpoint -> Vite proxy. The
+real German/Russian split for class `8a` was located dynamically in the
+live projection response (Period 3 on both Monday and Thursday, Period
+8 on Tuesday) and confirmed to contain two fully distinct entries
+(different `activity_name`/`teacher_name`/`participant_group_name`,
+never merged) in the same cell. No browser extension was connected in
+the automated-tooling environment used for this proof, so no automated
+DOM-level render check was possible there -- the API/proxy chain was
+proven automatically; the actual browser render was subsequently
+confirmed by manual review (recorded below). Both bounded processes
+were cleanly terminated afterward at that stage; the bootstrapped
+dev-DB config and generated schedule, and `frontend/.env.local`, were
 deliberately left in place locally as reusable pilot dev data/config
 (neither is committed; `.env.local` is confirmed gitignored).
 
+**Phase 3B.3 manual browser correctness review PASSED.** The product
+owner manually verified the real running app in Chromium at
+`http://127.0.0.1:5173/` (a temporarily-run local FastAPI + Vite dev
+server pair, since terminated). Verified: the page loads; school name
+and academic year are visible; the class selector is visible and
+usable; class `8-B` rendered correctly; switching the selector from
+`8-B` to `8-A` updated the rendered timetable; the timetable grid is
+readable; no raw scheduling IDs are visible anywhere; no Generate
+button exists. Most importantly, for class `8-A`, German and Russian
+were visibly rendered as **two distinct stacked entries inside the same
+timetable cell** -- observed at Monday/Period 3 and Thursday/Period 3,
+each showing German / 8-A German / Teacher German and, separately,
+Russian / 8-A Russian / Teacher Russian in that one cell. These
+specific slots are solver output for this one generated version, not a
+fixed scheduling invariant -- a different solve/seed could legitimately
+place the same split elsewhere; only the split-rendering *behavior*
+(never merged, always two distinct blocks) is the locked contract.
+
+The following are recorded as deferred, non-blocking **Phase 3B.4**
+UX/readability polish items, not Phase 3B.3 correctness defects:
+duplicated school/year presentation (shown in both the config subtitle
+and the loaded-timetable meta block); noisy repeated full-class labels
+such as "All of 8-A"; the timetable could use more of a typical laptop
+viewport's width/density; visual hierarchy/typography remain basic;
+parallel-cell visual polish can improve further.
+
 The next authorized slice is **Phase 3B.4** (visual/UX hardening) --
-not started, and must not start until this Phase 3B.3 branch is
-reviewed and merged.
+not started.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 

@@ -68,11 +68,14 @@ across-solve boundary (`get_schedule_version_repository`/
 request-scoped read path is unchanged. The schedule read API remains
 generic and flat, not a Phase 3B 5x8 React projection.
 
-**Phase 3B (first-view design locked; 3B.1 backend projection and 3B.2
-frontend foundation both merged to `main`; 3B.3 implemented and proven
-against a real local backend on `feature/phase-3b3-first-live-timetable`,
-not yet merged; 3B.4 not yet started)** adds the first browser-rendered
-class timetable, per `DECISIONS.md` #32. The data flow is locked as: flat persisted schedule +
+**Phase 3B (first-view design locked; 3B.1 backend projection, 3B.2
+frontend foundation, and 3B.3 live class timetable all merged to
+`main` -- 3B.3 at commit `831c900`; 3B.4 not yet started)** adds the
+first browser-rendered class timetable, per `DECISIONS.md` #32. The
+active data path is: persisted `ScheduleVersion` -> backend
+application-layer class projection -> the read-only class projection
+API -> the frontend's native `fetch` client -> React
+(`App`/`ClassSelector`/`TimetableGrid`). The data flow is locked as: flat persisted schedule +
 `SchedulingProblem`/config -> a backend **application-layer**
 projection -> a UI-shaped, read-only API response -> React renders the
 already-correct projection. React may consume the backend projection
@@ -92,16 +95,18 @@ ports reused entirely unchanged -- no repository method, persistence,
 solver, or verifier redesign was needed.
 
 `frontend/` (React 19, TypeScript 7, Vite 8, no router/state-management/
-component library; commit `bff1c31`) is on `main` in foundation form
-only -- no timetable grid, no class selector, no live API data rendered
-yet. A real `ClassSelector` + `TimetableGrid` + orchestrating `App.tsx`
-exist on `feature/phase-3b3-first-live-timetable` (uncommitted history,
-not yet merged): the live DB -> backend API -> Vite proxy path has been
-proven against a real locally generated schedule through this same
-boundary; React rendering of that data is covered by automated frontend
-tests, while final real-browser visual confirmation remains manual --
-see `PROJECT_STATE.md` for the full proof. The local development
-boundary is locked as: frontend
+component library) is on `main` with a real, live-rendering class
+timetable: `ClassSelector` (`bff1c31` foundation, `831c900` live
+timetable) and `TimetableGrid` + orchestrating `App.tsx` (both added by
+`831c900`) implement class selection, class switching, and the
+loading/config-error/zero-class/no-schedule/timetable-error UI states.
+The live DB -> backend API -> Vite proxy path has been proven against a
+real locally generated schedule through this same boundary; React
+rendering of that data is covered by automated frontend tests, and has
+also been manually confirmed against the real running app in a browser
+(including the German/Russian same-cell split) -- see
+`PROJECT_STATE.md` for the full proof and manual review record. The
+local development boundary is locked as: frontend
 native `fetch` client -> a relative `/schools/...` URL -> the Vite dev
 proxy (`vite.config.ts`) -> `http://127.0.0.1:8000`. That Vite proxy
 configuration is the one and only allowed place an absolute local
@@ -283,19 +288,19 @@ happened once during this milestone's development; see `PROJECT_STATE.md`).
 
 ## What does not exist yet
 
-As of Phase 3B.2 (CLOSED, merged to `main`): `POST .../schedule/generate`,
-`GET .../schedule/active`, and `GET .../schedule/active/classes/{class_section_id}`
-are all real production routes, the backend class-timetable projection
-(`ClassTimetableService`/`ClassTimetableView`) exists on `main`, and the
-`frontend/` React/TypeScript/Vite foundation -- hand-written API
-client/types, the school/year config module, and the Vitest/React
-Testing Library test setup -- exists on `main` too. The missing product
-layer begins at Phase 3B.3: no `ClassSection` selector yet, no
-timetable grid yet, no live backend timetable rendered in React yet, no
-loading/no-schedule/error timetable states yet, no Generate button;
-broader admin UI (manual editing, locks, reoptimization, schedule
-history, scenarios), auth, and config editing remain out of scope as
-previously locked. `docker-compose.yml` provides a local development
-PostgreSQL only -- no application containerization/deployment setup
-beyond that exists yet. These arrive starting Phase 3B.3 per
-`PROJECT_STATE.md`.
+As of Phase 3B.3 (CLOSED, merged to `main` at commit `831c900`):
+`POST .../schedule/generate`, `GET .../schedule/active`, and
+`GET .../schedule/active/classes/{class_section_id}` are all real
+production routes; the backend class-timetable projection
+(`ClassTimetableService`/`ClassTimetableView`) exists on `main`; the
+`frontend/` React/TypeScript/Vite foundation exists on `main`; and a
+real `ClassSelector`, `TimetableGrid`, live backend timetable rendering
+in React, class switching, and the loading/config-error/zero-class/
+no-schedule/timetable-error UI states all exist on `main` too -- there
+is no Generate button, by design. Remaining out of scope, unstarted:
+Phase 3B.4 visual/UX hardening; a teacher timetable view; a schedule
+history UI; broader admin UI (manual editing, locks, reoptimization
+web workflows, scenarios); config/admin UI; auth; export/print; and
+deployment hardening beyond `docker-compose.yml`'s local development
+PostgreSQL. See `PROJECT_STATE.md` for the full Phase 3B.3 proof and
+manual browser review record.
