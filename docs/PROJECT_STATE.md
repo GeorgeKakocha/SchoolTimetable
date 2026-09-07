@@ -712,13 +712,101 @@ in this slice -- the smoke test only proved the Vite dev server itself
 serves the app shell. No backend/solver/persistence/domain/application
 code changed.
 
-**Phase 3B.3 has NOT started.** No `ClassSection` selector, no
-timetable grid, no live timetable rendering, no loading/no-schedule/
-error timetable states, no Generate button exist yet. The next
-authorized slice is **Phase 3B.3 only** (dynamic `ClassSection`
-selector, the live projection endpoint, the timetable grid with
-parallel split entries shown correctly, loading/no-schedule/error
-states -- the first visible milestone).
+**Phase 3B.3 is implemented on `feature/phase-3b3-first-live-timetable`
+and proven against a real local backend, pending pre-commit review --
+NOT YET committed to that branch's history in a merge/squash sense, NOT
+merged to `main`, NOT pushed** (per this slice's explicit scope, all
+changes are left uncommitted). `frontend/src/components/`
+gains `ClassSelector.tsx` (a plain labeled `<select>`, natural-ID
+values, backend order preserved, no re-sort, no API call of its own)
+and `TimetableGrid.tsx` (a semantic `<table>` rendering `/config`'s
+day headers and the projection's period rows in exactly the order the
+backend provides -- no 5x8 assumption -- with each cell's zero-or-more
+entries rendered as distinct blocks, e.g. a real German/Russian split
+renders as two separate blocks in one `<td>`, never merged into one
+string; raw natural IDs are never shown). `App.tsx` is rewritten from
+the Phase 3B.2 placeholder shell into the real orchestration: on mount,
+load the pilot-fixed app config -> `GET .../config` -> select the first
+backend-provided class -> `GET .../schedule/active/classes/{id}`;
+changing the selector re-requests the newly selected class. Both data
+effects use `AbortController`, aborting the superseded request in the
+effect's own cleanup, with an additional defensive
+`if (controller.signal.aborted) return;` guard on the success path of
+both effects (not just the rejection path) so a stale response -- one
+whose abort a mock doesn't naturally honor the way a real `fetch`
+does -- can never overwrite a newer selection's state. Nine distinct UI
+states are modeled via small discriminated unions (frontend config
+error, config loading/error/ready, zero-class-sections, timetable
+loading/loaded/no-schedule/error); the backend's own
+`"Active schedule not found"` detail renders a neutral no-schedule
+message rather than the generic error state, and no Generate button
+exists anywhere in this slice. `src/api/client.ts` gained a small
+additive, backward-compatible change: `getSchedulingConfigIndex`/
+`getClassTimetable`/the internal `getJson` now accept an optional
+trailing `AbortSignal`, forwarded to `fetch` only when supplied (never
+`fetch(path, undefined)`, which would have broken existing exact-arity
+mock assertions) -- all 7 pre-existing client tests still pass
+unchanged, plus 2 new signal-forwarding tests. `src/test/setup.ts` now
+explicitly registers RTL's `cleanup()` in a global `afterEach` (this
+project never enables Vitest's `globals` option, so RTL's own
+auto-cleanup detection never fired on its own -- a real cross-test
+DOM-leak bug this slice found and fixed, benefiting every test file,
+not just the new ones). `src/index.css` gained the minimum functional
+rules the new table/selector/messages need (overflow wrapper,
+border-collapse, minimum cell width, stacked-entry separation, message
+styling) -- no Phase 3B.4 visual hardening. `App.test.tsx` was rewritten
+for the new behavior (14 scenarios: loading/ready/error config states,
+default-class selection, request-per-class-change, the stale-request
+race guarantee, the timetable loading/no-schedule/error states, the
+zero-classes state, and safe verbatim rendering of known backend
+details). Frontend gate: `npm test` -- 41 passed (5 files); `npm run
+build` (strict `tsc` + `vite build`) succeeds cleanly (no unhandled
+React async-update warnings in either run); `dist/` removed afterward.
+No backend/solver/persistence/domain/application code changed in this
+slice; the full backend regression gate was re-confirmed passing
+unmodified: `pytest tests_web` 100 passed, `pytest tests -m "not slow"`
+119 passed/5 deselected, `pytest tests -m slow` 5 passed, `alembic
+current` at `4681f7a362bd (head)` with no drift.
+
+This slice also used the Phase 3B.3 owner-authorized one-off exception
+to prove the result against real data end-to-end, entirely outside
+production code: the previously-empty local dev PostgreSQL database was
+bootstrapped, via a throwaway, uncommitted script, using the existing
+test-only aggregate writer (`tests_web/support/problem_writer.py`)
+against `fixtures/valid_fixture.py` -- this writes config only
+(`School` `synthetic-school`, `AcademicYear` `ay-2026`, class sections
+`8a`/`8b`/`9a`/`9b`, etc.), never a `Schedule`. Read-only inspection
+confirmed the config rows existed and no `Schedule`/`ScheduleVersion`
+existed yet. The schedule itself was then created exclusively through
+the real product path -- a temporarily-run local FastAPI process,
+`POST /schools/synthetic-school/years/ay-2026/schedule/generate` with
+no body, returning `201` (first generation, `solver_status: OPTIMAL`,
+`is_active: true`) -- followed by `GET .../schedule/active` and
+`GET .../schedule/active/classes/8a`, both `200` with real persisted
+entries. With a temporarily-run local Vite dev server and
+`frontend/.env.local` (gitignored, pointing at the real
+`synthetic-school`/`ay-2026` IDs) in place, both endpoints were
+re-verified through the Vite proxy (`http://127.0.0.1:5173/...`),
+confirming the full real chain: persisted `ScheduleVersion` -> real
+class-projection endpoint -> Vite proxy -> (would reach) the frontend
+API client/React page. The real German/Russian split for class `8a`
+was located dynamically in the live projection response (Period 3 on
+both Monday and Thursday, Period 8 on Tuesday) and confirmed to contain
+two fully distinct entries (different `activity_name`/`teacher_name`/
+`participant_group_name`, never merged) in the same cell. No browser
+extension was connected in this environment, so no automated DOM-level
+render proof was possible -- the API/proxy chain is proven
+automatically; a final visual confirmation in an actual browser
+(`npm run dev` in `frontend/`, backend running, then open
+`http://127.0.0.1:5173/`) still requires a manual look. Both bounded
+processes were cleanly terminated afterward; the bootstrapped dev-DB
+config and generated schedule, and `frontend/.env.local`, are
+deliberately left in place locally as reusable pilot dev data/config
+(neither is committed; `.env.local` is confirmed gitignored).
+
+The next authorized slice is **Phase 3B.4** (visual/UX hardening) --
+not started, and must not start until this Phase 3B.3 branch is
+reviewed and merged.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 

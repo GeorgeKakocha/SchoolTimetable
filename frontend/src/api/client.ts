@@ -61,8 +61,8 @@ async function readErrorDetail(response: Response): Promise<string> {
   return GENERIC_ERROR_DETAIL;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = signal === undefined ? await fetch(path) : await fetch(path, { signal });
   if (!response.ok) {
     throw new ApiError(response.status, await readErrorDetail(response));
   }
@@ -129,9 +129,10 @@ function toSchedulingConfigIndex(raw: unknown): SchedulingConfigIndexResponse {
 export async function getSchedulingConfigIndex(
   schoolId: string,
   academicYearId: string,
+  signal?: AbortSignal,
 ): Promise<SchedulingConfigIndexResponse> {
   const path = `/schools/${encodeURIComponent(schoolId)}/years/${encodeURIComponent(academicYearId)}/config`;
-  const raw = await getJson<unknown>(path);
+  const raw = await getJson<unknown>(path, signal);
   return toSchedulingConfigIndex(raw);
 }
 
@@ -139,9 +140,10 @@ export function getClassTimetable(
   schoolId: string,
   academicYearId: string,
   classSectionId: string,
+  signal?: AbortSignal,
 ): Promise<ClassTimetableResponse> {
   const path =
     `/schools/${encodeURIComponent(schoolId)}/years/${encodeURIComponent(academicYearId)}` +
     `/schedule/active/classes/${encodeURIComponent(classSectionId)}`;
-  return getJson<ClassTimetableResponse>(path);
+  return getJson<ClassTimetableResponse>(path, signal);
 }

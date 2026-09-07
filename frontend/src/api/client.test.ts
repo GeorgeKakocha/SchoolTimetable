@@ -127,4 +127,27 @@ describe("api client", () => {
     expect(calledUrl).not.toContain("localhost");
     expect(calledUrl).not.toContain("127.0.0.1");
   });
+
+  it("forwards an AbortSignal to fetch for getClassTimetable when supplied", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, VALID_CLASS_TIMETABLE));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    await getClassTimetable("s1", "y1", "8a", controller.signal);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/schools/s1/years/y1/schedule/active/classes/8a",
+      { signal: controller.signal },
+    );
+  });
+
+  it("forwards an AbortSignal to fetch for getSchedulingConfigIndex when supplied", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, VALID_CONFIG_SUPERSET));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    await getSchedulingConfigIndex("s1", "y1", controller.signal);
+
+    expect(fetchMock).toHaveBeenCalledWith("/schools/s1/years/y1/config", { signal: controller.signal });
+  });
 });

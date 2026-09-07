@@ -1,7 +1,9 @@
 /* Restrained global baseline only -- Phase 3B.4 owns real UX hardening
    (dense-grid readability, parallel-cell polish, responsiveness,
-   accessibility pass). No branding, no color system, no timetable-grid
-   styling, no animations, no component library here. */
+   accessibility pass). No branding, no color system, no animations, no
+   component library here -- the rules below are the minimum needed to
+   make the Phase 3B.3 timetable table/selector/messages legible and
+   usable, nothing more. */
 
 *,
 *::before,
@@ -32,4 +34,67 @@ body {
 
 .app-subtitle {
   color: #555555;
+}
+
+label {
+  display: block;
+  margin: 1rem 0;
+}
+
+select {
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.timetable-meta {
+  margin: 1rem 0 0.5rem;
+}
+
+.timetable-meta p {
+  margin: 0.15rem 0;
+  color: #555555;
+}
+
+.timetable-scroll {
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+
+.timetable-grid {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.timetable-grid th,
+.timetable-grid td {
+  border: 1px solid #cccccc;
+  padding: 0.5rem;
+  min-width: 8rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.timetable-grid thead th {
+  background-color: #f2f2f2;
+}
+
+.timetable-entry + .timetable-entry {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #cccccc;
+}
+
+.timetable-entry-activity {
+  font-weight: bold;
+}
+
+.timetable-entry-group,
+.timetable-entry-teacher {
+  color: #555555;
+  font-size: 0.9em;
+}
+
+[role="alert"] {
+  color: #b00020;
 }

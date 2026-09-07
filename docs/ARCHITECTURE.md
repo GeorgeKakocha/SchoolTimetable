@@ -69,9 +69,10 @@ request-scoped read path is unchanged. The schedule read API remains
 generic and flat, not a Phase 3B 5x8 React projection.
 
 **Phase 3B (first-view design locked; 3B.1 backend projection and 3B.2
-frontend foundation both merged to `main`; 3B.3/3B.4 not yet started)**
-adds the first browser-rendered class timetable, per `DECISIONS.md`
-#32. The data flow is locked as: flat persisted schedule +
+frontend foundation both merged to `main`; 3B.3 implemented and proven
+against a real local backend on `feature/phase-3b3-first-live-timetable`,
+not yet merged; 3B.4 not yet started)** adds the first browser-rendered
+class timetable, per `DECISIONS.md` #32. The data flow is locked as: flat persisted schedule +
 `SchedulingProblem`/config -> a backend **application-layer**
 projection -> a UI-shaped, read-only API response -> React renders the
 already-correct projection. React may consume the backend projection
@@ -92,8 +93,15 @@ solver, or verifier redesign was needed.
 
 `frontend/` (React 19, TypeScript 7, Vite 8, no router/state-management/
 component library; commit `bff1c31`) is on `main` in foundation form
-only -- no timetable grid, no class selector, no live API data
-rendered yet. The local development boundary is locked as: frontend
+only -- no timetable grid, no class selector, no live API data rendered
+yet. A real `ClassSelector` + `TimetableGrid` + orchestrating `App.tsx`
+exist on `feature/phase-3b3-first-live-timetable` (uncommitted history,
+not yet merged): the live DB -> backend API -> Vite proxy path has been
+proven against a real locally generated schedule through this same
+boundary; React rendering of that data is covered by automated frontend
+tests, while final real-browser visual confirmation remains manual --
+see `PROJECT_STATE.md` for the full proof. The local development
+boundary is locked as: frontend
 native `fetch` client -> a relative `/schools/...` URL -> the Vite dev
 proxy (`vite.config.ts`) -> `http://127.0.0.1:8000`. That Vite proxy
 configuration is the one and only allowed place an absolute local
