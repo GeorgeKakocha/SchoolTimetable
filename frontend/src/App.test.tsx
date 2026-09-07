@@ -128,18 +128,25 @@ describe("App", () => {
     );
   });
 
-  it("renders the loaded timetable with all four required metadata fields visible", async () => {
+  it("shows the school name and academic year exactly once each, alongside the loaded class/version", async () => {
     mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
     mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
 
     render(<App />);
 
-    await waitFor(() => expect(metaText()).toContain(TIMETABLE_8A.school_name));
-    const rendered = metaText();
-    expect(rendered).toContain(TIMETABLE_8A.school_name);
-    expect(rendered).toContain(TIMETABLE_8A.academic_year_label);
-    expect(rendered).toContain(TIMETABLE_8A.class_section_name);
-    expect(rendered).toContain(String(TIMETABLE_8A.version_number));
+    await waitFor(() => expect(metaText()).toContain(TIMETABLE_8A.class_section_name));
+
+    // School/year must appear exactly once each on the page (the config
+    // context line), never repeated in the loaded-timetable meta line too.
+    const pageText = document.body.textContent ?? "";
+    const countOccurrences = (needle: string) => pageText.split(needle).length - 1;
+    expect(countOccurrences(CONFIG_INDEX.school.name)).toBe(1);
+    expect(countOccurrences(CONFIG_INDEX.academic_year.label)).toBe(1);
+
+    expect(metaText()).toContain(TIMETABLE_8A.class_section_name);
+    expect(metaText()).toContain(String(TIMETABLE_8A.version_number));
+    expect(metaText()).not.toContain(CONFIG_INDEX.school.name);
+    expect(metaText()).not.toContain(CONFIG_INDEX.academic_year.label);
     expect(screen.getByRole("table")).toBeInTheDocument();
   });
 

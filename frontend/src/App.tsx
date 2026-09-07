@@ -160,16 +160,10 @@ function App() {
               {timetableState.status === "error" && <p role="alert">{timetableState.message}</p>}
               {timetableState.status === "loaded" && (
                 <>
-                  <div className="timetable-meta">
-                    <p>
-                      {timetableState.timetable.school_name} ·{" "}
-                      {timetableState.timetable.academic_year_label}
-                    </p>
-                    <p>
-                      {timetableState.timetable.class_section_name} · Version{" "}
-                      {timetableState.timetable.version_number}
-                    </p>
-                  </div>
+                  <p className="timetable-meta">
+                    {timetableState.timetable.class_section_name} · Version{" "}
+                    {timetableState.timetable.version_number}
+                  </p>
                   <TimetableGrid timetable={timetableState.timetable} />
                 </>
               )}

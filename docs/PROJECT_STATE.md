@@ -826,8 +826,88 @@ such as "All of 8-A"; the timetable could use more of a typical laptop
 viewport's width/density; visual hierarchy/typography remain basic;
 parallel-cell visual polish can improve further.
 
-The next authorized slice is **Phase 3B.4** (visual/UX hardening) --
-not started.
+**Phase 3B.4 is implemented on
+`feature/phase-3b4-timetable-ux-hardening`, pending review** (not
+committed, not merged, not pushed). Owner decision for this slice:
+`participant_group_scope` (or any other backend/API contract change)
+was explicitly **rejected** -- the current domain has no authoritative
+"whole class" group role (a plain, non-split `ParticipantGroup` scoped
+to one `ClassSection` is structurally indistinguishable from a
+split-branch group by membership shape alone; only
+`TeachingRequirement.split_group_id` distinguishes a split branch, and
+even that doesn't assert "this other group IS the whole class"), so
+fully hiding labels like "All of 8-A" is **deferred** to a future
+milestone rather than solved with a frontend string/name heuristic (see
+the design-reconnaissance turn preceding this one). This slice instead:
+removes the duplicated school/year presentation (`App.tsx`'s loaded-
+timetable meta line now shows only `class_section_name`/
+`version_number`; school name and academic year label render exactly
+once, in the existing config-level subtitle); widens `.app-shell` from
+`960px` to `1280px` max-width to use far more of a typical 1366px
+laptop viewport; gives `TimetableGrid.tsx` a dynamically-generated
+`<colgroup>` (one narrow period column, one column per `timetable.days`
+entry -- never a hard-coded count) so the period column stays compact
+while day columns share the remaining width; retains
+`participant_group_name` and `teacher_name` exactly as before (no
+group-name-based, `split_group_id`-based, or class-count-based
+suppression logic added to React) but visually de-emphasizes them
+(smaller, muted secondary text) so ordinary full-class labels create
+less visual noise while split/merged group information stays fully
+visible; adds a small "Reserved" secondary label, driven solely by the
+existing `entry.source === "RESERVED_BLOCK"` field, next to the
+activity name for reserved-block entries (never inferring a specific
+kind like "Club" beyond what `source` actually guarantees); tightens
+cell padding/line-height and lightens grid borders while keeping a
+stronger header/body separation; adds `select:focus-visible` styling;
+increases parallel-entry spacing slightly for clearer visual
+separation between stacked split entries. Two follow-up correction
+rounds, driven by real manual browser review, refined this further:
+(1) width/typography -- `.app-shell` horizontal padding tightened from
+`1.5rem` to `1rem` (max-width stays `1280px`; this was found, via a
+headless-Chromium/CDP measurement at a true 1366x768 viewport, to be
+the actual lever, not a layout bug -- the table was already exactly
+filling its container) so the table reaches `~1248px` (91% of a
+1366px viewport); entry activity text back to `1em`, secondary
+group/teacher text up to `0.88em`, and the Reserved marker made bolder
+and upright instead of italic, all while introducing no new color
+semantics; (2) vertical density -- `TimetableEntryBlock` now renders
+`participant_group_name` and `teacher_name` on one shared
+`.timetable-entry-secondary` line (joined by `·` only when both are
+present; either shown alone when only one exists; no secondary line
+when neither exists) instead of two separate stacked lines, cutting
+ordinary-entry height from three lines to at most two -- no data
+hidden, no new heuristic, purely a layout change. No backend, API,
+persistence, or migration file changed at any point; no new npm
+dependency; no `ClassSelector.tsx` change (its existing native
+label/select associations already met the accessibility bar). Frontend
+gate (final): `npm test` -- **47 passed** (5 files: the original 41,
+plus 2 from this slice's first round, plus 4 from the density round --
+group+teacher combined, group-only, teacher-only, neither); `npm run
+build` succeeds cleanly; `dist/` removed afterward. Backend regression
+re-confirmed unmodified throughout: `pytest tests_web` 100 passed,
+`pytest tests -m "not slow"` 119 passed/5 deselected, `pytest tests -m
+slow` 5 passed, `alembic current` at `4681f7a362bd (head)` with no
+drift. **Manual browser review at `http://127.0.0.1:5173/` (1366x768)
+PASSED** across all three rounds: horizontal layout/proportions,
+width/typography balance, and final vertical density -- including
+explicit confirmation that German/Russian remain two clearly
+independent stacked entries in the same cell, the Reserved marker on
+Chess Club/Robotics reads cleanly, and no correctness regression was
+observed. The repeated full-class label (e.g. "All of 8-A") remains
+intentionally visible, per the owner decision above, and was
+explicitly accepted as not a 3B.4 blocker.
+
+A future **config/admin milestone** (explicitly not Phase 3B.4, not
+scoped here, no timetable-page workload editor) should allow editing:
+`Teacher -> Class/ParticipantGroup -> Subject/Activity -> Weekly
+periods`, backed by the existing, already-persisted
+`TeachingRequirement.weekly_periods` field (no new domain concept
+needed for the data itself -- only a future write path + UI). That
+future UI should also surface each teacher's total assigned weekly
+periods/workload, derived from summing their `TeachingRequirement`s.
+This is recorded here only as a forward-looking product note, per
+explicit product-owner request; it is not designed or scheduled into
+any slice yet.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 

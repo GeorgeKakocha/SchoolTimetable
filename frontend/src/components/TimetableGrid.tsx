@@ -16,6 +16,12 @@ function TimetableGrid({ timetable }: TimetableGridProps) {
   return (
     <div className="timetable-scroll">
       <table className="timetable-grid">
+        <colgroup>
+          <col className="timetable-col-period" />
+          {timetable.days.map((day) => (
+            <col className="timetable-col-day" key={day.id} />
+          ))}
+        </colgroup>
         <thead>
           <tr>
             <th scope="col">Period</th>
@@ -52,13 +58,22 @@ function entryKey(entry: ClassTimetableEntry, index: number): string {
 }
 
 function TimetableEntryBlock({ entry }: { entry: ClassTimetableEntry }) {
+  const hasGroup = entry.participant_group_name !== null;
+  const hasTeacher = entry.teacher_name !== null;
+
   return (
     <div className="timetable-entry">
-      <div className="timetable-entry-activity">{entry.activity_name}</div>
-      {entry.participant_group_name !== null && (
-        <div className="timetable-entry-group">{entry.participant_group_name}</div>
+      <div className="timetable-entry-activity">
+        {entry.activity_name}
+        {entry.source === "RESERVED_BLOCK" && <span className="timetable-entry-reserved">Reserved</span>}
+      </div>
+      {(hasGroup || hasTeacher) && (
+        <div className="timetable-entry-secondary">
+          {hasGroup && <span className="timetable-entry-group">{entry.participant_group_name}</span>}
+          {hasGroup && hasTeacher && <span className="timetable-entry-separator"> · </span>}
+          {hasTeacher && <span className="timetable-entry-teacher">{entry.teacher_name}</span>}
+        </div>
       )}
-      {entry.teacher_name !== null && <div className="timetable-entry-teacher">{entry.teacher_name}</div>}
     </div>
   );
 }

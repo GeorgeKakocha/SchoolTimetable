@@ -1,9 +1,8 @@
-/* Restrained global baseline only -- Phase 3B.4 owns real UX hardening
-   (dense-grid readability, parallel-cell polish, responsiveness,
-   accessibility pass). No branding, no color system, no animations, no
-   component library here -- the rules below are the minimum needed to
-   make the Phase 3B.3 timetable table/selector/messages legible and
-   usable, nothing more. */
+/* Restrained global baseline + Phase 3B.4 UX hardening (visual
+   hierarchy, dense-grid readability, parallel-cell polish, laptop-width
+   responsiveness, an accessibility/readability pass -- `docs/DECISIONS.md`
+   #32). No branding, no color system, no animations, no component
+   library, no elaborate design system -- these rules stay functional. */
 
 *,
 *::before,
@@ -27,18 +26,24 @@ body {
 }
 
 .app-shell {
-  max-width: 960px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 2rem 1.5rem;
+  padding: 2rem 1rem;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
 }
 
 .app-subtitle {
-  color: #555555;
+  margin: 0 0 1.25rem;
+  color: #4a4a4a;
 }
 
 label {
   display: block;
-  margin: 1rem 0;
+  margin: 0 0 1.5rem;
 }
 
 select {
@@ -46,13 +51,15 @@ select {
   padding: 0.25rem 0.5rem;
 }
 
-.timetable-meta {
-  margin: 1rem 0 0.5rem;
+select:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }
 
-.timetable-meta p {
-  margin: 0.15rem 0;
-  color: #555555;
+.timetable-meta {
+  margin: 0 0 0.5rem;
+  color: #4a4a4a;
+  font-size: 0.95em;
 }
 
 .timetable-scroll {
@@ -66,33 +73,76 @@ select {
   table-layout: fixed;
 }
 
+.timetable-col-period {
+  width: 7rem;
+}
+
+.timetable-col-day {
+  width: auto;
+}
+
 .timetable-grid th,
 .timetable-grid td {
-  border: 1px solid #cccccc;
-  padding: 0.5rem;
-  min-width: 8rem;
+  border: 1px solid #e2e2e2;
+  padding: 0.4rem 0.6rem;
   vertical-align: top;
   text-align: left;
+  line-height: 1.35;
+}
+
+/* The period (first) column stays narrow; day columns get the room to
+   stay readable rather than shrinking to an even split with it. */
+.timetable-grid tr > :first-child {
+  min-width: 6rem;
+  white-space: nowrap;
+}
+
+.timetable-grid tr > :not(:first-child) {
+  min-width: 9rem;
 }
 
 .timetable-grid thead th {
   background-color: #f2f2f2;
+  border-bottom: 2px solid #b0b0b0;
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #444444;
+}
+
+.timetable-grid th[scope="row"] {
+  font-weight: 600;
 }
 
 .timetable-entry + .timetable-entry {
-  margin-top: 0.5rem;
+  margin-top: 0.6rem;
   padding-top: 0.5rem;
   border-top: 1px dashed #cccccc;
 }
 
 .timetable-entry-activity {
-  font-weight: bold;
+  font-weight: 600;
+  font-size: 1em;
 }
 
-.timetable-entry-group,
-.timetable-entry-teacher {
-  color: #555555;
-  font-size: 0.9em;
+.timetable-entry-reserved {
+  margin-left: 0.5em;
+  font-weight: 600;
+  font-size: 0.78em;
+  color: #7a7a7a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.timetable-entry-secondary {
+  margin-top: 0.1rem;
+  color: #666666;
+  font-size: 0.88em;
+  line-height: 1.35;
+}
+
+.timetable-entry-separator {
+  color: #999999;
 }
 
 [role="alert"] {
