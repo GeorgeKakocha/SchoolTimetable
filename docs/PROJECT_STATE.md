@@ -904,9 +904,64 @@ periods`, backed by the existing, already-persisted
 needed for the data itself -- only a future write path + UI). That
 future UI should also surface each teacher's total assigned weekly
 periods/workload, derived from summing their `TeachingRequirement`s.
-This is recorded here only as a forward-looking product note, per
-explicit product-owner request; it is not designed or scheduled into
-any slice yet.
+This has since been formally approved as the first Phase 3C admin MVP
+-- see below and `DECISIONS.md` #33-#35.
+
+**Phase 3C -- scheduling configuration / admin input: design locked
+(`DECISIONS.md` #33-#35), implementation NOT started.** A dedicated
+reconnaissance (read-only; zero files changed) established that all 17
+configuration tables are already fully readable in production via
+`GET /config` but have **zero** production write access -- the only
+writer of any configuration table today is the TEST-ONLY aggregate
+writer (`tests_web/support/problem_writer.py`), explicitly documented
+as never the template for a production write path (`DECISIONS.md`
+#28). Three owner decisions now lock the first slice's direction:
+
+- **#33** -- `ParticipantGroup` gains a mandatory, never-inferred
+  `role` field (`WHOLE_CLASS`/`SUBGROUP`/`MERGED_CLASSES`), closing the
+  Phase 3B.4-deferred "All of 8-A" ambiguity authoritatively in the
+  domain -- exactly one `WHOLE_CLASS` group per `ClassSection` per
+  `AcademicYear`, enforced by a recommended partial-unique-index
+  mechanism (or application-level fallback), never by role inference
+  from names/patterns/`split_group_id`/class-section count alone.
+- **#34** -- the first admin MVP is **Teaching Assignments/Workload**:
+  create/edit/delete a plain `Teacher -> WHOLE_CLASS ParticipantGroup ->
+  Activity -> weekly_periods` `TeachingRequirement`, plus an assigned-
+  workload summary (`SUM(weekly_periods) GROUP BY teacher_id`, verified
+  safe to derive with no double-counting from splits/merges/block
+  shape). `SUBGROUP`/`MERGED_CLASSES` assignment workflows, block/
+  distribution/time-preference/resource/availability editing, and
+  teacher contractual/target workload are all explicitly deferred past
+  this slice -- contractual workload in particular does not exist in
+  the domain today and is recorded only as a future capability, not
+  designed now.
+- **#35** -- configuration becomes write-locked the moment an
+  `AcademicYear` has a generated `Schedule` (reusing the existing
+  `ScheduleVersionRepository.get_active_schedule` check that already
+  gates a second `Generate` call), to prevent the persisted
+  configuration from silently drifting away from what a historical
+  `ScheduleVersion`'s denormalized joins display (a known, accepted
+  Phase 3A3 MVP limitation, `DECISIONS.md` #31). No stale-schedule
+  state, no auto-invalidation, no config snapshotting, and no
+  regenerate lifecycle are built in this MVP -- only the one write-gate
+  check the future lifecycle will eventually build on.
+
+Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
+`ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**
+teaching-assignment write backend (no frontend editor) -> **3C.3**
+configuration frontend foundation (introduces a lightweight React
+Router for `/timetable` + `/configuration/teaching-assignments`, since
+Phase 3B's no-Router decision was conditioned on there being only one
+page) -> **3C.4** manual browser UX hardening -> **3C.5** Phase 3C
+closure + broader configuration roadmap. Teachers/ClassSections/
+Activities/canonical `WHOLE_CLASS` groups remain pre-existing read-only
+reference data for this first slice; full reference-data CRUD is real
+future work, not dragged into 3C.1-3C.4. Out of scope for the whole
+milestone: auth, teacher timetable view, manual schedule editing,
+locks/reoptimization UI, schedule history UI, print/export, mobile
+redesign, configuration versioning, stale-schedule lifecycle,
+regeneration workflow, teacher contractual workload, all-entity CRUD in
+one milestone, and subgroup/merged-group/advanced-policy editors.
 
 After Phase 3A3 (3A3.1-3A3.4) closes, the roadmap continues:
 
@@ -916,4 +971,5 @@ dedicated backend class-timetable projection endpoint (`DECISIONS.md`
 #32) consumed by React -- not a client-side projection over
 `GET .../schedule/active` (and `/config`) directly.
 
-Roadmap: **3A2.4 -> 3A3 -> 3B (3B.1 -> 3B.2 -> 3B.3 -> 3B.4).**
+Roadmap: **3A2.4 -> 3A3 -> 3B (3B.1 -> 3B.2 -> 3B.3 -> 3B.4) -> 3C
+(3C.1 -> 3C.2 -> 3C.3 -> 3C.4 -> 3C.5).**

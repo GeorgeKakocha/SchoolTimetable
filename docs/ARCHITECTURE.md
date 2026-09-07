@@ -304,10 +304,64 @@ density, restrained Reserved-block treatment, accessibility polish) is
 also merged to `main` at commit `7c80eba` -- **Phase 3B is CLOSED**.
 Remaining out of scope, unstarted: a
 teacher timetable view; a schedule history UI; broader admin UI
-(manual editing, locks, reoptimization web workflows, scenarios);
-config/admin UI (including a future teacher-weekly-periods editor,
-recorded as a forward-looking product note in `PROJECT_STATE.md`,
-not designed or scheduled yet); auth; export/print; and deployment
-hardening beyond `docker-compose.yml`'s local development
-PostgreSQL. See `PROJECT_STATE.md` for the full Phase 3B.3/3B.4 proof and
-manual browser review record.
+(manual editing, locks, reoptimization web workflows, scenarios); auth;
+export/print; and deployment hardening beyond `docker-compose.yml`'s
+local development PostgreSQL. See `PROJECT_STATE.md` for the full
+Phase 3B.3/3B.4 proof and manual browser review record.
+
+Scheduling-configuration admin input (formerly just a forward-looking
+note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#35,
+implementation NOT started** -- see below.
+
+## Phase 3C architecture direction (design locked; nothing implemented)
+
+Today, every one of the 17 configuration tables under one
+`academic_year_id` (Decision #26) is fully readable via `GET /config`
+but has **zero** production write path -- the only writer of any
+configuration table is the TEST-ONLY aggregate writer
+(`tests_web/support/problem_writer.py`), explicitly documented
+(Decision #28) as never the template for a production write path. The
+locked Phase 3C direction adds a real one, following the same
+ports-and-adapters direction already in place:
+
+```
+api/  →  application/ (new write services)  →  new write ports
+                                                       ↑
+                                            persistence/ adapters (new)
+```
+
+- **`domain/`**: `ParticipantGroup` gains a mandatory `role` field
+  (`WHOLE_CLASS`/`SUBGROUP`/`MERGED_CLASSES`, Decision #33) -- the only
+  anticipated domain-level change; frozen dataclasses remain frozen
+  (no ORM change-tracking creeps into `domain/`).
+- **`application/`**: a new, narrowly-scoped write use case (shaped
+  like `GenerateScheduleService`, not a generic repository) for
+  create/update/delete of plain `WHOLE_CLASS` `TeachingRequirement`s
+  (Decision #34), enforcing the Decision #35 schedule-exists write gate
+  by reusing the existing `ScheduleVersionRepository.
+  get_active_schedule` port method -- no new repository method for
+  that specific check. New application-level errors (e.g. duplicate
+  assignment, `ConfigurationLockedError` -> 409) follow the existing
+  `SchedulingProblemNotFoundError`/`ScheduleAlreadyExistsError` pattern
+  (Decisions #29, #31), never a raw SQLAlchemy/HTTP exception.
+- **`persistence/`**: new adapter write methods performing the natural-
+  id resolution the future write service needs -- informed by, but
+  never importing, `tests_web/support/problem_writer.py`'s approach
+  (Decision #28 already ruled that writer out as the production
+  template). The `ParticipantGroup.role` invariant ("exactly one
+  `WHOLE_CLASS` per `ClassSection` per `AcademicYear`") is a candidate
+  for a genuine schema addition (a partial unique index, Decision #33)
+  -- the first schema change this project would make since Decision
+  #26's original 17-table baseline.
+- **`api/`**: new write routes/schemas, composed the same way
+  `dependencies.py` already composes read routes -- never a second
+  composition root.
+- **`frontend/`**: a second meaningful page (Teaching Assignments)
+  makes Phase 3B's no-Router decision (#32 Owner Decision 10,
+  conditioned on there being only one page) worth revisiting in 3C.3;
+  Redux/Zustand remain unjustified in the meantime.
+
+No code under `domain/`, `application/`, `persistence/`, or `api/` has
+been touched by this decision -- see `DECISIONS.md` #33-#35 for the
+full locked rationale and `PROJECT_STATE.md` for the recommended
+3C.1-3C.5 sequencing.

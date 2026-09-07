@@ -1300,3 +1300,283 @@ this implementation followed them as given.
     With Owner Decisions 1-10 locked, **Phase 3B.1 has zero remaining
     owner decisions** -- implementation may proceed directly from this
     ADR without further product-owner input.
+
+33. **Owner Decision -- `ParticipantGroup` gains an authoritative
+    semantic role; the role is NEVER inferred (Phase 3C, design locked,
+    implementation not yet started).** Admin configuration needs to
+    distinguish "this assignment targets the whole class" from "this
+    assignment targets a subgroup" or "this assignment spans multiple
+    classes" -- a real domain requirement first surfaced, and
+    deliberately deferred, during Phase 3B.4's UX review (see
+    `PROJECT_STATE.md`), now formally decided.
+
+    **The three approved roles**, added as a new mandatory
+    `ParticipantGroup.role` field (a plain string enum, matching this
+    codebase's existing enum style, e.g. `EntrySource`/`SolverStatus` --
+    not a new object type):
+    - **`WHOLE_CLASS`** -- the full population of exactly one
+      `ClassSection`. Ordinary whole-class `TeachingRequirement`s target
+      this group. Invariant: exactly one `WHOLE_CLASS` group per
+      `ClassSection` per `AcademicYear`.
+    - **`SUBGROUP`** -- a subset/branch of exactly one `ClassSection`
+      (e.g. "8-A German", "8-A Russian"). Never implies the whole class,
+      regardless of whether it happens to be linked to a split via
+      `TeachingRequirement.split_group_id`.
+    - **`MERGED_CLASSES`** -- spans two or more `ClassSection`s (e.g. a
+      combined 9-A+9-B history lesson).
+
+    **Cardinality invariants** (`class_sections` tuple length):
+    `WHOLE_CLASS` and `SUBGROUP` both require exactly 1 class section;
+    `MERGED_CLASSES` requires 2 or more. These are per-row invariants --
+    they belong in **domain-level construction validation** (alongside
+    `ParticipantGroup`'s existing invariants) and in
+    **`validation.preflight`** as the pre-generation defense-in-depth
+    check (matching how split-group consistency is already validated
+    today) -- never a database `CHECK` constraint, since a `CHECK` on
+    the `participant_group` row cannot see the count of child
+    `participant_group_class_section` rows without a trigger, and this
+    codebase already has an established, explicit preference for
+    application-level invariant enforcement over database-mechanism
+    ones for exactly this kind of cross-row concern (see #21, and #31's
+    "no PostgreSQL trigger... unjustified machinery" reasoning).
+
+    **"Exactly one `WHOLE_CLASS` group per `ClassSection` per
+    `AcademicYear`" is a genuine cross-row invariant** and deserves a
+    real database-level guarantee, not application trust alone
+    (matching #26's precedent of PostgreSQL-enforced, not merely
+    Python-enforced, same-academic-year isolation). The recommended
+    mechanism for 3C.1 to evaluate: a nullable denormalized
+    `whole_class_of_class_section_id` column on `participant_group`,
+    populated only when `role = WHOLE_CLASS` (equal to that group's own
+    single `class_sections` member), with a partial unique index --
+    `UNIQUE (academic_year_id, whole_class_of_class_section_id) WHERE
+    whole_class_of_class_section_id IS NOT NULL` -- a standard,
+    idiomatic PostgreSQL pattern, not an impossible constraint. The
+    exact column/index shape is a 3C.1 implementation detail, not fixed
+    by this decision; if 3C.1 finds the denormalized column
+    unjustified, the fallback is transactional application-level
+    enforcement in the future write service, with generation-time
+    preflight as the final backstop either way.
+
+    **Never inferred -- reaffirming and closing the Phase 3B.4 gap
+    authoritatively.** The system must never derive `role` from: the
+    group's name (no "All of" or any other string pattern); any
+    number/name pattern; `TeachingRequirement.split_group_id`
+    (presence/absence of a split link is evidence of *usage*, not of
+    *role* -- a `SUBGROUP` need not be linked to any split); or
+    `class_sections` length alone (length 1 is necessary but not
+    sufficient to distinguish `WHOLE_CLASS` from `SUBGROUP` -- both
+    share it). The Phase 3B.4 owner decision rejecting UI string/name
+    heuristics remains valid and unchanged; this decision closes the
+    same gap in the domain instead of leaving it unsolved in React.
+
+    **Backfill rule.** Existing `ParticipantGroup` rows (today, only
+    ever created by the TEST-ONLY aggregate writer against
+    `fixtures/valid_fixture.py`) must **not** be classified
+    heuristically by any future migration/backfill script. Whoever
+    writes the 3C.1 migration/fixture update must assign `role`
+    explicitly and deterministically from the fixture's own authorial
+    intent (e.g. `pg_8a`/`pg_8b`/`pg_9a`/`pg_9b` are `WHOLE_CLASS` by
+    original design; `pg_8a_german`/`pg_8a_russian` are `SUBGROUP` by
+    original design; `pg_9a_9b_merged` is `MERGED_CLASSES` by original
+    design) -- never a generic string-matching pass over existing data.
+    **No migration is implemented by this decision** -- 3C.1 owns that
+    work.
+
+34. **Owner Decision -- the first Phase 3C admin MVP is Teaching
+    Assignments/Workload, narrowly scoped to ordinary `WHOLE_CLASS`
+    assignments (design locked, implementation not yet started).** The
+    primary model: `Teacher -> Class/ParticipantGroup -> Subject/
+    Activity -> Weekly periods`, backed by the existing
+    `TeachingRequirement.weekly_periods` field -- no new domain concept
+    needed for the assignment record itself (confirmed structurally
+    sufficient by the Phase 3C reconnaissance).
+
+    **Editable in the first slice**: `teacher_id`, the target
+    `participant_group_id` (constrained to the `ClassSection`'s
+    canonical `WHOLE_CLASS` group only, per Decision #33), `activity_id`,
+    `weekly_periods`. Create/update/delete one plain ordinary
+    `TeachingRequirement`.
+
+    **`SUBGROUP`/`MERGED_CLASSES` must exist correctly in the domain
+    (Decision #33) but their editing workflows are explicitly
+    deferred** -- split synchronization (two-or-more linked
+    requirements sharing a `split_group_id`, matching shape/
+    weekly_periods) and merged-group configuration both add real
+    validation/UX complexity beyond this slice's scope. The first-slice
+    write path must **never** silently treat a `SUBGROUP`/
+    `MERGED_CLASSES`-targeted requirement as an ordinary assignment --
+    a request targeting a non-`WHOLE_CLASS` group through this narrow
+    write path must be rejected, never silently accepted.
+
+    **Explicitly read-only/deferred in the first slice** (existing
+    domain defaults may be used for newly-created plain requirements
+    only where those defaults already exist in the domain today -- no
+    new default is invented by this decision): block policy editing
+    (new requirements use the domain's existing
+    `LessonBlockPolicy(BlockPolicyMode.FLEXIBLE)` default -- already
+    the dataclass default today, not a new one), distribution policy
+    editing (existing `DistributionPolicy()` default, both fields
+    already optional), time preferences (existing `time_preferences:
+    tuple = ()` default), resource requirements (existing
+    `resource_requirement: None` default), teacher availability
+    editing, fixed placements, reserved blocks, the split-group
+    assignment workflow, the merged-group assignment workflow, and
+    teacher contractual/target workload (below).
+
+    **Assigned vs. contractual workload -- kept as two distinct,
+    separately-timed product concepts.**
+    - **Assigned workload** (in the first MVP): `SUM(TeachingRequirement.
+      weekly_periods) GROUP BY teacher_id`. Verified safe to derive this
+      way by the Phase 3C reconnaissance: no double-counting from split
+      branches (distinct teachers/activities in every observed case,
+      and the hard teacher-non-overlap constraint prevents same-teacher
+      double-booking in any *feasible* configuration regardless), no
+      double-counting from merged-group requirements (one row, counted
+      once), and block shape never affects the total (a hard equality
+      constraint in `scheduling/model_builder.py`). Whether
+      `ReservedBlock.teacher_id` assignments should also count toward a
+      displayed "occupied periods" figure is an explicit
+      **out-of-scope** question for this MVP -- the approved scope is
+      `TeachingRequirement`-only, matching the product owner's literal
+      request.
+    - **Contractual/target/capacity workload** (e.g.
+      `target_weekly_periods`, `contracted_weekly_periods`,
+      `max_weekly_periods`) -- **does not exist anywhere in the current
+      domain** (confirmed by the Phase 3C reconnaissance: the only
+      `capacity`-named field in the entire codebase is the unrelated
+      `Resource.capacity`). **Not part of the first Phase 3C MVP.** No
+      such field is added by this decision. Recorded only as a
+      **future workload-management product capability**, to be
+      designed as its own decision if/when a concrete need appears
+      (matching this codebase's consistent YAGNI discipline, #12).
+
+    **Duplicate-assignment semantics.** For the plain `WHOLE_CLASS`
+    write path, the first write service must reject a second ordinary
+    `TeachingRequirement` with the identical `(teacher_id,
+    participant_group_id, activity_id)` triple within one
+    `AcademicYear`. This check is **application-level only, not a
+    database uniqueness constraint** -- a blanket DB-level uniqueness
+    constraint across *all* `TeachingRequirement` rows would be too
+    restrictive: split-branch siblings already differ in at least
+    teacher/activity/group in every observed case, but nothing in the
+    domain model rules out a legitimate future pattern needing two
+    requirement rows sharing that triple (e.g. two differently
+    time-distributed portions of one teacher's load for one
+    class/activity). Scoping the duplicate check to application code --
+    and, for now, to plain ordinary (non-split, `WHOLE_CLASS`-targeted)
+    requirements specifically -- keeps that door open without a schema
+    change.
+
+35. **Owner Decision -- scheduling configuration is write-locked once an
+    `AcademicYear` has a generated `Schedule` (Phase 3C MVP, design
+    locked, implementation not yet started).** Once
+    `ScheduleVersionRepository.get_active_schedule(...)` (the existing
+    port method already used by `GenerateScheduleService` to reject a
+    second `Generate` call) returns non-`None` for an `AcademicYear`,
+    every Phase 3C configuration-write operation for that year must be
+    **rejected outright**, never merely warned about. Reason: without
+    this gate, a generated `ScheduleVersion`'s denormalized display
+    joins -- already a known, accepted MVP limitation (#31: a
+    historical version re-reads *current* teacher/activity/policy
+    values, not the values true at generation time) -- would silently
+    drift arbitrarily far from what was actually solved, with no way
+    for a viewer to know.
+
+    **For this MVP, explicitly**: no `STALE`/`OUTDATED` schedule state;
+    no automatic invalidation of an existing schedule on a rejected
+    write attempt; no silent configuration mutation after generation
+    (the write is refused outright, never partially applied); no
+    configuration snapshot/version model; no regenerate/re-optimize
+    lifecycle. The **future** direction -- edit configuration -> the
+    existing schedule becomes `OUTDATED` -> generate/re-optimize a new
+    immutable `ScheduleVersion` -> the new version becomes active -- is
+    explicitly deferred and **must not be implemented** as part of the
+    first Phase 3C MVP. The first write architecture only needs to
+    **leave room** for it: the write-gate check itself (one "does this
+    year already have a schedule" test at the top of every future write
+    operation) is the one piece of scaffolding this MVP needs, and it
+    becomes the future trigger point for marking a schedule `OUTDATED`
+    rather than simply refusing the write, with nothing about the check
+    itself needing to be redesigned later.
+
+    **Enforcement boundary**: the backend application service, never
+    React alone. Every future configuration-write use case (the
+    teaching-assignment service first) must perform this check itself
+    before touching any row, mirroring exactly the same defensive
+    pattern `GenerateScheduleService` already uses for its own "a
+    schedule already exists" 409 rejection -- reusing the existing
+    `ScheduleVersionRepository.get_active_schedule` port method, adding
+    no new repository method for this specific check. Recommended
+    future error contract (not implemented by this decision): a new
+    application-level error, e.g. `ConfigurationLockedError`, carrying
+    the natural `school_natural_id`/`academic_year_natural_id`, mapped
+    to **HTTP 409 Conflict** with a plain-text `detail` (e.g.
+    "Configuration is locked: a schedule has already been generated for
+    this academic year.") -- matching the existing
+    `ScheduleAlreadyExistsError` -> 409 precedent (#31), not a new or
+    nonstandard status code.
+
+    **Frontend routing (informative, not itself a locked owner
+    decision).** Phase 3B intentionally shipped with no React Router,
+    conditioned explicitly on there being a single page (#32 Owner
+    Decision 10). Phase 3C introduces a second, genuinely separate
+    product area (viewing a timetable vs. editing configuration) that a
+    real admin would want to navigate between via bookmarkable,
+    back-button-friendly URLs -- that condition no longer holds.
+    Recommendation: introduce a lightweight React Router in 3C.3 with
+    two routes (`/timetable`, `/configuration/teaching-assignments`),
+    each page still managing its own local fetch/state -- Redux/Zustand
+    remain unjustified (#32 Owner Decision 10's reasoning still holds:
+    no cross-page shared client state exists yet). This is a
+    recommendation for 3C.3 to confirm, not a locked requirement of
+    this ADR.
+
+    **Reference-data boundary (informative).** For the first Teaching
+    Assignments slice, `Teacher`, `ClassSection`, `Activity`, and each
+    `ClassSection`'s canonical `WHOLE_CLASS` `ParticipantGroup` remain
+    pre-existing, read-only reference data -- full CRUD for
+    teachers/classes/activities/participant groups/calendar/
+    availability/constraints/resources is real, needed future product
+    work, but is explicitly **not** dragged into this first slice
+    unless a concrete blocker forces it.
+
+    **Recommended Phase 3C sub-slices** (sequencing guidance, adjust if
+    a later slice's own reconnaissance requires it -- not itself a
+    locked owner decision beyond #33-#35):
+    - **3C.1** -- `ParticipantGroup` role domain/persistence contract:
+      the role enum, the invariants above, the migration, mapper/read-
+      API updates (`/config`'s existing response gains the field), the
+      fixture/dev-data explicit (non-heuristic) classification, and
+      tests. No admin UI.
+    - **3C.2** -- teaching-assignment write backend: the application
+      write port/service, create/update/delete for plain `WHOLE_CLASS`
+      `TeachingRequirement`s, duplicate validation, the Decision #35
+      schedule-exists write gate, an assigned-workload read model/
+      summary, API routes/schemas, and tests. No frontend editor.
+    - **3C.3** -- configuration frontend foundation: the routing
+      decision (above), the Teaching Assignments page, loading
+      reference choices, the table, the add/edit/delete form, surfacing
+      backend validation errors, and the assigned total.
+    - **3C.4** -- manual browser UX hardening: empty state,
+      loading/error states, workload-summary readability,
+      destructive-action confirmation, accessibility, real
+      PostgreSQL/API/browser proof (mirroring the 3B.3/3B.4 precedent).
+    - **3C.5** -- Phase 3C closure + the broader configuration roadmap
+      (teachers/classes/activities/groups themselves becoming editable,
+      subgroup/merged-group editors, calendar/availability/constraints
+      editors) -- explicitly future, not decided now.
+
+    **Explicitly out of scope for the whole Phase 3C admin milestone**:
+    authentication/authorization (flagged, not built, unless
+    unavoidable to gate writes at all); a teacher timetable view;
+    manual schedule editing; locks/reoptimization UI; a schedule
+    history UI; print/export; a mobile redesign; configuration
+    versioning; the stale-schedule lifecycle; the regeneration
+    workflow; teacher contractual workload; all-entity CRUD in one
+    milestone; a subgroup editor; a merged-group editor; and an
+    advanced block/distribution/time-preference editor.
+
+    With Owner Decisions #33-#35 locked, **Phase 3C.1 has zero
+    remaining owner decisions** -- implementation may proceed directly
+    from this ADR without further product-owner input.
