@@ -1017,8 +1017,72 @@ slow` 5 passed; `alembic current` at `01b2ae564170 (head)` with no
 drift; `npm test` 47 passed, `npm run build` succeeds (frontend
 genuinely untouched). **Phase 3C.1 is implemented, reviewed, committed
 (`8b5b606` "feat: add participant group roles"), and merged to `main`
--- not pushed.** The next implementation slice is **Phase 3C.2 only**
-(the teaching-assignment write backend) -- not started.
+-- not pushed.**
+
+**Phase 3C.2a (teaching-assignment application/persistence backend +
+generation-vs-config-write concurrency correctness, `DECISIONS.md` #36)
+is implemented on branch `feature/phase-3c2a-teaching-assignment-backend`,
+pending review/commit -- not yet committed, not merged, not pushed.**
+New `TeachingAssignmentService` (`application/teaching_assignment_service.py`)
+is the narrow write use case for create/update/delete of a **plain**
+`WHOLE_CLASS` `TeachingRequirement` -- "plain" (Decision #34's editable
+predicate, corrected and finalized here) means: its `participant_group`
+resolves to role `WHOLE_CLASS`; `split_group_id is None`; `block_policy`
+is the default `FLEXIBLE` with no explicit `block_sizes`;
+`distribution_policy` is the domain default; `time_preferences == ()`;
+`resource_requirement is None`; and **zero** `FixedPlacement` objects
+reference it (checked separately, since `FixedPlacement` is a distinct
+domain object, not a `TeachingRequirement` field). Any one violation
+makes a requirement advanced/read-only for this service; update/delete
+reject it outright rather than normalizing or stripping the advanced
+feature. Natural IDs are backend-generated, opaque, and never truncated
+(`f"req_{uuid4().hex}"`, a full 32-hex-character UUID4, via an
+injectable `id_factory` for deterministic tests) -- never a client-
+supplied ID, never a DB counter. The dedicated
+`TeachingAssignmentRepository` port (not generic CRUD) and its
+`SqlAlchemyTeachingAssignmentRepository` adapter serialize every
+configuration write through a `SELECT ... FOR UPDATE` on the target
+`AcademicYear` row (acquired in a short, ordinary transaction), reload
+the authoritative current configuration under that lock, and re-run the
+same pure validation used for the earlier fast-fail check
+(`application/teaching_assignment_rules.py`) authoritatively against
+that fresh reload before writing -- this is the same lock
+`GenerateScheduleService`'s final persist step now also acquires (see
+below), so the two write paths can never race each other, and it closes
+the pre-existing concurrent-duplicate-create race too, with no new
+database `UNIQUE` constraint. `GenerateScheduleService` still opens no
+DB session/transaction across CP-SAT solving (Owner Decision 4/#31
+unchanged); only immediately before its final persist does it open a
+transaction, lock the same `AcademicYear` row, reload the current
+configuration, and compare it (by the `SchedulingProblem` dataclass's
+own structural equality) against the exact configuration the solver
+used -- a mismatch aborts with zero rows persisted and a new, retryable
+`ConfigurationChangedDuringGenerationError`; a match re-checks the
+Decision #35 schedule-exists gate under the same lock before persisting
+and committing. Save-time validation only blocks a write on a *newly
+introduced* preflight error (diffing preflight against the pre-write
+baseline); `TEACHER_OVERLOADED` and `CLASS_OCCUPANCY_MISMATCH` are
+treated as non-blocking warnings returned to the caller, so an admin's
+ordinary mid-configuration incompleteness never blocks an otherwise-
+valid save. **No schema change was needed or made -- Alembic head is
+still `01b2ae564170`, unchanged.** This slice implements no HTTP write
+routes, no read/workload projection, and no frontend/React Router
+changes -- those remain **Phase 3C.2b, not started.** Test gate for
+3C.2a: 27 new pure application-level tests
+(`tests/test_teaching_assignment_service.py`, no DB) plus 8 new
+real-PostgreSQL persistence/concurrency tests
+(`tests_web/test_teaching_assignment_repository.py`, including a
+genuine `threading.Barrier`-synchronized concurrent-duplicate-create
+proof and both orderings of the generation-vs-write race) all pass;
+full regression confirmed green (`pytest tests_web` 108 passed;
+`pytest tests -m "not slow"` 159 passed/5 deselected; `pytest tests -m
+slow` 5 passed; `npm test` 47 passed; `npm run build` succeeds;
+`alembic current`/`alembic check` still `01b2ae564170 (head)`, no
+drift).
+
+The next implementation slice is **Phase 3C.2b** (HTTP write
+routes/schemas and the assigned-workload read projection) -- not
+started.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

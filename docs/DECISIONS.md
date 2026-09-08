@@ -1607,3 +1607,74 @@ this implementation followed them as given.
     With Owner Decisions #33-#35 locked, **Phase 3C.1 has zero
     remaining owner decisions** -- implementation may proceed directly
     from this ADR without further product-owner input.
+
+36. **Owner Decision -- the generation-vs-config-write race is closed by
+    a short `AcademicYear` row lock plus a final reload-and-compare, no
+    config-revision schema, never a DB transaction held across CP-SAT
+    solving (Phase 3C.2a, locked, implemented on
+    `feature/phase-3c2a-teaching-assignment-backend`, pending review/
+    commit).** Phase 3C.2's reconnaissance (informative note above
+    Decision #35) identified a real race: `GenerateScheduleService`
+    loads the scheduling configuration, solves (which can take seconds),
+    and only then persists -- if a Phase 3C.2 configuration write lands
+    in between, the persisted `ScheduleVersion` would silently reflect a
+    configuration that was never actually solved. Explicitly rejected
+    resolutions: a config-revision/schema counter; a snapshot/version
+    model; a generation-in-progress table/state; an advisory lock held
+    across the whole solve; a long-lived SQLAlchemy session spanning the
+    solver call; silently accepting the stale result as an MVP
+    limitation (unlike Decision #35's *display*-staleness, this would be
+    a *correctness* defect -- persisting a schedule that does not match
+    what was solved).
+
+    **The locked mechanism**: every Phase 3C configuration-write
+    transaction (`SqlAlchemyTeachingAssignmentRepository.create`/
+    `update`/`delete`) and `GenerateScheduleService`'s final persist step
+    (`SqlAlchemyScheduleVersionRepository.persist_initial_version`)
+    serialize through the *same* single primitive -- a `SELECT ...
+    FOR UPDATE` on the target `AcademicYear` row, acquired only inside a
+    short, ordinary transaction, never held across CP-SAT solving.
+    Generation's flow: load the configuration -> preflight -> solve (no
+    open session/transaction across this step) -> verify -> open a new
+    transaction -> lock the `AcademicYear` row -> reload the current
+    scheduling configuration under that lock -> compare it, by plain
+    dataclass equality, against the exact configuration the solver used
+    -> if different, roll back and raise a new, retryable
+    `ConfigurationChangedDuringGenerationError` (zero rows persisted) ->
+    if unchanged, recheck the Decision #35 schedule-exists gate (not
+    solely trusting the earlier pre-solve precheck), then persist and
+    commit while still holding the lock. Every Phase 3C.2 write
+    (`create`/`update`/`delete`) acquires the identical row lock first,
+    then reloads and re-validates the configuration authoritatively
+    under that lock (the same pure `application/`-owned rule functions
+    used for an earlier, un-locked fast-fail check, packaged as a
+    `Callable[[SchedulingProblem], None]` so the two checks can never
+    diverge) before writing -- so a writer that acquires the lock while
+    generation is mid-solve simply blocks until generation's commit
+    releases it, then observes the just-persisted schedule and is
+    rejected under Decision #35's existing `ConfigurationLockedError`
+    gate; a writer that lands and commits first is what generation's own
+    reload-and-compare then detects and aborts on. The identical lock
+    also serializes the pre-existing duplicate-create race (two
+    concurrent creates of the same `(teacher, participant_group,
+    activity)` triple) without any new database `UNIQUE` constraint.
+
+    **Why plain dataclass equality suffices**: `SchedulingProblem` is
+    already an immutable, `@dataclass(frozen=True)` tree of frozen
+    dataclasses and tuples with an auto-generated structural `__eq__` --
+    comparing the freshly-reloaded configuration against the exact
+    object the solver ran against needs no bespoke fingerprint/hash
+    function; any actual difference in any field, at any depth, makes
+    the two unequal.
+
+    **Explicitly rejected for this decision** (restated for
+    emphasis): no config-revision column or schema model of any kind;
+    no snapshot/version table; no generation-in-progress marker; no
+    advisory lock spanning the solve; no long-lived session across
+    solving; no silent acceptance of a stale persisted schedule as an
+    MVP limitation.
+
+    **Scope note**: this decision closes the concurrency-correctness
+    half of Phase 3C.2 (3C.2a). It implements no HTTP write routes, no
+    read/workload projection, and no frontend -- those remain Phase
+    3C.2b and later, not started.

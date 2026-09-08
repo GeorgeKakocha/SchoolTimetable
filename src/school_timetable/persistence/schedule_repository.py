@@ -30,6 +30,20 @@ attribute, only the natural school/year IDs the caller already
 supplied. Every other integrity violation propagates as itself -- a
 genuine defect, never silently reinterpreted.
 
+`persist_initial_version` additionally implements Owner Decision #36
+(Phase 3C.2): immediately before the insert sequence above, it acquires
+a `SELECT ... FOR UPDATE` row lock on the `AcademicYear` (the same lock
+`SqlAlchemyTeachingAssignmentRepository`'s config-write transactions
+take), reloads the current authoritative `SchedulingProblem` under that
+lock, and compares it against the `problem` the solver actually solved
+-- if a configuration write committed in the DB-free window between
+`GenerateScheduleService` loading `problem` and this call, the two
+differ and `ConfigurationChangedDuringGenerationError` is raised
+instead of persisting, with no `Schedule`/`ScheduleVersion`/
+`ScheduleEntry` row ever created. The lock is held only for this short
+transaction -- never across the CP-SAT solve, which has already
+finished by the time this method is even called.
+
 `get_active_schedule` re-derives each `ScheduleEntry`'s
 `activity_id`/`teacher_id`/`participant_group_id`/`resource_id`/
 `class_sections` by joining back to the referenced configuration
@@ -53,6 +67,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from school_timetable.application.errors import (
+    ConfigurationChangedDuringGenerationError,
     ScheduleAlreadyExistsError,
     SchedulingProblemNotFoundError,
 )
@@ -158,6 +173,7 @@ class SqlAlchemyScheduleVersionRepository:
         self,
         school_natural_id: str,
         academic_year_natural_id: str,
+        problem: SchedulingProblem,
         entries: tuple[ScheduleEntry, ...],
         solver_status: SolverStatus,
         total_soft_penalty: int,
@@ -167,6 +183,26 @@ class SqlAlchemyScheduleVersionRepository:
         session = self._session_factory()
         try:
             year_id = _resolve_year_id(session, school_natural_id, academic_year_natural_id)
+
+            # Owner Decision #36: acquire a short, exclusive row lock on
+            # this AcademicYear -- shared with every Phase 3C.2
+            # configuration-write transaction (see
+            # `SqlAlchemyTeachingAssignmentRepository`) -- then, while
+            # holding it, reload the CURRENT authoritative configuration
+            # and compare it against `problem` (the exact configuration
+            # the solver actually solved). The lock is acquired only
+            # here, immediately before this short persist transaction --
+            # never across the solve that already finished before this
+            # method was even called.
+            session.execute(
+                select(orm.AcademicYear.id).where(orm.AcademicYear.id == year_id).with_for_update()
+            )
+            current_problem = SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
+                school_natural_id, academic_year_natural_id,
+            )
+            if current_problem != problem:
+                session.rollback()
+                raise ConfigurationChangedDuringGenerationError(school_natural_id, academic_year_natural_id)
 
             day_ids = _natural_to_surrogate(session, orm.Day, year_id)
             period_ids = _natural_to_surrogate(session, orm.Period, year_id)

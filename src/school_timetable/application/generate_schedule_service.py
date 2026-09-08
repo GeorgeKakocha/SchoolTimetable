@@ -15,7 +15,12 @@ both repository ports open and close their own short session internally
 (Owner Decision 4) and this service never touches a `Session` directly
 -- the window between the two repository calls (preflight, solve,
 verify) is pure, DB-free application code by construction, since
-nothing in that window imports anything DB-aware.
+nothing in that window imports anything DB-aware. Owner Decision #36
+(Phase 3C.2) closes the resulting configuration-write-vs-generation
+race without touching this constraint: `persist_initial_version` itself
+re-locks/reloads/compares immediately before persisting, entirely
+inside its own short transaction -- this service still never sees a
+`Session`.
 
 This module never wires a concrete adapter -- callers (a future Phase
 3A3.4 composition root, or a test) construct
@@ -144,10 +149,19 @@ class GenerateScheduleService:
         # solver returned OPTIMAL/FEASIBLE, and the independent verifier
         # passed. `random_seed` is the actual invocation's value,
         # persisted as audit metadata only -- it does not, by itself,
-        # guarantee deterministic reproducibility.
+        # guarantee deterministic reproducibility. `problem` (the exact
+        # configuration the solver actually solved) is passed through so
+        # the repository can perform Owner Decision #36's final
+        # lock-protected reload-and-compare immediately before
+        # persisting -- if a configuration write committed in the
+        # DB-free window between (B) and here, this call raises
+        # `ConfigurationChangedDuringGenerationError` instead of
+        # persisting a schedule that no longer matches the live
+        # configuration.
         return self._schedule_repository.persist_initial_version(
             school_natural_id,
             academic_year_natural_id,
+            problem,
             result.entries,
             result.status,
             result.total_soft_penalty,

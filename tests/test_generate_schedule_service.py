@@ -59,6 +59,7 @@ class _FakeScheduleRepository:
         self,
         school_natural_id,
         academic_year_natural_id,
+        problem,
         entries,
         solver_status,
         total_soft_penalty,
@@ -70,6 +71,7 @@ class _FakeScheduleRepository:
         self.persist_calls.append({
             "school_natural_id": school_natural_id,
             "academic_year_natural_id": academic_year_natural_id,
+            "problem": problem,
             "entries": entries,
             "solver_status": solver_status,
             "total_soft_penalty": total_soft_penalty,

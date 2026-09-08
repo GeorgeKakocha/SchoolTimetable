@@ -112,6 +112,7 @@ def test_persist_then_read_back_exact_order_and_full_reconstruction(db):
     persisted = repo.persist_initial_version(
         problem.school.id,
         problem.academic_year.id,
+        problem,
         result.entries,
         result.status,
         result.total_soft_penalty,
@@ -199,7 +200,7 @@ def test_persist_initial_version_raises_not_found_for_unknown_school_year(db):
 
     with pytest.raises(SchedulingProblemNotFoundError):
         repo.persist_initial_version(
-            "no-such-school", "no-such-year", (), SolverStatus.OPTIMAL, 0, 0.0, None,
+            "no-such-school", "no-such-year", None, (), SolverStatus.OPTIMAL, 0, 0.0, None,
         )
 
 
@@ -221,6 +222,7 @@ def test_persist_initial_version_rolls_back_completely_on_unrelated_integrity_vi
         repo.persist_initial_version(
             problem.school.id,
             problem.academic_year.id,
+            problem,
             result.entries,
             SolverStatus.INFEASIBLE,  # never a valid persisted status
             result.total_soft_penalty,
@@ -243,13 +245,13 @@ def test_persist_initial_version_second_call_raises_schedule_already_exists(db):
 
     repo = SqlAlchemyScheduleVersionRepository(session_factory)
     first = repo.persist_initial_version(
-        problem.school.id, problem.academic_year.id, result.entries, result.status,
+        problem.school.id, problem.academic_year.id, problem, result.entries, result.status,
         result.total_soft_penalty, 2.5, None,
     )
 
     with pytest.raises(ScheduleAlreadyExistsError) as exc_info:
         repo.persist_initial_version(
-            problem.school.id, problem.academic_year.id, result.entries, result.status,
+            problem.school.id, problem.academic_year.id, problem, result.entries, result.status,
             result.total_soft_penalty, 2.5, None,
         )
 
@@ -314,7 +316,7 @@ def test_repository_closes_every_session_it_opens(db):
 
     assert repo.get_active_schedule(problem.school.id, problem.academic_year.id) is None
     repo.persist_initial_version(
-        problem.school.id, problem.academic_year.id, result.entries, result.status,
+        problem.school.id, problem.academic_year.id, problem, result.entries, result.status,
         result.total_soft_penalty, 2.5, None,
     )
     repo.get_active_schedule(problem.school.id, problem.academic_year.id)

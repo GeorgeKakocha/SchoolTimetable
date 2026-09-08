@@ -310,14 +310,18 @@ local development PostgreSQL. See `PROJECT_STATE.md` for the full
 Phase 3B.3/3B.4 proof and manual browser review record.
 
 Scheduling-configuration admin input (formerly just a forward-looking
-note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#35; 3C.1
-is CLOSED and merged to `main` at commit `8b5b606`; 3C.2 onward NOT
-started** -- see below.
+note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#36; 3C.1
+is CLOSED and merged to `main` at commit `8b5b606`; 3C.2a
+(application/persistence backend + generation-vs-config-write
+concurrency correctness) is implemented on branch
+`feature/phase-3c2a-teaching-assignment-backend`, pending review/commit
+-- not merged, not pushed; 3C.2b onward NOT started** -- see below.
 
 ## Phase 3C architecture direction
 
-**3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2
-onward remains design-locked, not implemented.**
+**3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
+is implemented on a feature branch pending review; 3C.2b onward remains
+design-locked, not implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -365,18 +369,46 @@ api/  →  application/ (new write services)  →  new write ports
   depends on `role` yet (the current frontend doesn't even mirror
   `participant_groups` from `/config`), confirmed by an unmodified,
   passing frontend test/build gate.
-- **`application/`** (3C.2, NOT implemented): a new, narrowly-scoped
-  write use case (shaped like `GenerateScheduleService`, not a generic
-  repository) for create/update/delete of plain `WHOLE_CLASS`
-  `TeachingRequirement`s (Decision #34), enforcing the Decision #35
-  schedule-exists write gate by reusing the existing
-  `ScheduleVersionRepository.get_active_schedule` port method -- no new
-  repository method for that specific check. New application-level
-  errors (e.g. duplicate assignment, `ConfigurationLockedError` -> 409)
-  will follow the existing `SchedulingProblemNotFoundError`/
-  `ScheduleAlreadyExistsError` pattern (Decisions #29, #31), never a
-  raw SQLAlchemy/HTTP exception.
-- **`api/`** write routes/schemas for 3C.2 (NOT implemented): composed
+- **`application/`** (3C.2a, implemented on feature branch, pending
+  review): `TeachingAssignmentService` -- a new, narrowly-scoped write
+  use case (shaped like `GenerateScheduleService`, not a generic
+  repository) for create/update/delete of **plain** `WHOLE_CLASS`
+  `TeachingRequirement`s (Decision #34, predicate finalized/corrected
+  in #36 to explicitly include "zero referencing `FixedPlacement`
+  objects"), enforcing the Decision #35 schedule-exists write gate by
+  reusing the existing `ScheduleVersionRepository.get_active_schedule`
+  port method as a fast un-locked precheck -- no new repository method
+  for that specific check. Pure validation rules live in
+  `application/teaching_assignment_rules.py` (never SQLAlchemy), packaged
+  as a `Callable[[SchedulingProblem], None]` so the identical logic runs
+  both as the fast precheck and, again, as the authoritative recheck
+  the new `TeachingAssignmentRepository` port invokes under its lock.
+  New application-level errors (`TeachingAssignmentNotFoundError`,
+  `NonWholeClassTargetError`, `AdvancedRequirementNotEditableError`,
+  `DuplicateTeachingAssignmentError`, `ConfigurationLockedError`,
+  `ConfigurationChangedDuringGenerationError`, `InvalidTeachingAssignmentError`,
+  `UnknownReferenceError`) follow the existing
+  `SchedulingProblemNotFoundError`/`ScheduleAlreadyExistsError` pattern
+  (Decisions #29, #31), never a raw SQLAlchemy/HTTP exception.
+- **`persistence/`** (3C.2a, implemented on feature branch, pending
+  review): `SqlAlchemyTeachingAssignmentRepository`
+  (`persistence/teaching_assignment_repository.py`) implements the new
+  port -- every method opens its own short session (never held across a
+  solve), takes a `SELECT ... FOR UPDATE` on the target `AcademicYear`
+  row, reloads the current `SchedulingProblem` under that lock, and
+  invokes the caller's `validate` callable against it before writing
+  (Decision #36). `SqlAlchemyScheduleVersionRepository.persist_initial_version`
+  (`schedule_repository.py`) now takes the exact `SchedulingProblem` the
+  solver used as a new parameter and, immediately before its existing
+  atomic Schedule/Version/Entry insert, acquires the identical
+  `AcademicYear` row lock, reloads the current configuration, and
+  compares it (frozen-dataclass structural equality) against that
+  parameter -- a mismatch rolls back and raises
+  `ConfigurationChangedDuringGenerationError` with nothing persisted; a
+  match proceeds to its unchanged commit-while-locked behavior. No
+  schema change was needed for any of this -- Alembic head is still
+  `01b2ae564170`.
+- **`api/`** write routes/schemas for 3C.2b (NOT implemented): composed
   the same way `dependencies.py` already composes read routes -- never
   a second composition root.
 - **`frontend/`** (3C.3, NOT implemented): a second meaningful page
@@ -385,6 +417,6 @@ api/  →  application/ (new write services)  →  new write ports
   revisiting; Redux/Zustand remain unjustified in the meantime. No
   `ParticipantGroup` CRUD/write UI exists yet.
 
-See `DECISIONS.md` #33-#35 for the full locked rationale and
+See `DECISIONS.md` #33-#36 for the full locked rationale and
 `PROJECT_STATE.md` for the 3C.1 implementation record and the
 recommended 3C.1-3C.5 sequencing.
