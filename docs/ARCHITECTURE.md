@@ -322,17 +322,19 @@ is complete; 3C.3a (frontend routing + shared shell + read-only
 Teaching Assignments page) is IMPLEMENTED, REVIEWED (manually
 browser-reviewed by the product owner), COMMITTED, and MERGED to
 `main` at commit `1499377` -- 3C.3a CLOSED; 3C.3b (create/edit/delete
-UI) is implemented on branch
-`feature/phase-3c3b-teaching-assignment-mutations`, pending review --
-not yet committed, not merged, not pushed** -- see below.
+UI) is IMPLEMENTED, REVIEWED (manually browser-reviewed by the product
+owner against a real unlocked review dataset), COMMITTED, and MERGED to
+`main` at commit `f608b7d` -- 3C.3b CLOSED; **Phase 3C.3 (Teaching
+Assignments frontend milestone) is complete** -- see below.
 
 ## Phase 3C architecture direction
 
 **3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
 is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is merged to
 `main` at commit `9570358` and CLOSED; 3C.3a is merged to `main` at
-commit `1499377` and CLOSED; 3C.3b is implemented on a feature branch,
-pending review; 3C.4 onward remains design-locked, not implemented.**
+commit `1499377` and CLOSED; 3C.3b is merged to `main` at commit
+`f608b7d` and CLOSED; 3C.4 onward remains design-locked, not
+implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -486,9 +488,8 @@ api/  →  application/ (new write services)  →  new write ports
   banner, no create/edit/delete controls yet. Redux/Zustand remain
   unjustified; state stays component-local hooks, matching
   `TimetablePage`'s existing pattern exactly.
-- **`frontend/`** (3C.3b, implemented on branch
-  `feature/phase-3c3b-teaching-assignment-mutations`, pending review):
-  adds create/edit/delete for plain, editable `WHOLE_CLASS` assignments
+- **`frontend/`** (3C.3b, implemented, reviewed, merged to `main` at
+  commit `f608b7d`): adds create/edit/delete for plain, editable `WHOLE_CLASS` assignments
   only -- advanced rows (`editable: false`) never gain mutation
   controls, and a global `configuration_locked` separately disables
   (never hides) Edit/Delete on plain rows, sharing the one existing

@@ -1334,9 +1334,9 @@ this implementation followed them as given.
     `01b2ae564170`.
 
     **Implementation note (Phase 3C.3b, no new owner decision --
-    implemented on branch
-    `feature/phase-3c3b-teaching-assignment-mutations`, pending review
-    -- not yet committed, not merged, not pushed).** Pure frontend
+    IMPLEMENTED, REVIEWED (manually browser-reviewed by the product
+    owner against a real unlocked review dataset), COMMITTED, and
+    MERGED to `main` at commit `f608b7d`; 3C.3b CLOSED).** Pure frontend
     consumer of the write contract Decisions #34-#36 already locked --
     no new backend/schema/owner decision. Create/edit/delete now exists
     for plain, editable `WHOLE_CLASS` assignments only, via a right-side
@@ -1357,6 +1357,8 @@ this implementation followed them as given.
     contract; `detail` stays a safe string always. State remains
     component-local hooks; no Redux/Zustand/query library. No
     backend/schema change; Alembic head unchanged at `01b2ae564170`.
+    **With 3C.3a and 3C.3b both CLOSED, Phase 3C.3 (Teaching
+    Assignments frontend milestone) is complete.**
 
     With Owner Decisions 1-10 locked, **Phase 3B.1 has zero remaining
     owner decisions** -- implementation may proceed directly from this

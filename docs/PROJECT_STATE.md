@@ -1229,9 +1229,9 @@ presentation copy and may be renamed in a later UX polish pass -- not
 changed during this closure.
 
 **Phase 3C.3b (create/edit/delete interaction, warnings/error UX
-polish) is implemented on branch
-`feature/phase-3c3b-teaching-assignment-mutations`, pending review --
-not yet committed, not merged, not pushed.** Frontend-only, consuming
+polish) is IMPLEMENTED, REVIEWED, COMMITTED (`f608b7d` "feat: add
+teaching assignment mutations"), and MERGED to `main` -- not pushed.
+Phase 3C.3b is CLOSED.** Frontend-only, consuming
 the already-merged 3C.2a/3C.2b write/read backend contract
 (`docs/DECISIONS.md` #34-#36) exactly as designed -- **no backend or
 schema change**, Alembic head unchanged at `01b2ae564170`, no drift.
@@ -1290,7 +1290,50 @@ Frontend test gate: 133 tests passing (the pre-existing 76 plus 57 new
 including accessibility and the stale-projection-safety scenarios);
 `npm run build` succeeds. Backend regression reconfirmed unaffected
 (`pytest tests_web` 136 passed; `pytest tests -m "not slow"` 180
-passed/5 deselected).
+passed/5 deselected). Alembic still `01b2ae564170 (head)`, no drift.
+
+A follow-up visual-polish pass (no mutation-semantics change) fixed a
+real header-collision readability defect the manual review caught:
+"WEEKLY PERIODS"/"CONFIGURATION" ran into each other because the
+shared `.numeric-cell` rule carried `white-space: nowrap` onto the
+header too -- scoped to the data cell only now, so the longer header
+label wraps within its own column instead. Column widths were
+rebalanced to sum to exactly 100% (Teacher 14% / Class-Group 20% /
+Activity 17% / Weekly periods 11% / Configuration 26% / Actions 12%,
+previously summing past 100%). Row Edit/Delete buttons gained a
+`.action-button-delete` variant -- Edit stays the existing restrained
+neutral style, Delete is a quiet destructive affordance (muted rose,
+not bright red, by default) that only reads clearly destructive on
+hover/focus; "Add assignment" remains the page's one strong primary
+action throughout. The inline delete-confirmation's `min-width` was
+removed (it could force it wider than its fixed-layout Actions column)
+so it now always stays contained inside its own cell. All 133 tests
+remained green; no test changes were needed.
+
+**Manual browser review (product owner) PASSED**, performed against a
+local-only, second, deliberately unlocked dev dataset
+(`synthetic-review-school`/`ay-review-2026`, seeded via the existing
+TEST-ONLY `tests_web/support/problem_writer.py` mechanism against the
+same `fixtures/valid_fixture.py` shape as the canonical pilot --
+**not** a production seeding endpoint, never committed) so the
+Add/Edit/Delete UI could be exercised unlocked without touching the
+canonical, genuinely-locked `synthetic-school`/`ay-2026` pilot
+schedule/history, which was confirmed untouched throughout. Confirmed:
+Add assignment enabled unlocked; advanced rows stayed Read-only; plain
+rows exposed Edit/Delete; the Add drawer opened correctly and the Edit
+drawer prepopulated correctly; a real create (Teacher German -> 9-A ->
+German) and a real edit (weekly periods -> 2) both saved successfully,
+with the authoritative post-write refresh showing the updated Teacher
+German workload; a duplicate-create attempt correctly showed the
+inline `"This teacher already has an assignment for this class and
+activity."` message; Delete required an explicit "Confirm delete"
+click (never one-click) and the confirmed delete removed the row; the
+header-collision fix and restrained Delete styling were both accepted.
+
+**With 3C.3a and 3C.3b both CLOSED, Phase 3C.3 (Teaching Assignments
+frontend milestone) is complete.** Next product slice: to be defined
+after Phase 3C.3 closure (see "Recommended sequencing" below for the
+already-locked 3C.4/3C.5 direction).
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**
