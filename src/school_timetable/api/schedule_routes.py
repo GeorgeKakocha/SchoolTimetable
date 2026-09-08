@@ -25,6 +25,12 @@ Error mapping (locked, no remaining owner decisions):
   "SCHEDULE_ALREADY_EXISTS", "detail": "..."}`.
 - `ScheduleInfeasibleError` -> 409, `{"code": "SCHEDULE_INFEASIBLE",
   "detail": "..."}`.
+- `ConfigurationChangedDuringGenerationError` (Owner Decision #36, Phase
+  3C.2b) -> 409, `{"code": "CONFIGURATION_CHANGED_DURING_GENERATION",
+  "detail": "..."}` -- a deliberate, retryable correctness condition (a
+  Phase 3C.2 configuration write committed between this generation's
+  load and its final lock-protected recheck; zero rows were persisted),
+  never allowed to fall through as a generic 500.
 - `InvalidSchedulingConfigurationError` -> 422, `{"code":
   "INVALID_CONFIGURATION", "detail": "...", "errors": [...]}` -- the
   validator's own diagnostics, in their original order.
@@ -74,6 +80,7 @@ from school_timetable.api.serializer import (
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.errors import (
     ClassSectionNotFoundError,
+    ConfigurationChangedDuringGenerationError,
     InvalidSchedulingConfigurationError,
     ScheduleAlreadyExistsError,
     ScheduleInfeasibleError,
@@ -128,6 +135,14 @@ def generate_schedule(
             content=GenerationErrorResponse(
                 code="SCHEDULE_INFEASIBLE",
                 detail="No feasible schedule exists for this school and academic year",
+            ).model_dump(),
+        )
+    except ConfigurationChangedDuringGenerationError:
+        return JSONResponse(
+            status_code=409,
+            content=GenerationErrorResponse(
+                code="CONFIGURATION_CHANGED_DURING_GENERATION",
+                detail="Scheduling configuration changed during generation; retry generation",
             ).model_dump(),
         )
     except InvalidSchedulingConfigurationError as exc:

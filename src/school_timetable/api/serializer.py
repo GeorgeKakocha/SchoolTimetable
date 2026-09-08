@@ -1,5 +1,5 @@
 """Explicit domain/application -> API mapping (Phase 3A2.4, extended
-Phase 3A3.4).
+Phase 3A3.4, Phase 3B.1, and Phase 3C.2b).
 
 One pure function, `config_response_from_problem`, converting a frozen
 `SchedulingProblem` into the hand-designed `SchedulingConfigResponse`
@@ -24,6 +24,7 @@ from __future__ import annotations
 from school_timetable.api.schemas import (
     AcademicYearResponse,
     ActiveScheduleResponse,
+    ActivityOptionResponse,
     ActivityResponse,
     ClassSectionResponse,
     ClassTimetableCellResponse,
@@ -45,14 +46,24 @@ from school_timetable.api.schemas import (
     SchedulingConfigResponse,
     SchoolResponse,
     TeacherAvailabilityResponse,
+    TeacherOptionResponse,
     TeacherResponse,
+    TeacherWorkloadResponse,
+    TeachingAssignmentClassSectionResponse,
+    TeachingAssignmentResponse,
+    TeachingAssignmentsProjectionResponse,
     TeachingRequirementResponse,
     TimePreferenceResponse,
     TimeSlotResponse,
     ValidationDiagnosticResponse,
+    WholeClassTargetResponse,
 )
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.teaching_assignments_projection_models import (
+    TeachingAssignmentItem,
+    TeachingAssignmentsProjectionView,
+)
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import TeachingRequirement
 from school_timetable.domain.result import ScheduleEntry
@@ -251,3 +262,64 @@ def _class_timetable_entry_response(entry: ClassTimetableEntry) -> ClassTimetabl
         reserved_block_id=entry.reserved_block_id,
         resource_id=entry.resource_id,
     )
+
+
+# -- Teaching Assignments API (Phase 3C.2b). -----------------------------
+
+
+def teaching_assignments_projection_response_from_view(
+    view: TeachingAssignmentsProjectionView,
+) -> TeachingAssignmentsProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- all
+    editability classification, canonical WHOLE_CLASS-target mapping,
+    workload totaling, and ordering already happened in
+    `TeachingAssignmentsProjectionService`. This function never re-sorts,
+    re-groups, or re-derives anything; it preserves every list's order
+    exactly."""
+    return TeachingAssignmentsProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        assignments=tuple(_teaching_assignment_response(a) for a in view.assignments),
+        teachers=tuple(TeacherOptionResponse(id=t.id, name=t.name) for t in view.teachers),
+        whole_class_targets=tuple(
+            WholeClassTargetResponse(
+                class_section_id=target.class_section_id,
+                class_section_name=target.class_section_name,
+                participant_group_id=target.participant_group_id,
+                participant_group_name=target.participant_group_name,
+            )
+            for target in view.whole_class_targets
+        ),
+        activities=tuple(ActivityOptionResponse(id=a.id, name=a.name) for a in view.activities),
+        teacher_workloads=tuple(
+            TeacherWorkloadResponse(
+                teacher_id=w.teacher_id, teacher_name=w.teacher_name,
+                total_weekly_periods=w.total_weekly_periods,
+            )
+            for w in view.teacher_workloads
+        ),
+    )
+
+
+def _teaching_assignment_response(item: TeachingAssignmentItem) -> TeachingAssignmentResponse:
+    return TeachingAssignmentResponse(
+        id=item.id,
+        teacher_id=item.teacher_id,
+        teacher_name=item.teacher_name,
+        activity_id=item.activity_id,
+        activity_name=item.activity_name,
+        participant_group_id=item.participant_group_id,
+        participant_group_name=item.participant_group_name,
+        participant_group_role=item.participant_group_role,
+        class_sections=tuple(
+            TeachingAssignmentClassSectionResponse(id=c.id, name=c.name) for c in item.class_sections
+        ),
+        weekly_periods=item.weekly_periods,
+        editable=item.editable,
+        advanced_reasons=item.advanced_reasons,
+    )
+
+
+def validation_diagnostic_responses_from_warnings(
+    warnings: tuple[ValidationError, ...],
+) -> tuple[ValidationDiagnosticResponse, ...]:
+    return tuple(validation_diagnostic_response_from_error(w) for w in warnings)

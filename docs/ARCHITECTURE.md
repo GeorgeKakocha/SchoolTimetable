@@ -314,14 +314,18 @@ note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#36; 3C.1
 is CLOSED and merged to `main` at commit `8b5b606`; 3C.2a
 (application/persistence backend + generation-vs-config-write
 concurrency correctness) is IMPLEMENTED, REVIEWED, COMMITTED, and
-MERGED to `main` at commit `2f4f9e6` -- 3C.2a CLOSED; 3C.2b onward NOT
-started** -- see below.
+MERGED to `main` at commit `2f4f9e6` -- 3C.2a CLOSED; 3C.2b (Teaching
+Assignments HTTP API + read/workload projection) is implemented on
+branch `feature/phase-3c2b-teaching-assignment-api`, pending
+review/commit -- not merged, not pushed; Phase 3C.3 (configuration
+frontend) NOT started** -- see below.
 
 ## Phase 3C architecture direction
 
 **3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
-is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b onward remains
-design-locked, not implemented.**
+is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is implemented
+on a feature branch pending review; 3C.3 onward remains design-locked,
+not implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -408,14 +412,59 @@ api/  →  application/ (new write services)  →  new write ports
   match proceeds to its unchanged commit-while-locked behavior. No
   schema change was needed for any of this -- Alembic head is still
   `01b2ae564170`.
-- **`api/`** write routes/schemas for 3C.2b (NOT implemented): composed
-  the same way `dependencies.py` already composes read routes -- never
-  a second composition root.
+- **`application/`** (3C.2b, implemented on feature branch, pending
+  review): `TeachingAssignmentsProjectionService`
+  (`application/teaching_assignments_projection_service.py`) -- a new,
+  dedicated, read-only projection service, deliberately kept separate
+  from the write-only `TeachingAssignmentService`, mirroring the
+  existing `ClassTimetableService`/`GenerateScheduleService` read/write
+  split. Depends only on the two existing repository ports; builds its
+  page-model view (`teaching_assignments_projection_models.py`) purely
+  in memory from one `SchedulingProblemRepository.load_by_school_and_year`
+  call. Reuses `teaching_assignment_rules.plain_reasons` directly for
+  `editable`/`advanced_reasons` per requirement -- no reimplemented
+  predicate, so `FixedPlacement` reuse is automatic -- and
+  `ScheduleVersionRepository.get_active_schedule(...) is not None`
+  directly for `configuration_locked` -- the same Decision #35 gate, no
+  new port method. Every list preserves `SchedulingProblemRepository`'s
+  existing ordinal-ordered tuple order; the authoritative
+  `whole_class_targets` mapping is built strictly from
+  `ParticipantGroup.role`/`class_sections`, never a name/count
+  heuristic, and fails soft (omits) when the Decision #33 canonical-
+  WHOLE_CLASS invariant is broken for a class, rather than guessing.
+- **`api/`** (3C.2b, implemented on feature branch, pending review): a
+  new `api/teaching_assignment_routes.py` composed the same way
+  `dependencies.py` already composes every other route -- never a
+  second composition root -- adding `GET`/`POST
+  /schools/{school_id}/years/{year_id}/teaching-assignments` and
+  `PUT`/`DELETE .../teaching-assignments/{requirement_id}` (no `PATCH`,
+  no separate workload endpoint). `POST`/`PUT` return only `{"id",
+  "warnings"}`; `DELETE` returns `{"deleted_id", "warnings"}` at 200
+  (never 204) -- none reload/return the full page projection, since the
+  caller re-fetches the unified `GET` after any mutation anyway. New
+  hand-designed Pydantic request/response models live in
+  `api/schemas.py`; new pure mapping functions live in
+  `api/serializer.py`; `api/dependencies.py` gained
+  `get_teaching_assignment_service`/
+  `get_teaching_assignments_projection_service`, both session-factory-
+  backed against `SessionLocal` exactly like
+  `get_generate_schedule_service` -- never a request-scoped `Session`,
+  so `SqlAlchemyTeachingAssignmentRepository`'s own Decision #36
+  lock/reload/validate transactions stay entirely its own. Separately,
+  `api/schedule_routes.py`'s existing `generate_schedule` handler
+  gained one new mapping: `ConfigurationChangedDuringGenerationError`
+  (Decision #36) was previously uncaught there and would have leaked as
+  a generic 500 the first time it could actually occur in production;
+  it now maps to 409 `CONFIGURATION_CHANGED_DURING_GENERATION`, reusing
+  the existing `GenerationErrorResponse` shape -- no other generate
+  error semantics changed. No persistence schema change; Alembic head
+  unchanged at `01b2ae564170`.
 - **`frontend/`** (3C.3, NOT implemented): a second meaningful page
   (Teaching Assignments) will make Phase 3B's no-Router decision (#32
   Owner Decision 10, conditioned on there being only one page) worth
   revisiting; Redux/Zustand remain unjustified in the meantime. No
-  `ParticipantGroup` CRUD/write UI exists yet.
+  `ParticipantGroup` CRUD/write UI exists yet; the frontend remains
+  genuinely untouched by 3C.2b.
 
 See `DECISIONS.md` #33-#36 for the full locked rationale and
 `PROJECT_STATE.md` for the 3C.1 implementation record and the

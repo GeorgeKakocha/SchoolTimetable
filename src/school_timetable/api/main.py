@@ -5,7 +5,9 @@ executes a query; it never fakes success). Phase 3A2.4 adds the first
 domain/business endpoint, `GET /schools/{school_id}/years/{year_id}/config`
 (read-only scheduling configuration) -- see `api/config_routes.py`.
 Phase 3A3.4 adds `GET .../schedule/active` and
-`POST .../schedule/generate` -- see `api/schedule_routes.py`.
+`POST .../schedule/generate` -- see `api/schedule_routes.py`. Phase
+3C.2b adds the Teaching Assignments read projection and write routes --
+see `api/teaching_assignment_routes.py`.
 """
 from __future__ import annotations
 
@@ -18,11 +20,13 @@ from sqlalchemy.orm import Session
 
 from school_timetable.api.config_routes import router as config_router
 from school_timetable.api.schedule_routes import router as schedule_router
+from school_timetable.api.teaching_assignment_routes import router as teaching_assignment_router
 from school_timetable.persistence.db import get_session
 
 app = FastAPI(title="School Timetable API")
 app.include_router(config_router)
 app.include_router(schedule_router)
+app.include_router(teaching_assignment_router)
 
 
 class HealthResponse(BaseModel):

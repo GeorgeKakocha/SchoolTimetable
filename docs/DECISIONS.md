@@ -1678,4 +1678,65 @@ this implementation followed them as given.
     **Scope note**: this decision closes the concurrency-correctness
     half of Phase 3C.2 (3C.2a), now CLOSED. It implements no HTTP write
     routes, no read/workload projection, and no frontend -- those remain
-    **Phase 3C.2b, not started.**
+    **Phase 3C.2b**.
+
+    **Implementation note (Phase 3C.2b, no new owner decision --
+    implemented on branch `feature/phase-3c2b-teaching-assignment-api`,
+    pending review/commit).** A read-only technical contract gate
+    preceding implementation found **zero** genuine owner decisions
+    remaining: every open question (route shape, request/response
+    contracts, error-code mapping, ordering, empty/partial-state
+    behavior) resolved directly from this ADR and the codebase's
+    existing house style. The locked HTTP contract, now implemented
+    exactly as gated:
+    - `GET/POST /schools/{school_id}/years/{year_id}/teaching-assignments`
+      and `PUT/DELETE .../teaching-assignments/{requirement_id}` -- no
+      `PATCH` (the write semantics were always full-replacement); no
+      separate workload endpoint (one page-oriented `GET` projection).
+    - The `GET` projection is built by a new, dedicated, read-only
+      `TeachingAssignmentsProjectionService` (`application/`) --
+      deliberately kept separate from the write-only
+      `TeachingAssignmentService`, mirroring the existing
+      `ClassTimetableService`/`GenerateScheduleService` read/write
+      split. It reuses `teaching_assignment_rules.plain_reasons`
+      directly for `editable`/`advanced_reasons` on every requirement
+      (never a reimplemented predicate, so a `FixedPlacement` reference
+      affects editability automatically) and
+      `ScheduleVersionRepository.get_active_schedule(...) is not None`
+      directly for `configuration_locked` (the same Decision #35 gate,
+      no new port method). It returns **every** `TeachingRequirement`
+      (plain and advanced alike) plus backend-owned reference-data
+      lists (`teachers`, `activities`) and the authoritative
+      `whole_class_targets` mapping (`ClassSection` -> its canonical
+      `WHOLE_CLASS` `ParticipantGroup`, built from `role`/
+      `class_sections` alone, never a name/count heuristic; a
+      `ClassSection` whose Decision #33 invariant is broken is simply
+      omitted -- this projection is not that invariant's enforcement
+      point) -- so the frontend can never infer, reconstruct, or guess
+      any of this. `teacher_workloads` sums **every** requirement type
+      per teacher (never only editable ones), including teachers with
+      zero requirements (`total_weekly_periods: 0`).
+    - `POST`/`PUT` return only `{"id", "warnings"}`; `DELETE` returns
+      `{"deleted_id", "warnings"}` (200, never 204) -- a mutation never
+      returns the full saved-row projection, since the caller must
+      re-fetch the unified `GET` afterward anyway (workload totals,
+      ordering, and lock state may all have changed). `warnings` reuses
+      the existing `ValidationDiagnosticResponse` shape verbatim.
+    - Error mapping: `SchedulingProblemNotFoundError`/
+      `TeachingAssignmentNotFoundError` -> code-less 404s, matching the
+      existing house style exactly; `UnknownReferenceError`/
+      `NonWholeClassTargetError`/`InvalidTeachingAssignmentError` -> 422
+      with a stable `code`; `AdvancedRequirementNotEditableError`/
+      `DuplicateTeachingAssignmentError`/`ConfigurationLockedError` ->
+      409 with a stable `code` -- `SCHEDULING_CONFIGURATION_LOCKED` is
+      now the locked Decision #35 HTTP contract.
+    - Corrected an existing gap: `ConfigurationChangedDuringGenerationError`
+      (Decision #36) was previously uncaught by
+      `POST .../schedule/generate` and would have leaked as a generic
+      500 the first time it could actually occur in production. It now
+      maps to 409 `CONFIGURATION_CHANGED_DURING_GENERATION`, reusing
+      the existing `GenerationErrorResponse` shape -- no other generate
+      error semantics changed.
+    - No persistence schema change; Alembic head unchanged at
+      `01b2ae564170`. No frontend/React Router work -- Phase 3C.3 is
+      still not started.

@@ -1080,9 +1080,80 @@ slow` 5 passed; `npm test` 47 passed; `npm run build` succeeds;
 `alembic current`/`alembic check` still `01b2ae564170 (head)`, no
 drift).
 
-The next implementation slice is **Phase 3C.2b** (HTTP write
-routes/schemas and the assigned-workload read projection) -- not
-started.
+**Phase 3C.2b (Teaching Assignments HTTP API + read/workload
+projection, `DECISIONS.md` #34-#36) is implemented on branch
+`feature/phase-3c2b-teaching-assignment-api`, pending review/commit --
+not yet committed, not merged, not pushed.** A preceding read-only
+technical contract gate found zero genuine owner decisions remaining --
+every open question resolved from the already-locked ADRs and existing
+house style. A new, dedicated, read-only
+`TeachingAssignmentsProjectionService` (`application/`) -- kept
+separate from the write-only `TeachingAssignmentService`, mirroring the
+existing `ClassTimetableService`/`GenerateScheduleService` split --
+builds the `GET .../teaching-assignments` page projection from one
+`SchedulingProblemRepository.load_by_school_and_year` call plus
+`ScheduleVersionRepository.get_active_schedule` for
+`configuration_locked`; no new persistence read port was needed.
+Editability (`editable`/`advanced_reasons`) is never reimplemented --
+every requirement is passed through the existing
+`teaching_assignment_rules.plain_reasons` predicate verbatim, so a
+`FixedPlacement` reference makes an otherwise-plain requirement
+non-editable automatically. The projection returns **every**
+`TeachingRequirement` (plain and advanced alike, never just the
+editable subset), backend-owned `teachers`/`activities` reference-data
+lists, and the authoritative `whole_class_targets` mapping from each
+`ClassSection` to its canonical `WHOLE_CLASS` `ParticipantGroup` --
+built strictly from `role`/`class_sections`, never a name or
+class-count heuristic, and a `ClassSection` whose Decision #33
+invariant is broken is simply omitted (fail-soft; this projection is
+not that invariant's enforcement point) rather than guessed. Every list
+preserves the existing ordinal-ordered tuple order already produced by
+`SchedulingProblemRepository` -- no new sorting introduced anywhere.
+`teacher_workloads` sums **every** requirement type per teacher
+(plain, advanced, `WHOLE_CLASS`/`SUBGROUP`/`MERGED_CLASSES` alike),
+including teachers with zero requirements at `total_weekly_periods: 0`.
+
+Four routes were added in a new `api/teaching_assignment_routes.py`:
+`GET`/`POST /schools/{school_id}/years/{year_id}/teaching-assignments`
+and `PUT`/`DELETE .../teaching-assignments/{requirement_id}` -- no
+`PATCH` (the write semantics were always full-replacement), no separate
+workload endpoint. `POST`/`PUT` return only `{"id", "warnings"}` (201/
+200); `DELETE` returns `{"deleted_id", "warnings"}` at 200, never 204,
+since a delete can legitimately surface a non-blocking warning a
+bodyless response would silently discard -- none of the three reload
+and return the full saved-row projection, since the caller must
+re-fetch the unified `GET` afterward anyway (workload totals, ordering,
+and lock state may all have changed). `warnings` reuses the existing
+`ValidationDiagnosticResponse` shape verbatim. Error mapping:
+`SchedulingProblemNotFoundError`/`TeachingAssignmentNotFoundError` ->
+code-less 404s (matching the existing house style exactly);
+`UnknownReferenceError`/`NonWholeClassTargetError`/
+`InvalidTeachingAssignmentError` -> 422 with a stable `code`;
+`AdvancedRequirementNotEditableError`/`DuplicateTeachingAssignmentError`/
+`ConfigurationLockedError` -> 409 with a stable `code` --
+`SCHEDULING_CONFIGURATION_LOCKED` is now the locked Decision #35 HTTP
+contract. Separately, the existing `POST .../schedule/generate` route
+gained one new mapping: `ConfigurationChangedDuringGenerationError`
+(Decision #36) was previously uncaught there and would have leaked as a
+generic 500 the first time it could actually occur in production; it
+now maps to 409 `CONFIGURATION_CHANGED_DURING_GENERATION`, reusing the
+existing `GenerationErrorResponse` shape, with no other generate error
+semantics changed.
+
+No persistence schema change was needed or made -- Alembic head is
+still `01b2ae564170`, unchanged, no drift. Test gate for 3C.2b: 21 new
+pure application-level tests
+(`tests/test_teaching_assignments_projection_service.py`, no DB) plus
+28 new real-PostgreSQL HTTP integration tests
+(`tests_web/test_teaching_assignment_api.py`, covering every GET/POST/
+PUT/DELETE contract path plus the generate-route regression) all pass;
+full regression confirmed green (`pytest tests_web` 136 passed;
+`pytest tests -m "not slow"` 180 passed/5 deselected; `pytest tests -m
+slow` 5 passed; `npm test` 47 passed; `npm run build` succeeds;
+`alembic current`/`alembic check` still `01b2ae564170 (head)`, no
+drift). No frontend/React Router changes -- the frontend remains
+genuinely untouched. **Phase 3C.3 (configuration frontend foundation)
+is the next implementation slice -- not started.**
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

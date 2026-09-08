@@ -1,6 +1,8 @@
 """Explicit Pydantic response models for the read-only scheduling
-configuration API (Phase 3A2.4) and, since Phase 3A3.4, the schedule
-generation/read API (`docs/DECISIONS.md` #31's locked HTTP contract).
+configuration API (Phase 3A2.4), the schedule generation/read API
+(Phase 3A3.4, `docs/DECISIONS.md` #31's locked HTTP contract), and the
+Teaching Assignments HTTP API (Phase 3C.2b, `docs/DECISIONS.md`
+#34-#36's locked HTTP contract).
 
 Hand-designed, one field at a time, mirroring the current `domain/`
 dataclasses exactly -- never a generic `dataclasses.asdict()`/reflection
@@ -17,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SchoolResponse(BaseModel):
@@ -278,3 +280,161 @@ class ClassTimetableResponse(BaseModel):
     is_active: bool
     days: tuple[DayHeaderResponse, ...]
     rows: tuple[ClassTimetableRowResponse, ...]
+
+
+# -- Teaching Assignments API (Phase 3C.2b, `docs/DECISIONS.md` #34-#36's
+# locked HTTP contract). --------------------------------------------------
+
+
+class TeachingAssignmentClassSectionResponse(BaseModel):
+    id: str
+    name: str
+
+
+class TeachingAssignmentResponse(BaseModel):
+    """One `TeachingRequirement`, projected for display -- ALL
+    requirements appear here, plain and advanced alike; `editable`/
+    `advanced_reasons` are backend-owned (Decision #34's one locked
+    plain-editable predicate), never inferred by a caller."""
+
+    id: str
+    teacher_id: str
+    teacher_name: str
+    activity_id: str
+    activity_name: str
+    participant_group_id: str
+    participant_group_name: str
+    participant_group_role: str
+    class_sections: tuple[TeachingAssignmentClassSectionResponse, ...]
+    weekly_periods: int
+    editable: bool
+    advanced_reasons: tuple[str, ...]
+
+
+class TeacherOptionResponse(BaseModel):
+    id: str
+    name: str
+
+
+class ActivityOptionResponse(BaseModel):
+    id: str
+    name: str
+
+
+class WholeClassTargetResponse(BaseModel):
+    """The authoritative, backend-owned mapping from a visible
+    `ClassSection` to its canonical `WHOLE_CLASS` `ParticipantGroup` --
+    the frontend must submit `participant_group_id` verbatim from here,
+    never infer or construct it."""
+
+    class_section_id: str
+    class_section_name: str
+    participant_group_id: str
+    participant_group_name: str
+
+
+class TeacherWorkloadResponse(BaseModel):
+    """`total_weekly_periods` sums EVERY `TeachingRequirement` assigned
+    to this teacher -- plain and advanced alike, never only the
+    editable subset. A teacher with zero requirements still appears, at
+    `0`."""
+
+    teacher_id: str
+    teacher_name: str
+    total_weekly_periods: int
+
+
+class TeachingAssignmentsProjectionResponse(BaseModel):
+    """`GET .../teaching-assignments`'s success body -- the sole page
+    projection the future Teaching Assignments admin page needs; it
+    must never reconstruct business semantics from `/config` itself."""
+
+    configuration_locked: bool
+    assignments: tuple[TeachingAssignmentResponse, ...]
+    teachers: tuple[TeacherOptionResponse, ...]
+    whole_class_targets: tuple[WholeClassTargetResponse, ...]
+    activities: tuple[ActivityOptionResponse, ...]
+    teacher_workloads: tuple[TeacherWorkloadResponse, ...]
+
+
+class TeachingAssignmentWriteRequest(BaseModel):
+    """POST/PUT request body -- maps 1:1 onto the locked
+    `TeachingAssignmentFields` application dataclass (Decision #34).
+    `participant_group_id` must be sourced verbatim from a prior GET's
+    `whole_class_targets[*].participant_group_id`; the frontend never
+    infers or constructs it. Pydantic enforces only basic request
+    shape/type here -- `TeachingAssignmentService`/`teaching_assignment_rules`
+    remain the sole authoritative validators, including when called
+    outside HTTP."""
+
+    teacher_id: str
+    participant_group_id: str
+    activity_id: str
+    weekly_periods: int = Field(gt=0)
+
+
+class TeachingAssignmentWriteResponse(BaseModel):
+    """POST/PUT success body -- the caller must simply re-fetch
+    `GET .../teaching-assignments` afterward for the refreshed page
+    projection (workload totals, ordering, and lock state may all have
+    changed); this response exists only to hand back the natural ID and
+    any non-blocking save-time warnings (Decision #34's save-time
+    validation boundary)."""
+
+    id: str
+    warnings: tuple[ValidationDiagnosticResponse, ...]
+
+
+class TeachingAssignmentDeleteResponse(BaseModel):
+    """DELETE success body -- 200, never 204, since a delete can
+    legitimately surface non-blocking warnings (e.g. a newly-introduced
+    `CLASS_OCCUPANCY_MISMATCH`) that a bodyless response would silently
+    discard."""
+
+    deleted_id: str
+    warnings: tuple[ValidationDiagnosticResponse, ...]
+
+
+class UnknownReferenceErrorResponse(BaseModel):
+    code: Literal["UNKNOWN_REFERENCE"]
+    detail: str
+    reference_kind: str
+    reference_id: str
+
+
+class NonWholeClassTargetErrorResponse(BaseModel):
+    code: Literal["NON_WHOLE_CLASS_TARGET"]
+    detail: str
+    participant_group_id: str
+    actual_role: str
+
+
+class AdvancedRequirementNotEditableErrorResponse(BaseModel):
+    """Exposes `advanced_reasons` even though a prior GET already would
+    have -- this protects a stale client whose displayed disabled-state
+    no longer matches the server's authoritative recheck."""
+
+    code: Literal["ADVANCED_REQUIREMENT_NOT_EDITABLE"]
+    detail: str
+    advanced_reasons: tuple[str, ...]
+
+
+class DuplicateTeachingAssignmentErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_TEACHING_ASSIGNMENT"]
+    detail: str
+    teacher_id: str
+    participant_group_id: str
+    activity_id: str
+
+
+class InvalidTeachingAssignmentErrorResponse(BaseModel):
+    code: Literal["INVALID_TEACHING_ASSIGNMENT"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class ConfigurationLockedErrorResponse(BaseModel):
+    """The stable Decision #35 HTTP contract."""
+
+    code: Literal["SCHEDULING_CONFIGURATION_LOCKED"]
+    detail: str
