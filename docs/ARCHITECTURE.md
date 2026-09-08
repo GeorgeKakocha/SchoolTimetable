@@ -313,14 +313,14 @@ Scheduling-configuration admin input (formerly just a forward-looking
 note) is now **Phase 3C, design locked at `DECISIONS.md` #33-#36; 3C.1
 is CLOSED and merged to `main` at commit `8b5b606`; 3C.2a
 (application/persistence backend + generation-vs-config-write
-concurrency correctness) is implemented on branch
-`feature/phase-3c2a-teaching-assignment-backend`, pending review/commit
--- not merged, not pushed; 3C.2b onward NOT started** -- see below.
+concurrency correctness) is IMPLEMENTED, REVIEWED, COMMITTED, and
+MERGED to `main` at commit `2f4f9e6` -- 3C.2a CLOSED; 3C.2b onward NOT
+started** -- see below.
 
 ## Phase 3C architecture direction
 
 **3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
-is implemented on a feature branch pending review; 3C.2b onward remains
+is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b onward remains
 design-locked, not implemented.**
 
 Today, every one of the 17 configuration tables under one
@@ -369,8 +369,8 @@ api/  →  application/ (new write services)  →  new write ports
   depends on `role` yet (the current frontend doesn't even mirror
   `participant_groups` from `/config`), confirmed by an unmodified,
   passing frontend test/build gate.
-- **`application/`** (3C.2a, implemented on feature branch, pending
-  review): `TeachingAssignmentService` -- a new, narrowly-scoped write
+- **`application/`** (3C.2a, implemented, reviewed, merged to `main` at
+  commit `2f4f9e6`): `TeachingAssignmentService` -- a new, narrowly-scoped write
   use case (shaped like `GenerateScheduleService`, not a generic
   repository) for create/update/delete of **plain** `WHOLE_CLASS`
   `TeachingRequirement`s (Decision #34, predicate finalized/corrected
@@ -390,8 +390,8 @@ api/  →  application/ (new write services)  →  new write ports
   `UnknownReferenceError`) follow the existing
   `SchedulingProblemNotFoundError`/`ScheduleAlreadyExistsError` pattern
   (Decisions #29, #31), never a raw SQLAlchemy/HTTP exception.
-- **`persistence/`** (3C.2a, implemented on feature branch, pending
-  review): `SqlAlchemyTeachingAssignmentRepository`
+- **`persistence/`** (3C.2a, implemented, reviewed, merged to `main` at
+  commit `2f4f9e6`): `SqlAlchemyTeachingAssignmentRepository`
   (`persistence/teaching_assignment_repository.py`) implements the new
   port -- every method opens its own short session (never held across a
   solve), takes a `SELECT ... FOR UPDATE` on the target `AcademicYear`

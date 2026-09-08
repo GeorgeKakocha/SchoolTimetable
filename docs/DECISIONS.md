@@ -1611,10 +1611,11 @@ this implementation followed them as given.
 36. **Owner Decision -- the generation-vs-config-write race is closed by
     a short `AcademicYear` row lock plus a final reload-and-compare, no
     config-revision schema, never a DB transaction held across CP-SAT
-    solving (Phase 3C.2a, locked, implemented on
-    `feature/phase-3c2a-teaching-assignment-backend`, pending review/
-    commit).** Phase 3C.2's reconnaissance (informative note above
-    Decision #35) identified a real race: `GenerateScheduleService`
+    solving (LOCKED; Phase 3C.2a is IMPLEMENTED, REVIEWED, COMMITTED,
+    and MERGED to `main` at commit `2f4f9e6` "feat: add teaching
+    assignment write backend").** Phase 3C.2's reconnaissance
+    (informative note above Decision #35) identified a real race:
+    `GenerateScheduleService`
     loads the scheduling configuration, solves (which can take seconds),
     and only then persists -- if a Phase 3C.2 configuration write lands
     in between, the persisted `ScheduleVersion` would silently reflect a
@@ -1675,6 +1676,6 @@ this implementation followed them as given.
     MVP limitation.
 
     **Scope note**: this decision closes the concurrency-correctness
-    half of Phase 3C.2 (3C.2a). It implements no HTTP write routes, no
-    read/workload projection, and no frontend -- those remain Phase
-    3C.2b and later, not started.
+    half of Phase 3C.2 (3C.2a), now CLOSED. It implements no HTTP write
+    routes, no read/workload projection, and no frontend -- those remain
+    **Phase 3C.2b, not started.**

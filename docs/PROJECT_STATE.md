@@ -1021,9 +1021,9 @@ genuinely untouched). **Phase 3C.1 is implemented, reviewed, committed
 
 **Phase 3C.2a (teaching-assignment application/persistence backend +
 generation-vs-config-write concurrency correctness, `DECISIONS.md` #36)
-is implemented on branch `feature/phase-3c2a-teaching-assignment-backend`,
-pending review/commit -- not yet committed, not merged, not pushed.**
-New `TeachingAssignmentService` (`application/teaching_assignment_service.py`)
+is IMPLEMENTED, REVIEWED, COMMITTED (`2f4f9e6` "feat: add teaching
+assignment write backend"), and MERGED to `main` -- not pushed. Phase
+3C.2a is CLOSED.** New `TeachingAssignmentService` (`application/teaching_assignment_service.py`)
 is the narrow write use case for create/update/delete of a **plain**
 `WHOLE_CLASS` `TeachingRequirement` -- "plain" (Decision #34's editable
 predicate, corrected and finalized here) means: its `participant_group`
