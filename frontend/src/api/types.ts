@@ -92,3 +92,77 @@ export interface ClassTimetableResponse {
   days: DayHeader[];
   rows: ClassTimetableRow[];
 }
+
+// -- GET /schools/{school_id}/years/{year_id}/teaching-assignments ------
+//
+// Mirrors Phase 3C.2b's `TeachingAssignmentsProjectionResponse` exactly
+// (`docs/DECISIONS.md` #34-#36, `api/schemas.py`). Phase 3C.3a is
+// read-only: only the GET response shape is mirrored here. The write
+// request/response types (`TeachingAssignmentWriteRequest`/
+// `TeachingAssignmentWriteResponse`/`TeachingAssignmentDeleteResponse`)
+// belong to Phase 3C.3b, not this slice.
+//
+// `participant_group_role` is typed as `string`, not a closed literal
+// union: the backend schema itself declares it plain `str` (never a
+// Pydantic `Literal`), so the frontend must not assume a fixed set
+// either -- callers compare against the known values they care about
+// and fall back safely for anything else, exactly like
+// `advanced_reasons` below.
+
+export interface TeachingAssignmentClassSection {
+  id: string;
+  name: string;
+}
+
+export interface TeachingAssignment {
+  id: string;
+  teacher_id: string;
+  teacher_name: string;
+  activity_id: string;
+  activity_name: string;
+  participant_group_id: string;
+  participant_group_name: string;
+  participant_group_role: string;
+  class_sections: TeachingAssignmentClassSection[];
+  weekly_periods: number;
+  editable: boolean;
+  advanced_reasons: string[];
+}
+
+export interface TeacherOption {
+  id: string;
+  name: string;
+}
+
+export interface ActivityOption {
+  id: string;
+  name: string;
+}
+
+export interface WholeClassTarget {
+  class_section_id: string;
+  class_section_name: string;
+  participant_group_id: string;
+  participant_group_name: string;
+}
+
+export interface TeacherWorkload {
+  teacher_id: string;
+  teacher_name: string;
+  total_weekly_periods: number;
+}
+
+export interface ValidationDiagnostic {
+  code: string;
+  message: string;
+  context: Record<string, unknown>;
+}
+
+export interface TeachingAssignmentsProjectionResponse {
+  configuration_locked: boolean;
+  assignments: TeachingAssignment[];
+  teachers: TeacherOption[];
+  whole_class_targets: WholeClassTarget[];
+  activities: ActivityOption[];
+  teacher_workloads: TeacherWorkload[];
+}

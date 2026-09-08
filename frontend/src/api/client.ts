@@ -61,7 +61,11 @@ async function readErrorDetail(response: Response): Promise<string> {
   return GENERIC_ERROR_DETAIL;
 }
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+/** Exported so other page-scoped API modules (e.g. `teachingAssignments.ts`)
+ * reuse this exact fetch/status/JSON-parsing discipline instead of
+ * duplicating it -- the `ApiError`/`MalformedResponseError` contract
+ * stays defined in exactly one place. */
+export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = signal === undefined ? await fetch(path) : await fetch(path, { signal });
   if (!response.ok) {
     throw new ApiError(response.status, await readErrorDetail(response));

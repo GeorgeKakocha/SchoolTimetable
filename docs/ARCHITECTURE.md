@@ -318,15 +318,19 @@ MERGED to `main` at commit `2f4f9e6` -- 3C.2a CLOSED; 3C.2b (Teaching
 Assignments HTTP API + read/workload projection) is IMPLEMENTED,
 REVIEWED, COMMITTED, and MERGED to `main` at commit `9570358` --
 3C.2b CLOSED; Phase 3C.2 (Teaching Assignments backend/API milestone)
-is complete; Phase 3C.3 (configuration frontend) NOT started** -- see
+is complete; 3C.3a (frontend routing + shared shell + read-only
+Teaching Assignments page) is implemented on branch
+`feature/phase-3c3a-frontend-foundation`, pending review/commit -- not
+merged, not pushed; 3C.3b (create/edit/delete UI) NOT started** -- see
 below.
 
 ## Phase 3C architecture direction
 
 **3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
 is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is merged to
-`main` at commit `9570358` and CLOSED; 3C.3 onward remains
-design-locked, not implemented.**
+`main` at commit `9570358` and CLOSED; 3C.3a is implemented on a
+feature branch, pending review; 3C.3b onward remains design-locked,
+not implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -460,12 +464,27 @@ api/  →  application/ (new write services)  →  new write ports
   the existing `GenerationErrorResponse` shape -- no other generate
   error semantics changed. No persistence schema change; Alembic head
   unchanged at `01b2ae564170`.
-- **`frontend/`** (3C.3, NOT implemented): a second meaningful page
-  (Teaching Assignments) will make Phase 3B's no-Router decision (#32
-  Owner Decision 10, conditioned on there being only one page) worth
-  revisiting; Redux/Zustand remain unjustified in the meantime. No
-  `ParticipantGroup` CRUD/write UI exists yet; the frontend remains
-  genuinely untouched by 3C.2b.
+- **`frontend/`** (3C.3a, implemented on a feature branch, pending
+  review): the second meaningful page (Teaching Assignments) revisited
+  Phase 3B's no-Router decision (#32 Owner Decision 10, conditioned on
+  there being only one page) exactly as anticipated -- `react-router-dom`
+  (`^7.18.3`) is now the frontend's one added dependency;
+  `App.tsx` is only the router root (`/` -> redirect to `/timetable`,
+  `/timetable`, `/configuration/teaching-assignments`, an explicit `*`
+  not-found route), with the pre-existing timetable experience moved
+  unchanged to `pages/TimetablePage.tsx` and both real pages rendered
+  inside a new shared `components/AppShell.tsx` top-navigation layout
+  (compact top bar, not a sidebar; no placeholder nav items for
+  unbuilt future sections). `pages/TeachingAssignmentsPage.tsx`
+  consumes the 3C.2b `GET .../teaching-assignments` projection directly
+  via a new `api/teachingAssignments.ts` module -- never reconstructed
+  from `/config` -- and is **read-only**: workload table, assignments
+  table, a friendly-labeled "Advanced" badge for non-editable rows, and
+  an informational `configuration_locked` banner, but no create/edit/
+  delete controls (not even disabled ones) yet. Redux/Zustand remain
+  unjustified; state stays component-local hooks, matching
+  `TimetablePage`'s existing pattern exactly. Phase 3C.3b
+  (create/edit/delete UI) is NOT started.
 
 See `DECISIONS.md` #33-#36 for the full locked rationale and
 `PROJECT_STATE.md` for the 3C.1 implementation record and the

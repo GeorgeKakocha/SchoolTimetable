@@ -1297,6 +1297,42 @@ this implementation followed them as given.
     schedule history, scenarios, auth, config editing, dashboards,
     analytics) is scoped into Phase 3B by this ADR.
 
+    **Implementation note (Phase 3C.3a, no new owner decision --
+    implemented on branch `feature/phase-3c3a-frontend-foundation`,
+    pending review/commit).** Owner Decision 10's "no React Router yet
+    (a single page needs none)" was always conditioned on a single
+    page; a second real page (Teaching Assignments) now exists, so
+    `react-router-dom` (`^7.18.3`) is added -- the frontend's first and
+    only dependency added since Phase 3B.2 -- with `BrowserRouter` (no
+    concrete reason to prefer hash/memory routing given the existing
+    Vite-dev-proxy/relative-URL deployment model), `/` redirecting to
+    `/timetable`, and an explicit `*` not-found route rather than a
+    silent fallback. The rest of Owner Decision 10 still holds
+    unchanged: no Redux/Zustand/other state-management library (each
+    page keeps its own component-local hooks, matching
+    `TimetablePage`'s pre-existing pattern exactly, never a shared
+    client-side cache/store), no component library, no other new
+    dependency. The two real pages now render inside a new shared
+    top-navigation shell (`components/AppShell.tsx`) rather than each
+    duplicating a page chrome -- a compact top bar, not a sidebar,
+    matching this product's identity as a professional scheduling tool
+    rather than a generic school LMS, with no placeholder nav items for
+    unbuilt future sections (School Setup, Constraints, ...). The new
+    `pages/TeachingAssignmentsPage.tsx` is read-only in 3C.3a: it
+    consumes Phase 3C.2b's `GET .../teaching-assignments` projection
+    directly via a new `api/teachingAssignments.ts` module (never
+    reconstructed from `/config`), rendering a teacher-workload table,
+    an assignments table, a friendly-labeled "Advanced" badge for every
+    non-`editable` row (backend `advanced_reasons` codes mapped to
+    presentation-only labels, e.g. `fixed_placement` -> "Fixed
+    placement" -- never a change to backend semantics, and an
+    unrecognized future code falls back to its raw form rather than
+    breaking render), and an informational (not error-styled)
+    `configuration_locked` banner. No create/edit/delete controls exist
+    yet, not even disabled ones -- that interaction belongs to Phase
+    3C.3b, not started. No backend/schema change; Alembic head
+    unchanged at `01b2ae564170`.
+
     With Owner Decisions 1-10 locked, **Phase 3B.1 has zero remaining
     owner decisions** -- implementation may proceed directly from this
     ADR without further product-owner input.

@@ -25,10 +25,75 @@ body {
     sans-serif;
 }
 
+/* Phase 3C.3a: `.app-shell` is now the outer shared-shell container
+   (header/nav + main content), not a per-page wrapper -- each page
+   (`pages/*.tsx`) renders only its own content, no longer its own
+   max-width/padding wrapper. */
 .app-shell {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 2rem 1rem;
+  padding: 0 1rem;
+}
+
+.app-header {
+  padding-top: 1.5rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid #e2e2e2;
+  margin-bottom: 1.5rem;
+}
+
+/* Two clear rows: identity (product name + school/year context) above
+   navigation -- product name strongest, context secondary/muted,
+   navigation visually separated below rather than crowded onto the
+   same line as everything else. */
+.app-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.65rem;
+}
+
+.app-brand {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.app-context {
+  color: #6b6b6b;
+  font-size: 0.88em;
+}
+
+.app-nav {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.app-nav-link {
+  color: #4a4a4a;
+  text-decoration: none;
+  font-size: 0.95em;
+  padding-bottom: 0.35rem;
+  border-bottom: 2px solid transparent;
+}
+
+.app-nav-link:hover {
+  color: #1a1a1a;
+}
+
+.app-nav-link-active {
+  color: #1a1a1a;
+  font-weight: 600;
+  border-bottom-color: #2563eb;
+}
+
+.app-nav-link:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.app-main {
+  padding-bottom: 2rem;
 }
 
 h1 {
@@ -36,7 +101,8 @@ h1 {
   font-size: 1.5rem;
 }
 
-.app-subtitle {
+.app-subtitle,
+.page-subtitle {
   margin: 0 0 1.25rem;
   color: #4a4a4a;
 }
@@ -147,4 +213,181 @@ select:focus-visible {
 
 [role="alert"] {
   color: #b00020;
+}
+
+.page-error button {
+  margin-top: 0.5rem;
+}
+
+/* -- Teaching Assignments (Phase 3C.3a) ---------------------------------
+   Reuses the existing table/border/typography tokens the timetable grid
+   already established (`.timetable-grid` above) rather than introducing
+   a second visual language. Selectors are scoped to `.assignments-page`/
+   specific classes rather than bare element selectors (`section`, `h2`)
+   now that the product has multiple pages -- a future page's own
+   `<section>`s must never inherit this page's spacing/heading rules. */
+
+.assignments-page .page-section + .page-section {
+  margin-top: 1.25rem;
+}
+
+.assignments-page .page-section h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1.05rem;
+}
+
+.assignments-page .section-caption {
+  margin: -0.3rem 0 0.6rem;
+  color: #6b6b6b;
+  font-size: 0.85em;
+}
+
+.lock-banner {
+  margin: 0 0 1.25rem;
+  padding: 0.5rem 0.85rem;
+  background-color: #fdf6e3;
+  border: 1px solid #e8d9a0;
+  border-radius: 3px;
+  color: #5a4a1a;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+
+/* -- Teacher workload: a compact two-column row grid, not a table --
+   uses the available horizontal space instead of leaving a narrow
+   column and a large dead area; collapses to one column at narrow
+   widths. No cards/shadows, no progress bars, no capacity/target. */
+.workload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 2.5rem;
+}
+
+.workload-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid #ececec;
+  font-size: 0.92em;
+}
+
+.workload-row-name {
+  color: #1a1a1a;
+}
+
+.workload-row-periods {
+  color: #4a4a4a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .workload-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.assignments-table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.assignments-table th,
+.assignments-table td {
+  border: 1px solid #e2e2e2;
+  padding: 0.55rem 0.7rem;
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: break-word;
+}
+
+.assignments-table thead th {
+  background-color: #f2f2f2;
+  border-bottom: 2px solid #b0b0b0;
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #444444;
+}
+
+.assignments-table th[scope="row"] {
+  font-weight: 500;
+}
+
+/* Approximate column-width balance by meaning: Teacher/Weekly periods
+   compact, Class/Group and Activity medium, Configuration (status +
+   reason chips) gets the most room. */
+.assignments-table .col-teacher {
+  width: 15%;
+}
+
+.assignments-table .col-group {
+  width: 21%;
+}
+
+.assignments-table .col-activity {
+  width: 18%;
+}
+
+.assignments-table .col-periods {
+  width: 10%;
+}
+
+.assignments-table .col-configuration {
+  width: 36%;
+}
+
+.assignments-table .numeric-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.group-role-badge {
+  display: inline-block;
+  margin-left: 0.5em;
+  padding: 0.05em 0.4em;
+  border-radius: 3px;
+  background-color: #f5f5f5;
+  color: #7a7a7a;
+  font-size: 0.76em;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.status-standard {
+  color: #4a4a4a;
+}
+
+.status-advanced {
+  display: inline-block;
+  padding: 0.1em 0.5em;
+  border: 1px solid #b0b0b0;
+  border-radius: 3px;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #4a4a4a;
+}
+
+.reason-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+}
+
+.reason-chip {
+  display: inline-block;
+  padding: 0.05em 0.45em;
+  border-radius: 3px;
+  background-color: #f2f2f2;
+  color: #666666;
+  font-size: 0.78em;
 }

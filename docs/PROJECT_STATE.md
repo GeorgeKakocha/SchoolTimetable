@@ -1155,9 +1155,56 @@ drift). No frontend/React Router changes -- the frontend remains
 genuinely untouched. **Phase 3C.2b is CLOSED.** With 3C.2a (application/
 persistence write backend, concurrency correctness) and 3C.2b (HTTP
 API, read/workload projection) both CLOSED, **Phase 3C.2 -- the
-Teaching Assignments backend/API milestone -- is complete.** **Phase
-3C.3 (configuration frontend foundation) is the next implementation
-slice -- not started.**
+Teaching Assignments backend/API milestone -- is complete.**
+
+**Phase 3C.3a (frontend routing + shared application shell + read-only
+Teaching Assignments page) is implemented on branch
+`feature/phase-3c3a-frontend-foundation`, pending review/commit -- not
+yet committed, not merged, not pushed.** `react-router-dom` (`^7.18.3`)
+was added -- the frontend's only new dependency -- now that the product
+has a second real page; `App.tsx` is now only the router root
+(`BrowserRouter`/`Routes`), `/` redirects to `/timetable`, and an
+explicit `*` not-found route replaces any silent fallback. The
+pre-existing timetable experience moved to `pages/TimetablePage.tsx`
+under `/timetable` with no behavior change (same component logic, same
+tests, only the import paths/file location changed); a new
+`pages/TeachingAssignmentsPage.tsx` is live at
+`/configuration/teaching-assignments`. Both pages render inside a new
+shared `components/AppShell.tsx` top-navigation layout (product
+name/wordmark + a two-item nav with `NavLink` active-state styling +
+a `<main>` content region via `Outlet`) -- a compact top bar, not a
+sidebar, with no placeholder nav items for unbuilt future sections
+(School Setup, Constraints, ...). School/year context continues to
+come from the single existing `config/appConfig.ts` env point; each
+page independently reads it exactly as `TimetablePage` already did --
+no new selector, no shared config-fetching layer introduced.
+
+The Teaching Assignments page is **read-only in 3C.3a**: it loads
+`GET .../teaching-assignments` via a new, dedicated
+`api/teachingAssignments.ts` module (mirroring `api/client.ts`'s
+existing relative-URL/`ApiError` discipline, reusing its exported
+`getJson` helper rather than duplicating fetch/error handling) and
+renders the Phase 3C.2b projection directly -- never reconstructed from
+`/config`. It shows a compact teacher-workload table (every teacher,
+including zero-period ones, the raw backend total verbatim -- no
+invented target/remaining/percentage), an assignments table
+(`Teacher | Class/Group | Activity | Weekly periods | Type`, no
+`Actions` column yet), a neutral "Advanced" badge with backend
+`advanced_reasons` codes mapped to friendly labels for every row where
+`editable` is `false` (advanced rows stay fully visible, never hidden
+or implied broken), and a `configuration_locked` banner rendered as
+informational, not an error, when true. No create/edit/delete UI
+exists yet -- not even disabled controls -- since that belongs to Phase
+3C.3b. No backend/schema change was needed or made; Alembic head is
+still `01b2ae564170`, unchanged, no drift. Frontend test gate: 73
+tests passing (the pre-existing 47 plus 26 new -- 5 routing/shell
+tests in `App.test.tsx`, 5 API-module tests in
+`api/teachingAssignments.test.ts`, 16 page tests in
+`pages/TeachingAssignmentsPage.test.tsx`); `npm run build` succeeds;
+backend regression reconfirmed unaffected (`pytest tests_web` 136
+passed; `pytest tests -m "not slow"` 180 passed/5 deselected).
+**Phase 3C.3b (create/edit/delete interaction, warnings/error UX
+polish) is the next implementation slice -- not started.**
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**
