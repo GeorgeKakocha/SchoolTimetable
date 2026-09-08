@@ -1229,8 +1229,68 @@ presentation copy and may be renamed in a later UX polish pass -- not
 changed during this closure.
 
 **Phase 3C.3b (create/edit/delete interaction, warnings/error UX
-polish) is the next implementation slice -- not started.** It must not
-imply that any other configuration-table CRUD exists yet.
+polish) is implemented on branch
+`feature/phase-3c3b-teaching-assignment-mutations`, pending review --
+not yet committed, not merged, not pushed.** Frontend-only, consuming
+the already-merged 3C.2a/3C.2b write/read backend contract
+(`docs/DECISIONS.md` #34-#36) exactly as designed -- **no backend or
+schema change**, Alembic head unchanged at `01b2ae564170`, no drift.
+
+Create/edit/delete now exists, but only for plain, editable
+`WHOLE_CLASS` assignments -- advanced rows (`editable: false`) stay
+conceptually read-only for their own reason and never gain mutation
+controls; a global `configuration_locked` separately disables (but
+still shows) Edit/Delete on plain rows, with the existing lock banner
+as the one shared explanation -- the two disabled-looking states are
+deliberately never visually or semantically conflated (`ActionsCell`,
+`pages/TeachingAssignmentsPage.tsx`). Add/Edit use a new right-side
+modal drawer (`pages/AssignmentDrawer.tsx`: `role="dialog"`,
+`aria-modal`, focus trap, Escape/overlay-click/Close/Cancel to close,
+focus returned to the triggering button on close); Delete uses inline
+per-row confirmation (Confirm/Cancel), never a one-click delete.
+
+Every successful mutation triggers one authoritative re-fetch of the
+same unified `GET .../teaching-assignments` projection -- assignments/
+workloads/`configuration_locked` are only ever taken from that
+response, never hand-patched from a write's own `{id, warnings}`/
+`{deleted_id, warnings}` body, and the page is never blanked back to
+its initial loading state during that re-fetch. Non-blocking save-time
+warnings (`TEACHER_OVERLOADED`/`CLASS_OCCUPANCY_MISMATCH`) render as a
+dismissible, non-error informational banner, survive that re-fetch, and
+are replaced/cleared by the next mutation's own warning list. If the
+write itself succeeds but the follow-up re-fetch fails, the write is
+never reported as failed -- the existing (possibly now-outdated)
+projection stays visible, marked stale, with every mutation control
+disabled until a `Retry` re-fetch succeeds. A `409
+SCHEDULING_CONFIGURATION_LOCKED` returned by any write (a stale-client
+race against a schedule generated elsewhere since the page loaded)
+closes the initiating drawer/confirmation, shows a transient notice,
+and re-fetches into the now-genuinely-locked state -- never a false
+success. `api/client.ts` gained a shared `postJson`/`putJson`/
+`deleteJson` write helper alongside the existing `getJson`, and
+`ApiError` gained optional `code`/`body` fields (additive only,
+`detail` always stays a safe string even for FastAPI's own generic
+array-`detail` 422 body) so structured backend error codes
+(`DUPLICATE_TEACHING_ASSIGNMENT`, `UNKNOWN_REFERENCE`,
+`NON_WHOLE_CLASS_TARGET`, `ADVANCED_REQUIREMENT_NOT_EDITABLE`,
+`INVALID_TEACHING_ASSIGNMENT`) can be mapped to safe inline messages
+without a generic error-handling framework. State stays component-local
+`useState` throughout -- no Redux/Zustand/query library.
+
+No unlocked dev-DB fixture was created for manual mutation review --
+the canonical `synthetic-school`/`ay-2026` pilot schedule/history was
+left untouched. The safest later option (not executed): a throwaway,
+uncommitted local script using the existing test-only
+`tests_web/support/problem_writer.py` mechanism to write a second,
+schedule-free dev-only school/year, the same mechanism already used
+once to seed the current pilot data.
+
+Frontend test gate: 133 tests passing (the pre-existing 76 plus 57 new
+-- API-client/module coverage plus full Add/Edit/Delete page coverage,
+including accessibility and the stale-projection-safety scenarios);
+`npm run build` succeeds. Backend regression reconfirmed unaffected
+(`pytest tests_web` 136 passed; `pytest tests -m "not slow"` 180
+passed/5 deselected).
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

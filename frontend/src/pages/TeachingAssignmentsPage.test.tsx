@@ -1,10 +1,15 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TeachingAssignmentsPage from "./TeachingAssignmentsPage";
 import { ApiError } from "../api/client";
-import { getTeachingAssignments } from "../api/teachingAssignments";
+import {
+  createTeachingAssignment,
+  deleteTeachingAssignment,
+  getTeachingAssignments,
+  updateTeachingAssignment,
+} from "../api/teachingAssignments";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
-import type { TeachingAssignmentsProjectionResponse } from "../api/types";
+import type { TeachingAssignmentsProjectionResponse, ValidationDiagnostic } from "../api/types";
 
 // `../api/teachingAssignments` and `../config/appConfig` are mocked with
 // only their network/env-reading functions replaced -- `ApiError`/
@@ -15,6 +20,9 @@ vi.mock("../api/teachingAssignments", async (importOriginal) => {
   return {
     ...actual,
     getTeachingAssignments: vi.fn(),
+    createTeachingAssignment: vi.fn(),
+    updateTeachingAssignment: vi.fn(),
+    deleteTeachingAssignment: vi.fn(),
   };
 });
 
@@ -27,6 +35,9 @@ vi.mock("../config/appConfig", async (importOriginal) => {
 });
 
 const mockedGetTeachingAssignments = vi.mocked(getTeachingAssignments);
+const mockedCreateTeachingAssignment = vi.mocked(createTeachingAssignment);
+const mockedUpdateTeachingAssignment = vi.mocked(updateTeachingAssignment);
+const mockedDeleteTeachingAssignment = vi.mocked(deleteTeachingAssignment);
 const mockedLoadAppConfig = vi.mocked(loadAppConfig);
 
 /** A promise this test controls the resolution/rejection of, to assert
@@ -153,6 +164,18 @@ function rowFor(activityName: string): HTMLElement {
 
 beforeEach(() => {
   mockedLoadAppConfig.mockReturnValue({ schoolId: "s1", academicYearId: "y1" });
+});
+
+// Every mutation test below queues its own `mockResolvedValueOnce`/
+// `mockRejectedValueOnce` sequence on the shared module-level mocks;
+// without a reset between tests, an unconsumed queued value (e.g. a
+// test that never triggers its own post-mutation refetch) or a stale
+// `mock.calls` count leaks into the next test and corrupts it. `vi.fn()`
+// instances are recreated once per file by the `vi.mock` factory above,
+// not per test, so this reset is required -- `mockClear()` alone does
+// not drop queued "Once" implementations, only `mockReset()` does.
+afterEach(() => {
+  vi.resetAllMocks();
 });
 
 describe("TeachingAssignmentsPage", () => {
@@ -353,5 +376,662 @@ describe("TeachingAssignmentsPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Missing required frontend configuration value: VITE_SCHOOL_ID.",
     );
+  });
+});
+
+// -- Phase 3C.3b: create/edit/delete mutation UI -------------------------
+//
+// `r1` (Mathematics, Ms. Petrova, group `g1`) is FULL_PROJECTION's only
+// plain/editable `WHOLE_CLASS` row whose `participant_group_id` also
+// has a matching `whole_class_targets` entry -- the one row every
+// Edit/Delete test below targets. Every other row is either advanced
+// (no active controls) or, for the "missing target" test, a
+// purpose-built one-off projection.
+
+async function openAddDrawer() {
+  fireEvent.click(await screen.findByRole("button", { name: "Add assignment" }));
+  return screen.findByRole("dialog", { name: "Add assignment" });
+}
+
+async function fillCreateForm(teacherId: string, participantGroupId: string, activityId: string) {
+  fireEvent.change(screen.getByRole("combobox", { name: "Teacher" }), { target: { value: teacherId } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Class" }), { target: { value: participantGroupId } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Activity" }), { target: { value: activityId } });
+}
+
+describe("Add assignment", () => {
+  it("shows Add assignment enabled when unlocked, and visible but disabled when locked", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    expect(await screen.findByRole("button", { name: "Add assignment" })).toBeEnabled();
+  });
+
+  it("shows Add assignment visible but disabled when configuration is locked", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, configuration_locked: true });
+    render(<TeachingAssignmentsPage />);
+    expect(await screen.findByRole("button", { name: "Add assignment" })).toBeDisabled();
+  });
+
+  it("opens an accessible dialog with Teacher/Class/Activity/Weekly periods options from the loaded projection", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+
+    const teacherSelect = screen.getByRole("combobox", { name: "Teacher" }) as HTMLSelectElement;
+    expect(teacherSelect.value).toBe("");
+    expect(within(teacherSelect).getByText("Ms. Petrova")).toBeInTheDocument();
+    expect(within(teacherSelect).getByText("Mr. Ivanov")).toBeInTheDocument();
+
+    const classSelect = screen.getByRole("combobox", { name: "Class" }) as HTMLSelectElement;
+    expect(classSelect.value).toBe("");
+    expect(within(classSelect).getByText("8-A")).toBeInTheDocument();
+    expect(within(classSelect).getByText("8-B")).toBeInTheDocument();
+
+    const activitySelect = screen.getByRole("combobox", { name: "Activity" }) as HTMLSelectElement;
+    expect(activitySelect.value).toBe("");
+  });
+
+  it("keeps Save disabled until Teacher/Class/Activity are all selected and weekly_periods is a positive integer", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Teacher" }), { target: { value: "t1" } });
+    expect(saveButton).toBeDisabled();
+    await fillCreateForm("t1", "g1", "art");
+    expect(saveButton).toBeEnabled(); // weekly periods defaults to "1", already valid
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Weekly periods" }), { target: { value: "0" } });
+    expect(saveButton).toBeDisabled();
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Weekly periods" }), { target: { value: "" } });
+    expect(saveButton).toBeDisabled();
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Weekly periods" }), { target: { value: "2" } });
+    expect(saveButton).toBeEnabled();
+  });
+
+  it("submits the exact participant_group_id for the selected class label, never inferred from its name", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockResolvedValueOnce({ id: "new1", warnings: [] });
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t2", "g4", "art"); // "8-B" is labeled g4 in FULL_PROJECTION
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Weekly periods" }), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockedCreateTeachingAssignment).toHaveBeenCalledWith("s1", "y1", {
+        teacher_id: "t2",
+        participant_group_id: "g4",
+        activity_id: "art",
+        weekly_periods: 3,
+      }),
+    );
+  });
+
+  it("prevents a double submit while the create request is in flight", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    const deferredCreate = deferred<{ id: string; warnings: ValidationDiagnostic[] }>();
+    mockedCreateTeachingAssignment.mockReturnValueOnce(deferredCreate.promise);
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveButton);
+    fireEvent.click(saveButton);
+    fireEvent.click(saveButton);
+
+    expect(mockedCreateTeachingAssignment).toHaveBeenCalledTimes(1);
+
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    deferredCreate.resolve({ id: "new1", warnings: [] });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("closes the drawer and triggers exactly one authoritative refetch on success, without blanking the page, and shows warnings that survive the refresh", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockResolvedValueOnce({
+      id: "new1",
+      warnings: [{ code: "TEACHER_OVERLOADED", message: "Teacher has a high weekly load", context: {} }],
+    });
+    const deferredRefetch = deferred<TeachingAssignmentsProjectionResponse>();
+    mockedGetTeachingAssignments.mockReturnValueOnce(deferredRefetch.promise);
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByText("Mathematics")).toBeInTheDocument();
+    expect(screen.queryByText("Loading teaching assignments…")).not.toBeInTheDocument();
+
+    deferredRefetch.resolve(FULL_PROJECTION);
+
+    await waitFor(() =>
+      expect(screen.getByText("Assignment saved, but the current configuration has warnings.")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Teacher workload is high")).toBeInTheDocument();
+  });
+
+  it("shows a 409 duplicate error inline in the drawer, keeping it open", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(409, "a teaching assignment already exists", "DUPLICATE_TEACHING_ASSIGNMENT", {
+        code: "DUPLICATE_TEACHING_ASSIGNMENT",
+        teacher_id: "t1",
+        participant_group_id: "g1",
+        activity_id: "math",
+      }),
+    );
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "math");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("This teacher already has an assignment for this class and activity.");
+    expect(screen.getByRole("dialog", { name: "Add assignment" })).toBeInTheDocument();
+  });
+
+  it("shows a 422 INVALID_TEACHING_ASSIGNMENT error inline using the diagnostic messages", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(422, "invalid teaching assignment", "INVALID_TEACHING_ASSIGNMENT", {
+        code: "INVALID_TEACHING_ASSIGNMENT",
+        errors: [{ code: "SOME_CODE", message: "A specific structural problem was found.", context: {} }],
+      }),
+    );
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "math");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("A specific structural problem was found.");
+    expect(screen.getByRole("dialog", { name: "Add assignment" })).toBeInTheDocument();
+  });
+
+  it("closes the drawer, shows a transient notice, and ends up locked after a 409 SCHEDULING_CONFIGURATION_LOCKED race", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(
+        409,
+        "Scheduling configuration is locked because a schedule already exists",
+        "SCHEDULING_CONFIGURATION_LOCKED",
+        { code: "SCHEDULING_CONFIGURATION_LOCKED" },
+      ),
+    );
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, configuration_locked: true });
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "math");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await screen.findByText(/A schedule was generated since this page loaded/);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Assignments are read-only because a schedule has already been generated for this configuration.",
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Add assignment" })).toBeDisabled();
+  });
+});
+
+describe("Edit assignment", () => {
+  it("shows an active Edit control only for the plain editable row, not the advanced ones", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" })).toBeEnabled();
+    expect(within(rowFor("Art")).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(within(rowFor("Art")).getByText("Read-only")).toBeInTheDocument();
+  });
+
+  it("shows Edit/Delete visibly present but disabled for a plain row when configuration is locked", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, configuration_locked: true });
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+
+    const row = rowFor("Mathematics");
+    expect(within(row).getByRole("button", { name: "Edit" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "Delete" })).toBeDisabled();
+    // An advanced row never grows disabled Edit/Delete controls just
+    // because the page is also locked -- it stays exactly "Read-only".
+    expect(within(rowFor("Art")).getByText("Read-only")).toBeInTheDocument();
+    expect(within(rowFor("Art")).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+  });
+
+  it("prepopulates all four fields from the target assignment, mapping the class by participant_group_id", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+
+    expect(screen.getByRole("combobox", { name: "Teacher" })).toHaveValue("t1");
+    expect(screen.getByRole("combobox", { name: "Class" })).toHaveValue("g1");
+    expect(screen.getByRole("combobox", { name: "Activity" })).toHaveValue("math");
+    expect(screen.getByRole("spinbutton", { name: "Weekly periods" })).toHaveValue(4);
+  });
+
+  it("PUTs the exact full-replacement body, with the requirement ID only in the URL and never in the body", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedUpdateTeachingAssignment.mockResolvedValueOnce({ id: "r1", warnings: [] });
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Weekly periods" }), { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockedUpdateTeachingAssignment).toHaveBeenCalledWith("s1", "y1", "r1", {
+        teacher_id: "t1",
+        participant_group_id: "g1",
+        activity_id: "math",
+        weekly_periods: 6,
+      }),
+    );
+    const [, , , calledBody] = mockedUpdateTeachingAssignment.mock.calls[0] ?? [];
+    expect(calledBody).not.toHaveProperty("id");
+  });
+
+  it("prevents a double submit while the update request is in flight", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    const deferredUpdate = deferred<{ id: string; warnings: ValidationDiagnostic[] }>();
+    mockedUpdateTeachingAssignment.mockReturnValueOnce(deferredUpdate.promise);
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(saveButton);
+    fireEvent.click(saveButton);
+
+    expect(mockedUpdateTeachingAssignment).toHaveBeenCalledTimes(1);
+
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    deferredUpdate.resolve({ id: "r1", warnings: [] });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("fails safe -- no Edit control, no guessed form -- when an editable assignment's participant_group_id is missing from whole_class_targets", async () => {
+    const projection: TeachingAssignmentsProjectionResponse = {
+      ...FULL_PROJECTION,
+      assignments: [
+        {
+          id: "orphan1",
+          teacher_id: "t1",
+          teacher_name: "Ms. Petrova",
+          activity_id: "math",
+          activity_name: "Mathematics",
+          participant_group_id: "vanished-group",
+          participant_group_name: "8-A",
+          participant_group_role: "WHOLE_CLASS",
+          class_sections: [{ id: "8a", name: "8-A" }],
+          weekly_periods: 4,
+          editable: true,
+          advanced_reasons: [],
+        },
+      ],
+    };
+    mockedGetTeachingAssignments.mockResolvedValueOnce(projection);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+
+    const row = rowFor("Mathematics");
+    expect(within(row).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(within(row).getByText("This assignment can no longer be edited here.")).toBeInTheDocument();
+    // Delete never depends on the class-target mapping -- only Edit does.
+    expect(within(row).getByRole("button", { name: "Delete" })).toBeEnabled();
+  });
+
+  it("shows inline errors on update failure, refetches and ends locked on a lock-race", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedUpdateTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(409, "a teaching assignment already exists", "DUPLICATE_TEACHING_ASSIGNMENT", {
+        code: "DUPLICATE_TEACHING_ASSIGNMENT",
+      }),
+    );
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("This teacher already has an assignment for this class and activity.");
+    expect(screen.getByRole("dialog", { name: "Edit assignment" })).toBeInTheDocument();
+
+    mockedUpdateTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(409, "locked", "SCHEDULING_CONFIGURATION_LOCKED", { code: "SCHEDULING_CONFIGURATION_LOCKED" }),
+    );
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, configuration_locked: true });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await screen.findByText(/A schedule was generated since this page loaded/);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add assignment" })).toBeDisabled());
+  });
+});
+
+describe("Delete assignment", () => {
+  it("shows an inline confirmation identifying the assignment on the first Delete click, without deleting", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" }));
+
+    expect(mockedDeleteTeachingAssignment).not.toHaveBeenCalled();
+    const confirmText = within(rowFor("Mathematics")).getByText(/Delete Ms\. Petrova/);
+    expect(confirmText.textContent).toContain("Ms. Petrova");
+    expect(confirmText.textContent).toContain("8-A");
+    expect(confirmText.textContent).toContain("Mathematics");
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Confirm delete" })).toBeInTheDocument();
+  });
+
+  it("does not expose an active Delete control for an advanced row, or a disabled one for a locked plain row", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    expect(within(rowFor("Art")).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" })).toBeEnabled();
+  });
+
+  it("Cancel returns to the normal controls without deleting", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Cancel" }));
+
+    expect(mockedDeleteTeachingAssignment).not.toHaveBeenCalled();
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+  });
+
+  it("issues exactly one DELETE on Confirm (double-confirm prevented), with no request body, then refetches and shows warnings", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    const deferredDelete = deferred<{ deleted_id: string; warnings: ValidationDiagnostic[] }>();
+    mockedDeleteTeachingAssignment.mockReturnValueOnce(deferredDelete.promise);
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" }));
+    const confirmButton = within(rowFor("Mathematics")).getByRole("button", { name: "Confirm delete" });
+    fireEvent.click(confirmButton);
+    fireEvent.click(confirmButton);
+
+    expect(mockedDeleteTeachingAssignment).toHaveBeenCalledTimes(1);
+    expect(mockedDeleteTeachingAssignment).toHaveBeenCalledWith("s1", "y1", "r1");
+
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    deferredDelete.resolve({
+      deleted_id: "r1",
+      warnings: [{ code: "CLASS_OCCUPANCY_MISMATCH", message: "Occupancy does not match.", context: {} }],
+    });
+
+    await waitFor(() => expect(screen.getByText("Class occupancy mismatch")).toBeInTheDocument());
+  });
+
+  it("keeps the confirmation open and shows the error inline on a delete failure", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedDeleteTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(409, "not plain/editable", "ADVANCED_REQUIREMENT_NOT_EDITABLE", {
+        code: "ADVANCED_REQUIREMENT_NOT_EDITABLE",
+        advanced_reasons: ["block_policy"],
+      }),
+    );
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Confirm delete" }));
+
+    await screen.findByText("This assignment is no longer plain/editable -- it now has advanced configuration.");
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Confirm delete" })).toBeInTheDocument();
+  });
+
+  it("collapses the confirmation, shows the lock-race notice, and refetches into a locked state on a 409 SCHEDULING_CONFIGURATION_LOCKED", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedDeleteTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(409, "locked", "SCHEDULING_CONFIGURATION_LOCKED", { code: "SCHEDULING_CONFIGURATION_LOCKED" }),
+    );
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, configuration_locked: true });
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Confirm delete" }));
+
+    await screen.findByText(/A schedule was generated since this page loaded/);
+    await waitFor(() => expect(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" })).toBeDisabled());
+    expect(screen.queryByRole("button", { name: "Confirm delete" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Successful write, failed authoritative refresh (stale-projection safety)", () => {
+  it("[A] a create success is never reported as failed when the post-save refresh fails -- old data stays visible, controls disable, Retry recovers", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockResolvedValueOnce({ id: "new1", warnings: [] });
+    mockedGetTeachingAssignments.mockRejectedValueOnce(new Error("network down"));
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await screen.findByText(/could not be refreshed/);
+    expect(screen.queryByRole("alert", { name: /save.*fail/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Mathematics")).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Add assignment" })).toBeDisabled();
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" })).toBeDisabled();
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" })).toBeDisabled();
+
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.queryByText(/could not be refreshed/)).not.toBeInTheDocument());
+    expect(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" })).toBeEnabled();
+  });
+
+  it("[B] an update success is never reported as failed when the post-save refresh fails, and Retry recovers", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedUpdateTeachingAssignment.mockResolvedValueOnce({ id: "r1", warnings: [] });
+    mockedGetTeachingAssignments.mockRejectedValueOnce(new Error("network down"));
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await screen.findByText(/could not be refreshed/);
+    expect(screen.getByText("Mathematics")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add assignment" })).toBeDisabled();
+
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.queryByText(/could not be refreshed/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Add assignment" })).toBeEnabled();
+  });
+
+  it("[C] a delete success is never reported as failed when the post-save refresh fails, and Retry recovers", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedDeleteTeachingAssignment.mockResolvedValueOnce({ deleted_id: "r1", warnings: [] });
+    mockedGetTeachingAssignments.mockRejectedValueOnce(new Error("network down"));
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Confirm delete" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm delete" })).not.toBeInTheDocument());
+    await screen.findByText(/could not be refreshed/);
+    // The (now possibly-outdated) old row data is still shown -- a
+    // failed refresh never means the deleted row vanishes without
+    // authoritative confirmation.
+    expect(screen.getByText("Mathematics")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add assignment" })).toBeDisabled();
+
+    mockedGetTeachingAssignments.mockResolvedValueOnce({
+      ...FULL_PROJECTION,
+      assignments: FULL_PROJECTION.assignments.filter((assignment) => assignment.id !== "r1"),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.queryByText("Mathematics")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Add assignment" })).toBeEnabled();
+  });
+});
+
+describe("Add/Edit drawer accessibility", () => {
+  it("has dialog role, aria-modal, and an accessible heading", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    const dialog = await openAddDrawer();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+  });
+
+  it("labels every form control", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+
+    expect(screen.getByRole("combobox", { name: "Teacher" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Class" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Weekly periods" })).toBeInTheDocument();
+  });
+
+  it("places initial focus inside the drawer on open", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Teacher" })).toHaveFocus());
+  });
+
+  it("closes on Escape", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("closes on the Close button and the Cancel button", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await openAddDrawer();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("returns focus to the triggering button when closed", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    const addButton = await screen.findByRole("button", { name: "Add assignment" });
+    fireEvent.click(addButton);
+    await screen.findByRole("dialog", { name: "Add assignment" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(addButton).toHaveFocus());
+  });
+
+  it("blocks background interaction with an overlay while open, closing only on a direct overlay click", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    const dialog = await openAddDrawer();
+
+    const overlay = dialog.parentElement as HTMLElement;
+    fireEvent.mouseDown(overlay);
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("does not close on a click that originates inside the drawer content", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    const dialog = await openAddDrawer();
+
+    fireEvent.mouseDown(dialog);
+
+    expect(screen.getByRole("dialog", { name: "Add assignment" })).toBeInTheDocument();
+  });
+
+  it("gives a disabled locked control an accessible pointer to the lock explanation", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, configuration_locked: true });
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+
+    const editButton = within(rowFor("Mathematics")).getByRole("button", { name: "Edit" });
+    expect(editButton).toHaveAttribute("aria-describedby", "lock-banner-text");
+    expect(document.getElementById("lock-banner-text")).toHaveTextContent(
+      "Assignments are read-only because a schedule has already been generated for this configuration.",
+    );
+  });
+
+  it("uses accessible status semantics for the warning banner, conveying meaning through text, not color alone", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockResolvedValueOnce({
+      id: "new1",
+      warnings: [{ code: "TEACHER_OVERLOADED", message: "Teacher has a high weekly load", context: {} }],
+    });
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent("Assignment saved, but the current configuration has warnings.");
+    expect(banner).toHaveTextContent("Teacher workload is high");
+  });
+
+  it("uses alert semantics (not status) for the stale-lock-race notice", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockRejectedValueOnce(
+      new ApiError(409, "locked", "SCHEDULING_CONFIGURATION_LOCKED", { code: "SCHEDULING_CONFIGURATION_LOCKED" }),
+    );
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, configuration_locked: true });
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const notice = await screen.findByText(/A schedule was generated since this page loaded/);
+    expect(notice.closest('[role="alert"]')).not.toBeNull();
   });
 });

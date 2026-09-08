@@ -322,15 +322,17 @@ is complete; 3C.3a (frontend routing + shared shell + read-only
 Teaching Assignments page) is IMPLEMENTED, REVIEWED (manually
 browser-reviewed by the product owner), COMMITTED, and MERGED to
 `main` at commit `1499377` -- 3C.3a CLOSED; 3C.3b (create/edit/delete
-UI) NOT started** -- see below.
+UI) is implemented on branch
+`feature/phase-3c3b-teaching-assignment-mutations`, pending review --
+not yet committed, not merged, not pushed** -- see below.
 
 ## Phase 3C architecture direction
 
 **3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
 is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is merged to
 `main` at commit `9570358` and CLOSED; 3C.3a is merged to `main` at
-commit `1499377` and CLOSED; 3C.3b onward remains design-locked, not
-implemented.**
+commit `1499377` and CLOSED; 3C.3b is implemented on a feature branch,
+pending review; 3C.4 onward remains design-locked, not implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -478,13 +480,50 @@ api/  →  application/ (new write services)  →  new write ports
   unbuilt future sections). `pages/TeachingAssignmentsPage.tsx`
   consumes the 3C.2b `GET .../teaching-assignments` projection directly
   via a new `api/teachingAssignments.ts` module -- never reconstructed
-  from `/config` -- and is **read-only**: workload table, assignments
-  table, a friendly-labeled "Advanced" badge for non-editable rows, and
-  an informational `configuration_locked` banner, but no create/edit/
-  delete controls (not even disabled ones) yet. Redux/Zustand remain
+  from `/config` -- and was **read-only** in 3C.3a: workload table,
+  assignments table, a friendly-labeled "Advanced" badge for
+  non-editable rows, and an informational `configuration_locked`
+  banner, no create/edit/delete controls yet. Redux/Zustand remain
   unjustified; state stays component-local hooks, matching
-  `TimetablePage`'s existing pattern exactly. Phase 3C.3b
-  (create/edit/delete UI) is NOT started.
+  `TimetablePage`'s existing pattern exactly.
+- **`frontend/`** (3C.3b, implemented on branch
+  `feature/phase-3c3b-teaching-assignment-mutations`, pending review):
+  adds create/edit/delete for plain, editable `WHOLE_CLASS` assignments
+  only -- advanced rows (`editable: false`) never gain mutation
+  controls, and a global `configuration_locked` separately disables
+  (never hides) Edit/Delete on plain rows, sharing the one existing
+  lock banner as its explanation; the two disabled-looking states are
+  deliberately kept visually/semantically distinct
+  (`ActionsCell`, `pages/TeachingAssignmentsPage.tsx`). Add/Edit use a
+  new right-side modal drawer (`pages/AssignmentDrawer.tsx` --
+  `role="dialog"`/`aria-modal`, a focus trap, Escape/overlay-click/
+  Close/Cancel to close, focus returned to the triggering button);
+  Delete uses inline per-row Confirm/Cancel, never a one-click delete.
+  Every successful mutation triggers one authoritative re-fetch of the
+  same unified `GET .../teaching-assignments` projection --
+  assignments/workloads/`configuration_locked` are only ever taken from
+  that response, never hand-patched from a write's own `{id,
+  warnings}`/`{deleted_id, warnings}` body -- and the page is never
+  blanked back to its initial loading state during that re-fetch. If
+  the write itself succeeds but the follow-up re-fetch fails, the write
+  is never reported as failed: the existing projection stays visible,
+  marked stale, with every mutation control disabled until a `Retry`
+  re-fetch succeeds. A `409 SCHEDULING_CONFIGURATION_LOCKED` from any
+  write (a stale-client race against a schedule generated elsewhere
+  since the page loaded) closes the initiating drawer/confirmation,
+  shows a transient notice, and re-fetches into the now-genuinely-locked
+  state. `api/client.ts` gained a shared `postJson`/`putJson`/
+  `deleteJson` write helper alongside the existing `getJson`, and
+  `ApiError` gained additive optional `code`/`body` fields (`detail`
+  stays a safe string always, even for FastAPI's own generic
+  array-`detail` 422 body) so the locked structured error codes
+  (`DUPLICATE_TEACHING_ASSIGNMENT`, `UNKNOWN_REFERENCE`,
+  `NON_WHOLE_CLASS_TARGET`, `ADVANCED_REQUIREMENT_NOT_EDITABLE`,
+  `INVALID_TEACHING_ASSIGNMENT`) map to safe inline messages without a
+  generic error framework. No backend/schema change; Alembic head
+  unchanged at `01b2ae564170`. No unlocked dev-DB fixture was created
+  for manual review -- the canonical `synthetic-school`/`ay-2026` pilot
+  schedule/history was left untouched.
 
 See `DECISIONS.md` #33-#36 for the full locked rationale and
 `PROJECT_STATE.md` for the 3C.1 implementation record and the

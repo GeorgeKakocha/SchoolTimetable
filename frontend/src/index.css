@@ -324,29 +324,40 @@ select:focus-visible {
 
 /* Approximate column-width balance by meaning: Teacher/Weekly periods
    compact, Class/Group and Activity medium, Configuration (status +
-   reason chips) gets the most room. */
+   reason chips) gets the most room, Actions stays a small fixed
+   remainder (see `.assignments-page .col-actions` below). Widths sum
+   to 100% -- previously they summed past it (36% Configuration alone),
+   which combined with the header's `white-space: nowrap` (removed
+   below) let "WEEKLY PERIODS"/"CONFIGURATION" visually run into each
+   other at desktop widths. */
 .assignments-table .col-teacher {
-  width: 15%;
+  width: 14%;
 }
 
 .assignments-table .col-group {
-  width: 21%;
+  width: 20%;
 }
 
 .assignments-table .col-activity {
-  width: 18%;
+  width: 17%;
 }
 
 .assignments-table .col-periods {
-  width: 10%;
+  width: 11%;
 }
 
 .assignments-table .col-configuration {
-  width: 36%;
+  width: 26%;
 }
 
 .assignments-table .numeric-cell {
   text-align: right;
+}
+
+/* `nowrap` stays scoped to the data cell only -- the header's own
+   longer label ("Weekly periods") wraps within its own column instead
+   of visually overflowing into "Configuration" next to it. */
+.assignments-table td.numeric-cell {
   white-space: nowrap;
 }
 
@@ -390,4 +401,359 @@ select:focus-visible {
   background-color: #f2f2f2;
   color: #666666;
   font-size: 0.78em;
+}
+
+/* -- Teaching Assignments mutations (Phase 3C.3b) -----------------------
+   All new rules stay scoped to `.assignments-page`/specific classes,
+   matching the existing discipline above -- no bare element selectors. */
+
+.assignments-page .assignments-toolbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.assignments-page .assignments-toolbar h2 {
+  margin: 0 0 0.6rem;
+}
+
+.btn-primary {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #2563eb;
+  border-radius: 3px;
+  background-color: #2563eb;
+  color: #ffffff;
+  font-size: 0.9em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary:disabled {
+  border-color: #b0b0b0;
+  background-color: #d8d8d8;
+  color: #7a7a7a;
+  cursor: not-allowed;
+}
+
+.btn-primary:not(:disabled):hover {
+  background-color: #1d4fc4;
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.assignments-page .col-actions {
+  width: 12%;
+}
+
+.assignments-page .refreshing-note {
+  margin: 0.4rem 0;
+  color: #6b6b6b;
+  font-size: 0.85em;
+}
+
+/* Restrained secondary-action style (Edit) -- deliberately quieter
+   than `.btn-primary`; "Add assignment" stays the page's one strong
+   primary action. */
+.action-button {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid #c2c2c2;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #3a3a3a;
+  font-size: 0.85em;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.action-button:not(:disabled):hover {
+  background-color: #f2f2f2;
+  border-color: #a8a8a8;
+}
+
+/* Delete: a quiet destructive affordance, not bright red by default --
+   a muted rose border/text that only reads clearly as "destructive" on
+   hover/focus, matching `.delete-confirm-actions`'s own accent below. */
+.action-button-delete {
+  border-color: #d9b8b8;
+  color: #8a3a3a;
+}
+
+.action-button-delete:not(:disabled):hover {
+  background-color: #fdf2f2;
+  border-color: #b0000c;
+  color: #b0000c;
+}
+
+/* Disabled always reads as "unavailable" (locked), never as a
+   destructive warning -- the neutral disabled treatment overrides the
+   Delete-specific coloring above. */
+.action-button:disabled,
+.action-button-delete:disabled {
+  color: #a0a0a0;
+  border-color: #d8d8d8;
+  background-color: #ffffff;
+  cursor: not-allowed;
+}
+
+.action-button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.actions-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.action-readonly {
+  color: #8a8a8a;
+  font-size: 0.85em;
+  font-style: italic;
+}
+
+/* Contained entirely within its own Actions cell -- no `min-width`
+   forcing it wider than the (fixed-layout) column, so it can never
+   overflow the table; text wraps within the cell instead (the row
+   grows a little taller only if genuinely needed, never wider). */
+.delete-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-width: 100%;
+}
+
+.delete-confirm-text {
+  font-size: 0.8em;
+  line-height: 1.3;
+  color: #333333;
+}
+
+.delete-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.delete-confirm-actions button {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #b0000c;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #b0000c;
+  font-size: 0.82em;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.delete-confirm-actions button:not(:disabled):hover {
+  background-color: #fdf2f2;
+}
+
+.delete-confirm-actions button:last-child {
+  border-color: #b0b0b0;
+  color: #3a3a3a;
+}
+
+.delete-confirm-actions button:last-child:not(:disabled):hover {
+  background-color: #f2f2f2;
+}
+
+.delete-confirm-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.delete-confirm-actions button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.delete-confirm-error {
+  margin: 0;
+  color: #b00020;
+  font-size: 0.8em;
+}
+
+/* -- Save-warning / stale-lock / stale-projection banners --------------
+   Deliberately distinct from `.lock-banner` (amber, "globally locked")
+   -- these communicate different, non-error/non-lock states and must
+   never look like the same thing. */
+
+.warning-banner {
+  margin: 0 0 1.25rem;
+  padding: 0.5rem 0.85rem;
+  background-color: #eef4ff;
+  border: 1px solid #b9d0f7;
+  border-radius: 3px;
+  color: #1d3a63;
+  font-size: 0.9em;
+}
+
+.warning-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-weight: 500;
+}
+
+.warning-dismiss {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1.1em;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.warning-dismiss:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.warning-list {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.95em;
+}
+
+.warning-code {
+  font-weight: 600;
+  margin-right: 0.4em;
+}
+
+.warning-message {
+  color: #33507e;
+}
+
+.lock-race-banner,
+.stale-banner {
+  margin: 0 0 1.25rem;
+  padding: 0.5rem 0.85rem;
+  background-color: #fdecec;
+  border: 1px solid #f0b8b8;
+  border-radius: 3px;
+  color: #7a1a1a;
+  font-size: 0.9em;
+}
+
+.stale-banner p {
+  margin: 0 0 0.4rem;
+}
+
+.stale-banner button {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid #7a1a1a;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #7a1a1a;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+/* -- Add/Edit drawer ------------------------------------------------- */
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.35);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 100;
+}
+
+.drawer-panel {
+  width: min(24rem, 100vw);
+  height: 100%;
+  background-color: #ffffff;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.2);
+  padding: 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.drawer-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.drawer-close {
+  border: none;
+  background: transparent;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #4a4a4a;
+  padding: 0 0.3rem;
+}
+
+.drawer-close:focus-visible,
+.drawer-panel *:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.drawer-form label {
+  display: block;
+  margin: 0 0 1rem;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.drawer-form select,
+.drawer-form input {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 1em;
+}
+
+.field-hint {
+  margin: -0.6rem 0 1rem;
+  color: #6b6b6b;
+  font-size: 0.78em;
+}
+
+.drawer-error {
+  margin: 0 0 1rem;
+  color: #b00020;
+  font-size: 0.88em;
+}
+
+.drawer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.drawer-actions button[type="submit"] {
+  border: none;
+}
+
+.drawer-actions button[type="button"] {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #b0b0b0;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #333333;
+  font-size: 0.9em;
+  cursor: pointer;
 }

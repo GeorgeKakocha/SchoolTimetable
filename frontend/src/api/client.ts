@@ -1,13 +1,17 @@
 /**
- * Native-`fetch`-based API client for the backend's read-only schedule
- * endpoints. Every URL is relative -- the Vite dev proxy (`vite.config.ts`)
- * is the only place a backend host/port is ever written down; this
- * module never hard-codes `http://localhost:8000` (Decision #32, Owner
- * Decision 9).
+ * Native-`fetch`-based API client. Every URL is relative -- the Vite dev
+ * proxy (`vite.config.ts`) is the only place a backend host/port is
+ * ever written down; this module never hard-codes
+ * `http://localhost:8000` (Decision #32, Owner Decision 9).
  *
  * This module resolves no scheduling semantics of its own: it only
  * fetches, checks the HTTP status, and narrows the JSON body to the
- * typed shape this frontend slice actually consumes.
+ * typed shape this frontend slice actually consumes. `getJson` remains
+ * the GET-only entry point every read call already used; `postJson`/
+ * `putJson`/`deleteJson` (Phase 3C.3b, all funneling through the
+ * shared internal `sendJson`) are the write counterparts, added for
+ * the Teaching Assignments mutation UI -- neither introduces any new
+ * fetch/error-handling discipline of its own.
  */
 import type {
   ClassSectionSummary,
@@ -19,16 +23,33 @@ import type {
  * own safe, user-facing message (e.g. "Active schedule not found") when
  * one is present; otherwise a generic fallback -- never a raw
  * `Response`/internal browser object, never response body text that
- * might not be safe to display. */
+ * might not be safe to display.
+ *
+ * `code`/`body` are optional, additive fields (Phase 3C.3b): the
+ * Teaching Assignment write endpoints return a structured
+ * `{"code": "...", "detail": "...", ...extra fields}` error body
+ * (`docs/DECISIONS.md` #34-#36); `code` and the full parsed `body` are
+ * captured here, unparsed, so callers needing e.g.
+ * `body.advanced_reasons`/`body.teacher_id` can read them directly
+ * without `client.ts` hand-typing every backend error shape. `detail`
+ * stays a plain string always -- FastAPI's own generic Pydantic 422
+ * body (`{"detail": [...]}`) has a non-string `detail`; that case falls
+ * back to the generic message below rather than ever becoming an
+ * array, but the raw body (with its array `detail`) is still available
+ * via `.body` for a caller that wants it. */
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: string;
+  readonly code?: string | undefined;
+  readonly body?: Record<string, unknown> | undefined;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, code?: string, body?: Record<string, unknown>) {
     super(`Request failed with status ${status}: ${detail}`);
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
+    this.code = code;
+    this.body = body;
   }
 }
 
@@ -44,21 +65,28 @@ export class MalformedResponseError extends Error {
 
 const GENERIC_ERROR_DETAIL = "Request failed.";
 
-async function readErrorDetail(response: Response): Promise<string> {
+/** Parses a non-2xx response body exactly once, into the three pieces
+ * `ApiError` needs. A malformed/non-JSON/empty body, or a JSON body
+ * that isn't a plain object (e.g. FastAPI's generic Pydantic 422 array
+ * `detail`, or any other non-object shape), safely falls back to the
+ * generic detail with no `code`/`body` -- this never throws, and never
+ * surfaces raw response text. */
+async function readErrorInfo(
+  response: Response,
+): Promise<{ detail: string; code?: string | undefined; body?: Record<string, unknown> | undefined }> {
+  let parsed: unknown;
   try {
-    const body: unknown = await response.json();
-    if (
-      typeof body === "object" &&
-      body !== null &&
-      "detail" in body &&
-      typeof (body as { detail: unknown }).detail === "string"
-    ) {
-      return (body as { detail: string }).detail;
-    }
+    parsed = await response.json();
   } catch {
-    // Response body was not JSON (or was empty) -- fall through.
+    return { detail: GENERIC_ERROR_DETAIL };
   }
-  return GENERIC_ERROR_DETAIL;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { detail: GENERIC_ERROR_DETAIL };
+  }
+  const body = parsed as Record<string, unknown>;
+  const detail = typeof body["detail"] === "string" ? (body["detail"] as string) : GENERIC_ERROR_DETAIL;
+  const code = typeof body["code"] === "string" ? (body["code"] as string) : undefined;
+  return { detail, code, body };
 }
 
 /** Exported so other page-scoped API modules (e.g. `teachingAssignments.ts`)
@@ -68,9 +96,51 @@ async function readErrorDetail(response: Response): Promise<string> {
 export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = signal === undefined ? await fetch(path) : await fetch(path, { signal });
   if (!response.ok) {
-    throw new ApiError(response.status, await readErrorDetail(response));
+    const info = await readErrorInfo(response);
+    throw new ApiError(response.status, info.detail, info.code, info.body);
   }
   return (await response.json()) as T;
+}
+
+/** The shared write-request helper (Phase 3C.3b): every mutation
+ * (`POST`/`PUT`/`DELETE`) funnels through here so the
+ * fetch/`Content-Type`/error-parsing discipline is defined exactly
+ * once, matching `getJson`'s existing discipline. `body` is
+ * JSON-stringified with an explicit `Content-Type: application/json`
+ * header only when supplied -- `DELETE` (no `body` argument) sends
+ * neither, matching the locked backend contract exactly. */
+async function sendJson<T>(
+  method: "POST" | "PUT" | "DELETE",
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  const init: RequestInit = { method };
+  if (signal !== undefined) {
+    init.signal = signal;
+  }
+  if (body !== undefined) {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    const info = await readErrorInfo(response);
+    throw new ApiError(response.status, info.detail, info.code, info.body);
+  }
+  return (await response.json()) as T;
+}
+
+export function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return sendJson<T>("POST", path, body, signal);
+}
+
+export function putJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  return sendJson<T>("PUT", path, body, signal);
+}
+
+export function deleteJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return sendJson<T>("DELETE", path, undefined, signal);
 }
 
 function isNonEmptyString(value: unknown): value is string {

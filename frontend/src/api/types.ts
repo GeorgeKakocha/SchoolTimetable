@@ -96,11 +96,8 @@ export interface ClassTimetableResponse {
 // -- GET /schools/{school_id}/years/{year_id}/teaching-assignments ------
 //
 // Mirrors Phase 3C.2b's `TeachingAssignmentsProjectionResponse` exactly
-// (`docs/DECISIONS.md` #34-#36, `api/schemas.py`). Phase 3C.3a is
-// read-only: only the GET response shape is mirrored here. The write
-// request/response types (`TeachingAssignmentWriteRequest`/
-// `TeachingAssignmentWriteResponse`/`TeachingAssignmentDeleteResponse`)
-// belong to Phase 3C.3b, not this slice.
+// (`docs/DECISIONS.md` #34-#36, `api/schemas.py`), plus Phase 3C.3b's
+// write request/response shapes below.
 //
 // `participant_group_role` is typed as `string`, not a closed literal
 // union: the backend schema itself declares it plain `str` (never a
@@ -165,4 +162,34 @@ export interface TeachingAssignmentsProjectionResponse {
   whole_class_targets: WholeClassTarget[];
   activities: ActivityOption[];
   teacher_workloads: TeacherWorkload[];
+}
+
+// -- POST/PUT/DELETE .../teaching-assignments[/{requirement_id}] --------
+//
+// Mirrors Phase 3C.2a/3C.3b's write contract exactly
+// (`docs/DECISIONS.md` #34-#36, `api/schemas.py`'s
+// `TeachingAssignmentWriteRequest`/`TeachingAssignmentWriteResponse`/
+// `TeachingAssignmentDeleteResponse`). `participant_group_id` must be
+// sourced verbatim from a prior GET's
+// `whole_class_targets[*].participant_group_id` -- this frontend never
+// infers or constructs it (matching the backend docstring's own
+// requirement). No backend validation/business rule is reproduced
+// here; this is a pure wire-shape mirror, exactly like every other
+// type in this file.
+
+export interface TeachingAssignmentWriteRequest {
+  teacher_id: string;
+  participant_group_id: string;
+  activity_id: string;
+  weekly_periods: number;
+}
+
+export interface TeachingAssignmentWriteResponse {
+  id: string;
+  warnings: ValidationDiagnostic[];
+}
+
+export interface TeachingAssignmentDeleteResponse {
+  deleted_id: string;
+  warnings: ValidationDiagnostic[];
 }

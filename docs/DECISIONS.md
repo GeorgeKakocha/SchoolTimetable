@@ -1330,8 +1330,33 @@ this implementation followed them as given.
     breaking render), and an informational (not error-styled)
     `configuration_locked` banner. No create/edit/delete controls exist
     yet, not even disabled ones -- that interaction belongs to Phase
-    3C.3b, not started. No backend/schema change; Alembic head
-    unchanged at `01b2ae564170`.
+    3C.3b. No backend/schema change; Alembic head unchanged at
+    `01b2ae564170`.
+
+    **Implementation note (Phase 3C.3b, no new owner decision --
+    implemented on branch
+    `feature/phase-3c3b-teaching-assignment-mutations`, pending review
+    -- not yet committed, not merged, not pushed).** Pure frontend
+    consumer of the write contract Decisions #34-#36 already locked --
+    no new backend/schema/owner decision. Create/edit/delete now exists
+    for plain, editable `WHOLE_CLASS` assignments only, via a right-side
+    modal drawer (Add/Edit) and inline per-row confirmation (Delete);
+    advanced rows never gain mutation controls, and the global
+    `configuration_locked` lock separately disables (never hides)
+    Edit/Delete on plain rows, sharing the existing lock banner as its
+    one explanation -- the two disabled-looking states are deliberately
+    never conflated. Every successful mutation triggers one
+    authoritative re-fetch of the unified GET projection; a write that
+    succeeds but whose follow-up re-fetch fails is never reported as
+    failed (the existing projection stays visible, marked stale, with
+    mutations disabled until `Retry` succeeds); a `409
+    SCHEDULING_CONFIGURATION_LOCKED` stale-client race closes the
+    initiating surface and re-fetches into the now-genuinely-locked
+    state rather than a false success. `ApiError` gained additive
+    `code`/`body` fields for the already-locked structured error
+    contract; `detail` stays a safe string always. State remains
+    component-local hooks; no Redux/Zustand/query library. No
+    backend/schema change; Alembic head unchanged at `01b2ae564170`.
 
     With Owner Decisions 1-10 locked, **Phase 3B.1 has zero remaining
     owner decisions** -- implementation may proceed directly from this
