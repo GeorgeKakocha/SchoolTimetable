@@ -1298,8 +1298,8 @@ this implementation followed them as given.
     analytics) is scoped into Phase 3B by this ADR.
 
     **Implementation note (Phase 3C.3a, no new owner decision --
-    implemented on branch `feature/phase-3c3a-frontend-foundation`,
-    pending review/commit).** Owner Decision 10's "no React Router yet
+    IMPLEMENTED, REVIEWED, COMMITTED, and MERGED to `main` at commit
+    `1499377`; 3C.3a CLOSED).** Owner Decision 10's "no React Router yet
     (a single page needs none)" was always conditioned on a single
     page; a second real page (Teaching Assignments) now exists, so
     `react-router-dom` (`^7.18.3`) is added -- the frontend's first and

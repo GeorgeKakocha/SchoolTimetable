@@ -319,18 +319,18 @@ Assignments HTTP API + read/workload projection) is IMPLEMENTED,
 REVIEWED, COMMITTED, and MERGED to `main` at commit `9570358` --
 3C.2b CLOSED; Phase 3C.2 (Teaching Assignments backend/API milestone)
 is complete; 3C.3a (frontend routing + shared shell + read-only
-Teaching Assignments page) is implemented on branch
-`feature/phase-3c3a-frontend-foundation`, pending review/commit -- not
-merged, not pushed; 3C.3b (create/edit/delete UI) NOT started** -- see
-below.
+Teaching Assignments page) is IMPLEMENTED, REVIEWED (manually
+browser-reviewed by the product owner), COMMITTED, and MERGED to
+`main` at commit `1499377` -- 3C.3a CLOSED; 3C.3b (create/edit/delete
+UI) NOT started** -- see below.
 
 ## Phase 3C architecture direction
 
 **3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
 is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is merged to
-`main` at commit `9570358` and CLOSED; 3C.3a is implemented on a
-feature branch, pending review; 3C.3b onward remains design-locked,
-not implemented.**
+`main` at commit `9570358` and CLOSED; 3C.3a is merged to `main` at
+commit `1499377` and CLOSED; 3C.3b onward remains design-locked, not
+implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -464,8 +464,8 @@ api/  →  application/ (new write services)  →  new write ports
   the existing `GenerationErrorResponse` shape -- no other generate
   error semantics changed. No persistence schema change; Alembic head
   unchanged at `01b2ae564170`.
-- **`frontend/`** (3C.3a, implemented on a feature branch, pending
-  review): the second meaningful page (Teaching Assignments) revisited
+- **`frontend/`** (3C.3a, implemented, reviewed, merged to `main` at
+  commit `1499377`): the second meaningful page (Teaching Assignments) revisited
   Phase 3B's no-Router decision (#32 Owner Decision 10, conditioned on
   there being only one page) exactly as anticipated -- `react-router-dom`
   (`^7.18.3`) is now the frontend's one added dependency;

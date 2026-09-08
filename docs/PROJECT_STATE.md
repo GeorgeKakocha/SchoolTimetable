@@ -1158,26 +1158,33 @@ API, read/workload projection) both CLOSED, **Phase 3C.2 -- the
 Teaching Assignments backend/API milestone -- is complete.**
 
 **Phase 3C.3a (frontend routing + shared application shell + read-only
-Teaching Assignments page) is implemented on branch
-`feature/phase-3c3a-frontend-foundation`, pending review/commit -- not
-yet committed, not merged, not pushed.** `react-router-dom` (`^7.18.3`)
-was added -- the frontend's only new dependency -- now that the product
-has a second real page; `App.tsx` is now only the router root
-(`BrowserRouter`/`Routes`), `/` redirects to `/timetable`, and an
+Teaching Assignments page) is IMPLEMENTED, REVIEWED (manually
+browser-reviewed by the product owner against a real running
+backend/frontend, both the `/timetable` and
+`/configuration/teaching-assignments` routes), COMMITTED, and MERGED
+to `main` at commit `1499377` -- 3C.3a CLOSED.** `react-router-dom`
+(`^7.18.3`) was added -- the frontend's only new dependency -- now that
+the product has a second real page; `App.tsx` is now only the router
+root (`BrowserRouter`/`Routes`), `/` redirects to `/timetable`, and an
 explicit `*` not-found route replaces any silent fallback. The
 pre-existing timetable experience moved to `pages/TimetablePage.tsx`
 under `/timetable` with no behavior change (same component logic, same
 tests, only the import paths/file location changed); a new
 `pages/TeachingAssignmentsPage.tsx` is live at
 `/configuration/teaching-assignments`. Both pages render inside a new
-shared `components/AppShell.tsx` top-navigation layout (product
-name/wordmark + a two-item nav with `NavLink` active-state styling +
-a `<main>` content region via `Outlet`) -- a compact top bar, not a
-sidebar, with no placeholder nav items for unbuilt future sections
-(School Setup, Constraints, ...). School/year context continues to
-come from the single existing `config/appConfig.ts` env point; each
-page independently reads it exactly as `TimetablePage` already did --
-no new selector, no shared config-fetching layer introduced.
+shared `components/AppShell.tsx` top-navigation layout (product name
+strongest, a single shared "school · academic year" context line
+secondary/muted, a two-item nav with `NavLink` restrained-blue-underline
+active-state styling, a `<main>` content region via `Outlet`) -- a
+compact top bar, not a sidebar, with no placeholder nav items for
+unbuilt future sections (School Setup, Constraints, ...) and no
+Redux/Zustand/query-library state management. `AppShell` owns the one
+visible school/year context line, sourced from `config/appConfig.ts` +
+its own `getSchedulingConfigIndex` read; `TimetablePage` deliberately no
+longer renders its own duplicate copy of that text (it still reads
+`/config` independently for its own class-selector/loading/error
+states, an accepted two-reads-of-a-small-endpoint tradeoff documented
+in `AppShell.tsx`, not a shared client-side cache).
 
 The Teaching Assignments page is **read-only in 3C.3a**: it loads
 `GET .../teaching-assignments` via a new, dedicated
@@ -1185,26 +1192,45 @@ The Teaching Assignments page is **read-only in 3C.3a**: it loads
 existing relative-URL/`ApiError` discipline, reusing its exported
 `getJson` helper rather than duplicating fetch/error handling) and
 renders the Phase 3C.2b projection directly -- never reconstructed from
-`/config`. It shows a compact teacher-workload table (every teacher,
+`/config`. Following manual browser review, a visual-correction pass
+(no data/contract change) reworked the page's layout: a compact,
+responsive two-column "Teacher workload" row grid (every teacher,
 including zero-period ones, the raw backend total verbatim -- no
-invented target/remaining/percentage), an assignments table
-(`Teacher | Class/Group | Activity | Weekly periods | Type`, no
-`Actions` column yet), a neutral "Advanced" badge with backend
-`advanced_reasons` codes mapped to friendly labels for every row where
-`editable` is `false` (advanced rows stay fully visible, never hidden
-or implied broken), and a `configuration_locked` banner rendered as
-informational, not an error, when true. No create/edit/delete UI
-exists yet -- not even disabled controls -- since that belongs to Phase
-3C.3b. No backend/schema change was needed or made; Alembic head is
-still `01b2ae564170`, unchanged, no drift. Frontend test gate: 73
-tests passing (the pre-existing 47 plus 26 new -- 5 routing/shell
-tests in `App.test.tsx`, 5 API-module tests in
-`api/teachingAssignments.test.ts`, 16 page tests in
-`pages/TeachingAssignmentsPage.test.tsx`); `npm run build` succeeds;
-backend regression reconfirmed unaffected (`pytest tests_web` 136
-passed; `pytest tests -m "not slow"` 180 passed/5 deselected).
+cards/shadows/progress bars/invented target-remaining-percentage,
+collapsing to one column at narrow widths) replaced the original
+narrow single-column table; the assignments table's columns are
+explicitly width-balanced (`Teacher | Class/Group | Activity | Weekly
+periods | Configuration`, `Configuration` renamed from the original
+`Type` heading, no `Actions` column yet); a neutral "Advanced" badge
+shows backend `advanced_reasons` codes as separate friendly-labeled
+reason chips (`ADVANCED_REASON_LABELS`, unrecognized future codes fall
+back to their raw form) rather than one comma-joined sentence;
+`SUBGROUP`/`MERGED_CLASSES` participant-group-role badges are styled
+visually quieter than the "Advanced" status badge (target semantics,
+not a warning; `WHOLE_CLASS` shows no badge); and a `configuration_locked`
+banner renders as a restrained, informational (not error-styled) notice
+when true -- advanced rows stay fully visible throughout, never hidden
+or implied broken. No create/edit/delete UI exists yet -- not even
+disabled controls -- since that belongs to Phase 3C.3b. CSS for both the
+shared shell and this page uses page-/component-scoped class selectors
+(`.assignments-page .page-section`, etc.), never bare element selectors
+like `section`/`section h2`, so a future page's own sections/headings
+can't inherit this page's rules. No backend/schema change was needed or
+made; Alembic head is still `01b2ae564170`, unchanged, no drift.
+
+Verification baseline at closure: frontend test gate **76 tests
+passing**, `npm run build` clean; backend regression reconfirmed
+unaffected (`pytest tests_web` **136 passed**; `pytest tests -m "not
+slow"` **180 passed/5 deselected**); `alembic current`/`alembic check`
+still `01b2ae564170 (head)`, no drift. One minor future polish note:
+"Non-whole-class target" (the friendly label for the
+`participant_group_role` advanced reason) remains somewhat technical
+presentation copy and may be renamed in a later UX polish pass -- not
+changed during this closure.
+
 **Phase 3C.3b (create/edit/delete interaction, warnings/error UX
-polish) is the next implementation slice -- not started.**
+polish) is the next implementation slice -- not started.** It must not
+imply that any other configuration-table CRUD exists yet.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**
