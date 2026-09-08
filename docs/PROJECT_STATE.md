@@ -1081,9 +1081,9 @@ slow` 5 passed; `npm test` 47 passed; `npm run build` succeeds;
 drift).
 
 **Phase 3C.2b (Teaching Assignments HTTP API + read/workload
-projection, `DECISIONS.md` #34-#36) is implemented on branch
-`feature/phase-3c2b-teaching-assignment-api`, pending review/commit --
-not yet committed, not merged, not pushed.** A preceding read-only
+projection, `DECISIONS.md` #34-#36) is IMPLEMENTED, REVIEWED,
+COMMITTED, and MERGED to `main` at commit `9570358` -- Phase 3C.2b
+CLOSED.** A preceding read-only
 technical contract gate found zero genuine owner decisions remaining --
 every open question resolved from the already-locked ADRs and existing
 house style. A new, dedicated, read-only
@@ -1152,8 +1152,12 @@ full regression confirmed green (`pytest tests_web` 136 passed;
 slow` 5 passed; `npm test` 47 passed; `npm run build` succeeds;
 `alembic current`/`alembic check` still `01b2ae564170 (head)`, no
 drift). No frontend/React Router changes -- the frontend remains
-genuinely untouched. **Phase 3C.3 (configuration frontend foundation)
-is the next implementation slice -- not started.**
+genuinely untouched. **Phase 3C.2b is CLOSED.** With 3C.2a (application/
+persistence write backend, concurrency correctness) and 3C.2b (HTTP
+API, read/workload projection) both CLOSED, **Phase 3C.2 -- the
+Teaching Assignments backend/API milestone -- is complete.** **Phase
+3C.3 (configuration frontend foundation) is the next implementation
+slice -- not started.**
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

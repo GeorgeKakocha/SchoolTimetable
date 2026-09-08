@@ -315,17 +315,18 @@ is CLOSED and merged to `main` at commit `8b5b606`; 3C.2a
 (application/persistence backend + generation-vs-config-write
 concurrency correctness) is IMPLEMENTED, REVIEWED, COMMITTED, and
 MERGED to `main` at commit `2f4f9e6` -- 3C.2a CLOSED; 3C.2b (Teaching
-Assignments HTTP API + read/workload projection) is implemented on
-branch `feature/phase-3c2b-teaching-assignment-api`, pending
-review/commit -- not merged, not pushed; Phase 3C.3 (configuration
-frontend) NOT started** -- see below.
+Assignments HTTP API + read/workload projection) is IMPLEMENTED,
+REVIEWED, COMMITTED, and MERGED to `main` at commit `9570358` --
+3C.2b CLOSED; Phase 3C.2 (Teaching Assignments backend/API milestone)
+is complete; Phase 3C.3 (configuration frontend) NOT started** -- see
+below.
 
 ## Phase 3C architecture direction
 
 **3C.1's role contract is merged to `main` at commit `8b5b606`; 3C.2a
-is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is implemented
-on a feature branch pending review; 3C.3 onward remains design-locked,
-not implemented.**
+is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is merged to
+`main` at commit `9570358` and CLOSED; 3C.3 onward remains
+design-locked, not implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`
@@ -412,8 +413,8 @@ api/  →  application/ (new write services)  →  new write ports
   match proceeds to its unchanged commit-while-locked behavior. No
   schema change was needed for any of this -- Alembic head is still
   `01b2ae564170`.
-- **`application/`** (3C.2b, implemented on feature branch, pending
-  review): `TeachingAssignmentsProjectionService`
+- **`application/`** (3C.2b, implemented, reviewed, merged to `main` at
+  commit `9570358`): `TeachingAssignmentsProjectionService`
   (`application/teaching_assignments_projection_service.py`) -- a new,
   dedicated, read-only projection service, deliberately kept separate
   from the write-only `TeachingAssignmentService`, mirroring the
@@ -432,8 +433,8 @@ api/  →  application/ (new write services)  →  new write ports
   `ParticipantGroup.role`/`class_sections`, never a name/count
   heuristic, and fails soft (omits) when the Decision #33 canonical-
   WHOLE_CLASS invariant is broken for a class, rather than guessing.
-- **`api/`** (3C.2b, implemented on feature branch, pending review): a
-  new `api/teaching_assignment_routes.py` composed the same way
+- **`api/`** (3C.2b, implemented, reviewed, merged to `main` at commit
+  `9570358`): a new `api/teaching_assignment_routes.py` composed the same way
   `dependencies.py` already composes every other route -- never a
   second composition root -- adding `GET`/`POST
   /schools/{school_id}/years/{year_id}/teaching-assignments` and

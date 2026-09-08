@@ -1681,8 +1681,9 @@ this implementation followed them as given.
     **Phase 3C.2b**.
 
     **Implementation note (Phase 3C.2b, no new owner decision --
-    implemented on branch `feature/phase-3c2b-teaching-assignment-api`,
-    pending review/commit).** A read-only technical contract gate
+    IMPLEMENTED, REVIEWED, COMMITTED, and MERGED to `main` at commit
+    `9570358`; Phase 3C.2b CLOSED; Phase 3C.2 backend/API milestone now
+    complete).** A read-only technical contract gate
     preceding implementation found **zero** genuine owner decisions
     remaining: every open question (route shape, request/response
     contracts, error-code mapping, ordering, empty/partial-state
