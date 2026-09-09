@@ -1433,15 +1433,15 @@ schedule history.
 
 **Minimal Schedule Generation Trigger UI is CLOSED.**
 
-**Next product slice: Teacher Timetable View** (no new phase number --
-outside 3C.1-3C.5's own locked decision set, same as the schedule-
-generation trigger before it). The product owner selected this ahead
-of 3C.5's broader reference-data CRUD; the architecture/product gate
-confirmed the same backend-projection boundary already proven for the
-class timetable applies directly, with zero schema/migration/solver
-changes needed. **Implemented on branch
-`feature/teacher-timetable-view`, pending review -- not yet committed,
-not merged, not pushed.**
+**Teacher Timetable View** (no new phase number -- outside
+3C.1-3C.5's own locked decision set, same as the schedule-generation
+trigger before it). The product owner selected this ahead of 3C.5's
+broader reference-data CRUD; the architecture/product gate confirmed
+the same backend-projection boundary already proven for the class
+timetable applies directly, with zero schema/migration/solver changes
+needed. **IMPLEMENTED, REVIEWED (manually browser-reviewed by the
+product owner), COMMITTED, and MERGED to `main` at commit `a8d8e75` --
+CLOSED.**
 
 Backend: a new sibling application projection,
 `application/teacher_timetable_service.py::TeacherTimetableService`
@@ -1542,6 +1542,13 @@ free-cell/zero-load rendering, every state, and Class-mode regression);
 beyond the 25 new tests above (`pytest tests_web` 147 passed total;
 `pytest tests -m "not slow"` 194 passed/5 deselected total); Alembic
 still `01b2ae564170 (head)`, no drift.
+
+**Teacher Timetable View is CLOSED.** Explicitly still separate future
+work, none of it pulled into this slice: real-school setup/reference-
+data CRUD (Teachers, Classes, Subjects/Activities), lunch/break
+presentation, an all-school/master timetable, manual schedule editing,
+locks UI, regeneration/reoptimization, and schedule history. Next
+product slice: to be selected after Teacher Timetable View closure.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

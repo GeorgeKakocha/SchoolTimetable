@@ -1236,9 +1236,9 @@ this implementation followed them as given.
     exactly as excluded.
 
     **Implementation note (no new owner decision -- product-owner
-    locked, no phase number invented; implemented on branch
-    `feature/teacher-timetable-view`, pending review -- not yet
-    committed, not merged, not pushed).** The "a teacher timetable"
+    locked, no phase number invented; IMPLEMENTED, REVIEWED (manually
+    browser-reviewed by the product owner), COMMITTED, and MERGED to
+    `main` at commit `a8d8e75` -- CLOSED).** The "a teacher timetable"
     exclusion above is likewise revisited: a sibling read-only
     projection, `GET .../schedule/active/teachers/{teacher_id}`
     (`TeacherTimetableService`, mirroring `ClassTimetableService`'s
