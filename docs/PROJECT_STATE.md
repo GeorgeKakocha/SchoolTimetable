@@ -1978,3 +1978,82 @@ Subgroups/Merged Classes editing, rooms/resources administration, a
 calendar/day-period editor, School/AcademicYear CRUD, authentication/
 user management, and other advanced scheduling-policy UI all remain
 explicitly outside this MVP's scope, as future work.
+
+**Owner Decision #38 -- Teacher Availability exposes all three
+established `AvailabilityStatus` states: `AVAILABLE`** (sparse
+default -- absence of a row; schedulable normally), **`PREFER_NOT`**
+(persisted sparse exception; SOFT solver preference -- discouraged via
+a weighted objective penalty, never forbidden), **`UNAVAILABLE`**
+(persisted sparse exception; HARD solver constraint -- forces the
+corresponding lesson variable to zero). All three were already fully
+implemented in the domain/solver before this decision; the first
+Teacher Availability product/API surface exposes all three from the
+start -- `PREFER_NOT` is not a deferred future feature, and this is
+not a binary-only surface.
+
+**Teacher Availability Slice A (backend read/bulk-write/persistence/
+API): IMPLEMENTED, REVIEWED, real HTTP API reviewed, COMMITTED, and
+MERGED to `main` at commit `24c1b04` "feat: add teacher availability
+backend" -- CLOSED. Not pushed.** Write unit is one Teacher's complete
+desired sparse exception set (never per-cell CRUD): `PUT
+.../teacher-availability/{teacher_id}` atomically reconciles
+persisted rows to match the request (delete no-longer-desired cells,
+update a changed status in place preserving `ordinal`, insert new
+cells with the next `ordinal` computed across the whole
+`AcademicYear`, sorted by `Day.index`/`Period.index`). An explicit
+`AVAILABLE` entry is rejected (`422 INVALID_TEACHER_AVAILABILITY`,
+`AVAILABLE_EXCEPTION_MUST_BE_OMITTED`) rather than silently dropped;
+an in-request duplicate cell is rejected
+(`DUPLICATE_AVAILABILITY_CELL`); an unknown status is rejected
+(`UNKNOWN_AVAILABILITY_STATUS`); unknown day/period reuses the
+existing generic `UnknownReferenceError`/`422 UNKNOWN_REFERENCE`
+contract verbatim; a missing Teacher reuses the existing
+`TeacherNotFoundError`/`404 "Teacher not found"` contract verbatim.
+`GET .../teacher-availability` is a new dedicated sparse
+*exception-only* projection (`PREFER_NOT`/`UNAVAILABLE` rows only,
+never `AVAILABLE`) -- `GET /config`'s own `teacher_availabilities`
+field is untouched and keeps exposing every persisted row under its
+existing, unrelated contract. The new `TeacherAvailabilityRepository`
+write port reuses the existing configuration write lock
+(Decision #35) and generation-race safety (Decision #36) completely
+unchanged -- `SchedulingProblem.teacher_availabilities` was already
+covered by the frozen dataclass's own equality, proven by two new
+deterministic race tests (write-before-generation-persist aborts
+generation; generation-persists-first blocks a later write). A narrow
+preflight defense-in-depth diagnostic,
+`DUPLICATE_TEACHER_AVAILABILITY_CELL`, was added for an in-memory
+problem with two rows for the same cell (impossible once persisted --
+the table's composite primary key forbids it). Teacher-delete-blocked-
+by-`TEACHER_AVAILABILITY` behavior is unchanged and reconfirmed
+unregressed. **Zero migration** -- the `teacher_availability` table's
+existing composite natural primary key, `ordinal`/uniqueness, status
+check constraint, and FK behavior were already fully sufficient. Zero
+frontend production change, zero solver production change (only new
+tests were added proving the existing `UNAVAILABLE`-HARD/
+`PREFER_NOT`-SOFT behavior against small, deterministic, purpose-built
+problems).
+
+A new local-only, unlocked review dataset,
+`teacher-availability-review-school`/
+`ay-teacher-availability-review-2026` (a full pilot clone, zero
+`Schedule`), was created and is retained as durable acceptance
+evidence -- live-validated this session against the real dev server's
+actual HTTP API: GET/PUT/GET-reflects/`/config`-reflects/empty-clears/
+other-teachers-unchanged/no-Schedule all confirmed. All six
+pre-existing canonical/review datasets were snapshotted (including
+`TeacherAvailability` counts) and confirmed unchanged.
+
+Test gate: core `tests -m "not slow"` 309 passed/5 deselected (283
+pre-existing + 26 new); canonical single-process `tests_web` 288
+passed (254 pre-existing + 34 new), zero DB-reachability skips,
+confirmed on two consecutive runs; existing Teacher-delete-blocker,
+`/config` serializer, persistence mapper/schema, and
+`UNAVAILABLE`-HARD solver tests all reconfirmed unregressed; frontend
+259 passed (unchanged), build clean; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. Explicitly NOT part of this
+slice: any frontend Teacher Availability surface, a per-cell write
+endpoint, immediate-save behavior, Club/ReservedBlock UI, a calendar
+editor, any Teacher CRUD change, any migration. **Availability B
+(frontend page/grid) has not been implemented.** The overall Teacher
+Availability phase is **not** complete. Next planned slice: **Teacher
+Availability Slice B -- frontend page/grid** (not started).

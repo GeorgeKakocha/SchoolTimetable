@@ -2434,3 +2434,141 @@ editing, rooms/resources administration, a calendar/day-period editor,
 School/AcademicYear CRUD, authentication/user management, and other
 advanced scheduling-policy UI all remain explicitly outside this MVP's
 scope, as future work.
+
+---
+
+**Owner Decision #38 -- Teacher Availability exposes all three
+established `AvailabilityStatus` states.** The domain/solver already
+implemented, before this decision, all three states the design gate
+discovered: `AVAILABLE` (the sparse default -- absence of an explicit
+`TeacherAvailability` row; schedulable normally), `PREFER_NOT` (a
+persisted sparse exception; a SOFT solver preference -- discouraged
+via a weighted objective penalty, never forbidden), and `UNAVAILABLE`
+(a persisted sparse exception; a HARD solver constraint -- the
+corresponding lesson variable is forced to zero). The first Teacher
+Availability product/API surface exposes **all three** -- `PREFER_NOT`
+is not deferred as a future feature, and this is not a binary-only
+surface. This is the one genuine Owner Decision the design gate
+identified (the alternative -- launching binary `AVAILABLE`/
+`UNAVAILABLE`-only and deferring `PREFER_NOT` UI exposure to a later
+slice -- was explicitly rejected in favor of exposing the
+already-fully-implemented three-state model from the start).
+
+**Real-School Setup MVP's next product phase -- Teacher Availability
+Slice A (backend read/bulk-write/persistence/API) update: IMPLEMENTED,
+REVIEWED, real HTTP API reviewed, COMMITTED, and MERGED to `main` at
+commit `24c1b04` "feat: add teacher availability backend" -- CLOSED.
+Not pushed.** Backend-only, per Owner Decision #38's locked write
+contract: the write unit is one Teacher's *complete desired sparse
+exception set*, never per-cell CRUD -- `PUT
+/schools/{school_id}/years/{year_id}/teacher-availability/{teacher_id}`
+atomically reconciles that Teacher's persisted `PREFER_NOT`/
+`UNAVAILABLE` rows to match the request exactly (existing cells no
+longer desired are deleted, a changed status is updated in place
+preserving `ordinal`, newly-desired cells are inserted with the next
+`ordinal` computed across the whole `AcademicYear` -- never restarting
+per Teacher -- sorted by `Day.index`/`Period.index` for deterministic
+insertion order, never request order); an explicit `AVAILABLE` entry
+in the request is rejected (`422 INVALID_TEACHER_AVAILABILITY`,
+`AVAILABLE_EXCEPTION_MUST_BE_OMITTED`), never silently normalized
+away, keeping the sparse contract unambiguous; an in-request duplicate
+`(day_id, period_id)` cell is rejected
+(`DUPLICATE_AVAILABILITY_CELL`), never last-write-wins; an unknown
+status string is rejected (`UNKNOWN_AVAILABILITY_STATUS`); an unknown
+`day_id`/`period_id` reuses the existing, genuinely generic
+`UnknownReferenceError`/`422 UNKNOWN_REFERENCE` contract verbatim (not
+forced -- its wording carries no Teaching-Assignment-specific
+language); a missing Teacher reuses the existing `TeacherNotFoundError`/
+`404 "Teacher not found"` contract verbatim. `GET
+/schools/{school_id}/years/{year_id}/teacher-availability` is a new,
+dedicated, sparse *exception-only* projection (`configuration_locked`,
+authoritatively-ordered `teachers`/`days`/`periods`, and only
+`PREFER_NOT`/`UNAVAILABLE` rows -- never `AVAILABLE`) -- entirely
+separate from, and non-breaking to, `GET /config`'s own existing
+`teacher_availabilities` field, which continues exposing every
+persisted row (including any legacy explicit `AVAILABLE` row) under
+its own unrelated general-configuration contract, unchanged.
+`TeacherAvailabilityRepository` (the fifth configuration write port)
+reuses `persistence/configuration_write_lock.py` unchanged -- the
+identical `SCHEDULING_CONFIGURATION_LOCKED` (Decision #35) and
+generation-race (Decision #36) guarantees every other configuration
+writer already has, proven by two new deterministic race tests: (A)
+an availability write commits after generation loads its problem but
+before generation's final lock-protected persist, which then detects
+the changed `SchedulingProblem` (`teacher_availabilities` is an
+ordinary dataclass field, already covered by the frozen dataclass's
+auto-generated `__eq__` with zero new code) and aborts with
+`ConfigurationChangedDuringGenerationError`, persisting no `Schedule`
+row; (B) generation persists first, and a subsequent availability
+write is rejected with the standard `SCHEDULING_CONFIGURATION_LOCKED`
+contract, with zero row changes. A narrow preflight defense-in-depth
+diagnostic, `DUPLICATE_TEACHER_AVAILABILITY_CELL`, was also added --
+persistence itself cannot contain two rows for the same
+`(teacher_id, day_id, period_id)` cell (the table's own composite
+primary key forbids it), but an arbitrary in-memory/imported
+`SchedulingProblem` could, and `ProblemIndex.get_availability` would
+otherwise silently let the last one win; preflight now rejects such a
+problem outright, for either matching or conflicting duplicate
+statuses. Existing Teacher-delete-blocked-by-`TEACHER_AVAILABILITY`
+behavior is unchanged and reconfirmed unregressed -- this slice never
+touches `TeacherService`/`TeacherRepository`. Zero schema/migration
+impact (the `teacher_availability` table's composite natural primary
+key, `ordinal` column with its own `AcademicYear`-scoped uniqueness
+constraint, `status` check constraint, and FK/cascade/restrict
+behavior were already fully sufficient for a production write path --
+confirmed by inspection during the design gate, not merely assumed),
+zero frontend production change (confirmed: `git diff --name-only --
+frontend/` empty), zero solver production change (the existing
+`UNAVAILABLE`-forces-zero and `PREFER_NOT`-weighted-penalty code is
+untouched; only new tests were added proving both halves of the
+distinction against small, deterministic, purpose-built problems,
+since the design gate could previously only prove them by code
+construction).
+
+A NEW local-only, unlocked review dataset,
+`teacher-availability-review-school`/
+`ay-teacher-availability-review-2026` (a full clone of the canonical
+pilot configuration, seeded via the existing TEST-ONLY
+`write_scheduling_problem`, zero `Schedule`), was created and is
+retained as durable local acceptance evidence -- live-validated this
+session against the real, running dev server's actual HTTP API (not
+merely the application-service layer): `GET .../teacher-availability`
+returns the fixture's existing 3 sparse exception rows unchanged;
+`PUT .../teacher-availability/t_math` with one `UNAVAILABLE` + one
+`PREFER_NOT` cell succeeds and is reflected exactly by both the
+dedicated `GET` and `GET /config`; `PUT` with an empty exception list
+clears only `t_math`'s exceptions, leaving `t_science`/`t_history`'s
+pre-existing rows untouched; no `Schedule` exists throughout. All six
+pre-existing canonical/review datasets (`synthetic-school`/`ay-2026`,
+`synthetic-review-school`/`ay-review-2026`,
+`teacher-crud-review-school`/`ay-teacher-crud-2026`,
+`class-crud-review-school`/`ay-class-crud-2026`,
+`subject-crud-review-school`/`ay-subject-crud-2026`,
+`real-school-browser-smoke-school`/`ay-real-school-browser-smoke-2026`)
+were snapshotted (now including `TeacherAvailability` row counts) and
+confirmed unchanged -- none were touched; this implementation issued
+no write against any of them, and every automated test runs against
+the separate test database, never the dev database these datasets
+live in.
+
+Test gate: core `tests -m "not slow"` 309 passed/5 deselected (283
+pre-existing + 26 new: 20 pure `tests/test_teacher_availability_service.py`
++ 3 `tests/test_preflight.py` duplicate-cell diagnostics + 3
+`tests/test_teacher_availability_solver.py` HARD/SOFT proofs);
+canonical single-process `tests_web` 288 passed (254 pre-existing + 34
+new: 14 `tests_web/test_teacher_availability_repository.py` + 20
+`tests_web/test_teacher_availability_api.py`), zero DB-reachability
+skips, confirmed on two consecutive runs; existing Teacher-delete-
+blocker, `/config` serializer, persistence mapper/schema, and
+`UNAVAILABLE`-HARD solver tests all reconfirmed unregressed; frontend
+185+74=259 passed (unchanged), build clean; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. Explicitly NOT part of this
+slice: any frontend Teacher Availability surface (page, nav, route,
+API client, types, matrix UI, CSS), a per-cell write endpoint,
+immediate-save behavior, Club/ReservedBlock UI, a calendar editor, any
+Teacher CRUD change, and any migration. The broader Real-School Setup
+MVP successor work is **not** complete -- this is Teacher Availability
+Slice A only, and **Availability B (frontend page/grid) has not been
+implemented.** The overall Teacher Availability phase is **not**
+complete. Next planned slice: **Teacher Availability Slice B --
+frontend page/grid** (not started).
