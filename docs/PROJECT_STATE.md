@@ -1431,8 +1431,117 @@ visual presentation, an all-school/master timetable, manual schedule
 editing, locks UI, reoptimization, the regeneration lifecycle, and
 schedule history.
 
-**Minimal Schedule Generation Trigger UI is CLOSED.** Next product
-slice: to be selected after Schedule Generation UI closure.
+**Minimal Schedule Generation Trigger UI is CLOSED.**
+
+**Next product slice: Teacher Timetable View** (no new phase number --
+outside 3C.1-3C.5's own locked decision set, same as the schedule-
+generation trigger before it). The product owner selected this ahead
+of 3C.5's broader reference-data CRUD; the architecture/product gate
+confirmed the same backend-projection boundary already proven for the
+class timetable applies directly, with zero schema/migration/solver
+changes needed. **Implemented on branch
+`feature/teacher-timetable-view`, pending review -- not yet committed,
+not merged, not pushed.**
+
+Backend: a new sibling application projection,
+`application/teacher_timetable_service.py::TeacherTimetableService`
+(mirrors `ClassTimetableService` exactly -- same two repository ports,
+same no-DB-session-held-during-projection discipline, same strict
+by-ID lookup that raises `KeyError` on a malformed stored reference
+rather than inventing a display label), a new `TeacherNotFoundError`
+(`application/errors.py`, mirrors `ClassSectionNotFoundError`), the
+`TeacherTimetableResponse` schema family (`api/schemas.py`) and its
+serializer (`api/serializer.py::teacher_timetable_response_from_view`),
+composed via a new `get_teacher_timetable_service` dependency
+(`api/dependencies.py`, identical session-factory-backed composition),
+and the sibling route `GET .../schedule/active/teachers/{teacher_id}`
+(`api/schedule_routes.py`) with the exact same error-mapping style as
+the class route (404 `Scheduling configuration not found`/`Active
+schedule not found`/`Teacher not found`, no new structured `code`).
+`TeacherTimetableEntry` additionally carries `participant_group_role`
+and resolved `class_sections` (never present on `ClassTimetableEntry`,
+which doesn't need them) so the frontend can reproduce the
+WHOLE_CLASS/SUBGROUP/MERGED_CLASSES display rule already established
+for Teaching Assignments without ever inferring role from name/count.
+Covered by a pure, DB-free fake-repository suite
+(`tests/test_teacher_timetable_service.py`, 14 tests, mirroring
+`tests/test_class_timetable_service.py`, including a strict-lookup
+`KeyError` test) and a real-PostgreSQL/real-solver integration suite
+(`tests_web/test_teacher_timetable_api.py`, 11 tests, mirroring
+`tests_web/test_class_timetable_api.py`, including a zero-load-teacher
+case built via `dataclasses.replace` on the valid fixture). **No
+schema/migration change; Alembic head unchanged at `01b2ae564170`.**
+
+Frontend: `TimetablePage` gained a `mode: "class" | "teacher"` switch
+(compact "Class | Teacher" toggle, `aria-pressed`) -- still exactly one
+`/timetable` route, no new top-nav destination. Class mode is
+byte-for-byte unchanged (selector, grid, Generate schedule, every
+existing state). Teacher mode is a fully independent sibling: its own
+`TeacherSelector` component (mirrors `ClassSelector` exactly, sourced
+from `configState.config.teachers` -- the same single `/config` fetch
+this page already made, now additionally mirroring `teachers` as a
+narrow `TeacherSummary[]`, zero coupling to
+`TeachingAssignmentsPage`'s own separate `TeacherOption`), its own
+`getTeacherTimetable` fetch effect (own `AbortController`, same
+stale-response race guard as class switching), and a dedicated
+`TeacherTimetableGrid` component (not a generalization of
+`TimetableGrid` -- the entry shapes differ enough that forcing both
+through one abstraction would blur rather than clarify either one).
+Both modes' data fetch independently of which is currently visible, so
+switching is instant with no new network request, and both refetch
+together on the same `generationRefreshToken` Generate already bumps
+(a generated schedule is school/year-wide, affecting both projections
+identically). Generate stays Class-mode-only, never duplicated into
+Teacher mode. WHOLE_CLASS entries show the class name directly, no
+badge; SUBGROUP/MERGED_CLASSES entries show the participant group's
+name plus the existing quiet `.group-role-badge` (the two-entry label
+mapping is duplicated locally in `TeacherTimetableGrid.tsx` rather than
+extracted, per the smallest-solution guidance -- `TeachingAssignmentsPage.tsx`
+was not touched). Free periods render as blank cells, never the text
+"Free". A zero-teachers state shows "No teachers are configured for
+this school/year yet."; a no-schedule-yet teacher state shows "No
+schedule has been generated yet." (no Generate control). Lunch/break
+presentation remains explicitly deferred -- `Period.block_id`/
+`is_instructional` already exist and require no future schema/solver
+change to surface, but neither is exposed by this slice.
+
+Verified live (assistant, API-level) against the real running backend/
+frontend on the local-only `synthetic-review-school`/`ay-review-2026`
+dataset (8 teachers, its already-generated version-1 schedule from the
+Schedule Generation UI's own manual review): `GET
+.../schedule/active/teachers/t_german` correctly returned a SUBGROUP
+target (`8-A German`), `t_history` correctly returned a MERGED_CLASSES
+target (`9-A + 9-B Merged History`, both `9-A`/`9-B` resolved), and an
+unknown teacher ID correctly returned `404 {"detail": "Teacher not
+found"}`. The canonical `synthetic-school`/`ay-2026` pilot was
+reconfirmed untouched throughout (`configuration_locked: true`, 25
+assignments, its pre-existing version-1 schedule unchanged).
+
+**Manual browser review by the product owner PASSED**, on the same
+`synthetic-review-school`/`ay-review-2026` dataset: Class mode
+rendered correctly; the Class | Teacher switch worked; **Teacher
+Math**'s normal whole-class timetable rendered with correct
+activity/class labels and free periods staying blank; **Teacher
+Russian**'s SUBGROUP timetable showed the `8-A Russian` target with
+the correct SUBGROUP badge; **Teacher History**'s MERGED_CLASSES
+timetable was confirmed at Friday/Period 3 showing exactly `History` /
+`9-A + 9-B Merged History` / `MERGED CLASSES`; switching between
+teacher selections worked; the existing generated Version 1 remained
+visible and correct throughout; Teacher mode showed no Generate
+control; and Class mode remained fully functional with the existing
+generated schedule. This completes manual proof for WHOLE_CLASS,
+SUBGROUP, MERGED_CLASSES, free cells, and Class/Teacher mode
+switching.
+
+Frontend test gate: 185 tests passing (154 plus 31 new -- 5
+`TeacherSelector` component tests, 7 `getTeacherTimetable` API-client
+tests, and 19 new `TimetablePage` Teacher-mode tests covering mode
+switching, the teacher selector, WHOLE_CLASS/SUBGROUP/MERGED_CLASSES/
+free-cell/zero-load rendering, every state, and Class-mode regression);
+`npm run build` succeeds. Backend regression reconfirmed unaffected
+beyond the 25 new tests above (`pytest tests_web` 147 passed total;
+`pytest tests -m "not slow"` 194 passed/5 deselected total); Alembic
+still `01b2ae564170 (head)`, no drift.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

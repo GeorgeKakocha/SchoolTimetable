@@ -1,14 +1,19 @@
 """`GET /schools/{school_id}/years/{year_id}/schedule/active`,
 `POST /schools/{school_id}/years/{year_id}/schedule/generate` (Phase
-3A3.4, `docs/DECISIONS.md` #31's locked HTTP contract), and
+3A3.4, `docs/DECISIONS.md` #31's locked HTTP contract),
 `GET /schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id}`
-(Phase 3B.1, `docs/DECISIONS.md` #32's locked HTTP contract).
+(Phase 3B.1, `docs/DECISIONS.md` #32's locked HTTP contract), and
+`GET /schools/{school_id}/years/{year_id}/schedule/active/teachers/{teacher_id}`
+(next product slice after Phase 3C.3, no new phase number -- the
+sibling teacher-timetable projection, same architecture/error
+conventions as the class-timetable route directly below it).
 
-All three routes depend only on `application/` Protocols/services
+All four routes depend only on `application/` Protocols/services
 (`ScheduleVersionRepository`, `GenerateScheduleService`,
-`ClassTimetableService`), never on a concrete `persistence/` class --
-the composition root wiring those concrete, session-factory-backed
-adapters lives entirely in `api/dependencies.py`.
+`ClassTimetableService`, `TeacherTimetableService`), never on a
+concrete `persistence/` class -- the composition root wiring those
+concrete, session-factory-backed adapters lives entirely in
+`api/dependencies.py`.
 
 `school_id`/`year_id` are natural/domain IDs, never surrogate ones,
 matching `/config`'s existing convention exactly.
@@ -53,6 +58,19 @@ already uses for the same underlying state; `ClassSectionNotFoundError`
 still code-less 404. No new stable `code` is introduced for any of
 these three. Any other unexpected exception (including a corrupt
 persisted `Schedule` state) is, again, deliberately not caught here.
+
+The teacher-timetable projection route's error mapping is the exact
+sibling of the class-timetable route's own, one level narrower:
+`SchedulingProblemNotFoundError` -> 404 (same body); no active
+`Schedule` yet (`TeacherTimetableService.project` returning `None`) ->
+404, `{"detail": "Active schedule not found"}` (the identical body,
+again); `TeacherNotFoundError` -> 404, `{"detail": "Teacher not
+found"}`. No new stable `code` is introduced here either -- no
+structured error codes exist on the sibling class route, so none are
+invented for this one. Any other unexpected exception (including a
+malformed stored teacher/group/class reference inside an entry, a
+genuine configuration defect) is, again, deliberately not caught here
+-- never silently papered over with an invented display label.
 """
 from __future__ import annotations
 
@@ -63,6 +81,7 @@ from school_timetable.api.dependencies import (
     get_class_timetable_service,
     get_generate_schedule_service,
     get_schedule_version_repository,
+    get_teacher_timetable_service,
 )
 from school_timetable.api.schemas import (
     ActiveScheduleResponse,
@@ -70,11 +89,13 @@ from school_timetable.api.schemas import (
     GenerateScheduleResponse,
     GenerationErrorResponse,
     InvalidConfigurationResponse,
+    TeacherTimetableResponse,
 )
 from school_timetable.api.serializer import (
     active_schedule_response_from_active_version,
     class_timetable_response_from_view,
     generate_response_from_active_version,
+    teacher_timetable_response_from_view,
     validation_diagnostic_response_from_error,
 )
 from school_timetable.application.class_timetable_service import ClassTimetableService
@@ -85,9 +106,11 @@ from school_timetable.application.errors import (
     ScheduleAlreadyExistsError,
     ScheduleInfeasibleError,
     SchedulingProblemNotFoundError,
+    TeacherNotFoundError,
 )
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository
+from school_timetable.application.teacher_timetable_service import TeacherTimetableService
 
 router = APIRouter()
 
@@ -178,3 +201,24 @@ def get_class_timetable(
     if view is None:
         raise HTTPException(status_code=404, detail="Active schedule not found")
     return class_timetable_response_from_view(view)
+
+
+@router.get(
+    "/schools/{school_id}/years/{year_id}/schedule/active/teachers/{teacher_id}",
+    response_model=TeacherTimetableResponse,
+)
+def get_teacher_timetable(
+    school_id: str,
+    year_id: str,
+    teacher_id: str,
+    service: TeacherTimetableService = Depends(get_teacher_timetable_service),
+) -> TeacherTimetableResponse:
+    try:
+        view = service.project(school_id, year_id, teacher_id)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except TeacherNotFoundError:
+        raise HTTPException(status_code=404, detail="Teacher not found") from None
+    if view is None:
+        raise HTTPException(status_code=404, detail="Active schedule not found")
+    return teacher_timetable_response_from_view(view)

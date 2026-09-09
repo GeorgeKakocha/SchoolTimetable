@@ -1,8 +1,21 @@
 import { useEffect, useState } from "react";
 import ClassSelector from "../components/ClassSelector";
+import TeacherSelector from "../components/TeacherSelector";
+import TeacherTimetableGrid from "../components/TeacherTimetableGrid";
 import TimetableGrid from "../components/TimetableGrid";
-import { ApiError, generateSchedule, getClassTimetable, getSchedulingConfigIndex } from "../api/client";
-import type { ClassTimetableResponse, SchedulingConfigIndexResponse, ValidationDiagnostic } from "../api/types";
+import {
+  ApiError,
+  generateSchedule,
+  getClassTimetable,
+  getSchedulingConfigIndex,
+  getTeacherTimetable,
+} from "../api/client";
+import type {
+  ClassTimetableResponse,
+  SchedulingConfigIndexResponse,
+  TeacherTimetableResponse,
+  ValidationDiagnostic,
+} from "../api/types";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
 
 /**
@@ -25,20 +38,37 @@ import { AppConfigError, loadAppConfig } from "../config/appConfig";
  * `class_sections`/the loading/error/no-classes states -- only its
  * former display of `school.name`/`academic_year.label` was removed.
  *
- * Next product slice (product-owner locked, no phase number invented):
- * a minimal schedule-generation trigger, living entirely in this
- * page's existing "no-schedule" empty state -- the one missing step in
- * the school configuration -> generation -> timetable review pipeline
- * that was previously only reachable outside the browser. Reuses the
+ * Schedule-generation trigger (product-owner locked, no phase number
+ * invented): a minimal Generate action living entirely in the Class
+ * mode's "no-schedule" empty state -- the one missing step in the
+ * school configuration -> generation -> timetable review pipeline that
+ * was previously only reachable outside the browser. Reuses the
  * already-merged, no-request-body `POST .../schedule/generate`
  * (Decision #31) unchanged; on success (or a stale-browser
  * `SCHEDULE_ALREADY_EXISTS`) it re-runs the exact same authoritative
- * `getClassTimetable` fetch this page already performs -- never a
- * hand-built timetable from the generate response body, never a
- * second display path. State stays local (`generating`/
+ * `getClassTimetable`/`getTeacherTimetable` fetches this page already
+ * performs -- never a hand-built timetable from the generate response
+ * body, never a second display path. State stays local (`generating`/
  * `generateError`/`generateDiagnostics`/`generationRefreshToken`); no
  * Redux/Zustand/query library, no coupling to `TeachingAssignmentsPage`
  * (it becomes locked purely from its own next `GET`).
+ *
+ * Teacher Timetable (next product slice after Phase 3C.3, no new phase
+ * number): a `mode: "class" | "teacher"` switch, still ONE `/timetable`
+ * route (no new route, no new top-nav destination) -- Class mode is
+ * entirely unchanged, Teacher mode is a sibling read-only projection
+ * using the exact same architecture (`getTeacherTimetable` ->
+ * `TeacherTimetableGrid`, never React-side reconstruction). Both
+ * modes' data fetch independently of which is currently visible (so
+ * switching between them is instant, never a fresh network request),
+ * and both refetch together whenever `generationRefreshToken` bumps,
+ * since Generate is a school/year-wide action that affects both
+ * projections identically. Generate itself stays Class-mode-only --
+ * Teacher mode never duplicates it. `configState.config.teachers`
+ * (sourced from the same single `/config` fetch this page already
+ * makes) is the sole, authoritative teacher-selector source -- no
+ * coupling to `TeachingAssignmentsPage`'s own separate `TeacherOption`
+ * mirror.
  */
 
 type AppConfigResult =
@@ -56,6 +86,15 @@ type TimetableState =
   | { status: "loaded"; timetable: ClassTimetableResponse }
   | { status: "no-schedule" }
   | { status: "error"; message: string };
+
+type TeacherTimetableState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "loaded"; timetable: TeacherTimetableResponse }
+  | { status: "no-schedule" }
+  | { status: "error"; message: string };
+
+type TimetableMode = "class" | "teacher";
 
 function describeApiError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -119,6 +158,10 @@ function TimetablePage() {
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [timetableState, setTimetableState] = useState<TimetableState>({ status: "idle" });
 
+  const [mode, setMode] = useState<TimetableMode>("class");
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
+  const [teacherTimetableState, setTeacherTimetableState] = useState<TeacherTimetableState>({ status: "idle" });
+
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [generateDiagnostics, setGenerateDiagnostics] = useState<ValidationDiagnostic[]>([]);
@@ -144,6 +187,10 @@ function TimetablePage() {
         const firstClass = index.class_sections[0];
         if (firstClass !== undefined) {
           setSelectedClassId(firstClass.id);
+        }
+        const firstTeacher = index.teachers[0];
+        if (firstTeacher !== undefined) {
+          setSelectedTeacherId(firstTeacher.id);
         }
       })
       .catch((error: unknown) => {
@@ -201,6 +248,46 @@ function TimetablePage() {
     };
   }, [appConfigResult, configState.status, selectedClassId, generationRefreshToken]);
 
+  // Load the selected teacher's live timetable -- the Teacher mode
+  // sibling of the class-timetable effect above, kept as a fully
+  // independent fetch/state machine (its own `AbortController`, its
+  // own cleanup) so a rapid Teacher A -> Teacher B switch can never let
+  // Teacher A's late response overwrite Teacher B's, exactly mirroring
+  // the class-switch race guard. Runs regardless of which `mode` is
+  // currently visible -- both projections stay loaded together, so
+  // switching modes is instant, never a fresh network request -- and
+  // re-runs on the same `generationRefreshToken` bump, since Generate
+  // is a school/year-wide action affecting both projections identically.
+  useEffect(() => {
+    if (!appConfigResult.ok || configState.status !== "ready" || selectedTeacherId === "") {
+      return;
+    }
+    const controller = new AbortController();
+    setTeacherTimetableState({ status: "loading" });
+
+    getTeacherTimetable(appConfigResult.schoolId, appConfigResult.academicYearId, selectedTeacherId, controller.signal)
+      .then((timetable) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setTeacherTimetableState({ status: "loaded", timetable });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        if (error instanceof ApiError && error.detail === "Active schedule not found") {
+          setTeacherTimetableState({ status: "no-schedule" });
+          return;
+        }
+        setTeacherTimetableState({ status: "error", message: describeApiError(error) });
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [appConfigResult, configState.status, selectedTeacherId, generationRefreshToken]);
+
   async function handleGenerateClick() {
     if (!appConfigResult.ok || generating) {
       return;
@@ -239,45 +326,89 @@ function TimetablePage() {
 
       {appConfigResult.ok && configState.status === "ready" && (
         <>
-          {configState.config.class_sections.length === 0 ? (
-            <p>No classes are configured for this school/year yet.</p>
+          <div className="timetable-mode-switch" role="group" aria-label="Timetable view">
+            <button
+              type="button"
+              className="mode-switch-button"
+              aria-pressed={mode === "class"}
+              onClick={() => setMode("class")}
+            >
+              Class
+            </button>
+            <button
+              type="button"
+              className="mode-switch-button"
+              aria-pressed={mode === "teacher"}
+              onClick={() => setMode("teacher")}
+            >
+              Teacher
+            </button>
+          </div>
+
+          {mode === "class" ? (
+            configState.config.class_sections.length === 0 ? (
+              <p>No classes are configured for this school/year yet.</p>
+            ) : (
+              <>
+                <ClassSelector
+                  classSections={configState.config.class_sections}
+                  selectedClassId={selectedClassId}
+                  onChange={setSelectedClassId}
+                />
+
+                {timetableState.status === "loading" && <p>Loading timetable…</p>}
+                {timetableState.status === "no-schedule" && (
+                  <div className="generate-action">
+                    <p>No schedule has been generated yet for this class.</p>
+                    <button type="button" className="btn-primary" onClick={handleGenerateClick} disabled={generating}>
+                      {generating ? "Generating…" : "Generate schedule"}
+                    </button>
+                    {generateError !== null && (
+                      <div role="alert" className="generate-error">
+                        <p>{generateError}</p>
+                        {generateDiagnostics.length > 0 && (
+                          <ul className="generate-diagnostics">
+                            {generateDiagnostics.map((diagnostic, index) => (
+                              <li key={`${diagnostic.code}-${index}`}>{diagnostic.message}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {timetableState.status === "error" && <p role="alert">{timetableState.message}</p>}
+                {timetableState.status === "loaded" && (
+                  <>
+                    <p className="timetable-meta">
+                      {timetableState.timetable.class_section_name} · Version{" "}
+                      {timetableState.timetable.version_number}
+                    </p>
+                    <TimetableGrid timetable={timetableState.timetable} />
+                  </>
+                )}
+              </>
+            )
+          ) : configState.config.teachers.length === 0 ? (
+            <p>No teachers are configured for this school/year yet.</p>
           ) : (
             <>
-              <ClassSelector
-                classSections={configState.config.class_sections}
-                selectedClassId={selectedClassId}
-                onChange={setSelectedClassId}
+              <TeacherSelector
+                teachers={configState.config.teachers}
+                selectedTeacherId={selectedTeacherId}
+                onChange={setSelectedTeacherId}
               />
 
-              {timetableState.status === "loading" && <p>Loading timetable…</p>}
-              {timetableState.status === "no-schedule" && (
-                <div className="generate-action">
-                  <p>No schedule has been generated yet for this class.</p>
-                  <button type="button" className="btn-primary" onClick={handleGenerateClick} disabled={generating}>
-                    {generating ? "Generating…" : "Generate schedule"}
-                  </button>
-                  {generateError !== null && (
-                    <div role="alert" className="generate-error">
-                      <p>{generateError}</p>
-                      {generateDiagnostics.length > 0 && (
-                        <ul className="generate-diagnostics">
-                          {generateDiagnostics.map((diagnostic, index) => (
-                            <li key={`${diagnostic.code}-${index}`}>{diagnostic.message}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-              {timetableState.status === "error" && <p role="alert">{timetableState.message}</p>}
-              {timetableState.status === "loaded" && (
+              {teacherTimetableState.status === "loading" && <p>Loading timetable…</p>}
+              {teacherTimetableState.status === "no-schedule" && <p>No schedule has been generated yet.</p>}
+              {teacherTimetableState.status === "error" && <p role="alert">{teacherTimetableState.message}</p>}
+              {teacherTimetableState.status === "loaded" && (
                 <>
                   <p className="timetable-meta">
-                    {timetableState.timetable.class_section_name} · Version{" "}
-                    {timetableState.timetable.version_number}
+                    {teacherTimetableState.timetable.teacher_name} · Version{" "}
+                    {teacherTimetableState.timetable.version_number}
                   </p>
-                  <TimetableGrid timetable={timetableState.timetable} />
+                  <TeacherTimetableGrid timetable={teacherTimetableState.timetable} />
                 </>
               )}
             </>

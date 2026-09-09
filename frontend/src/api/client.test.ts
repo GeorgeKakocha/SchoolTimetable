@@ -5,10 +5,11 @@ import {
   generateSchedule,
   getClassTimetable,
   getSchedulingConfigIndex,
+  getTeacherTimetable,
   postJson,
   putJson,
 } from "./client";
-import type { ClassTimetableResponse, GenerateScheduleResponse } from "./types";
+import type { ClassTimetableResponse, GenerateScheduleResponse, TeacherTimetableResponse } from "./types";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -47,11 +48,11 @@ const VALID_CONFIG_SUPERSET = {
   school: { id: "s1", name: "Pilot School" },
   academic_year: { id: "y1", label: "2025/2026" },
   class_sections: [{ id: "8a", name: "8-A" }],
+  teachers: [{ id: "t1", name: "Teacher One" }],
   // Fields the real /config response also carries, deliberately unused
   // by this frontend slice -- proves the client reduces the superset
   // rather than requiring/echoing them.
   days: [{ id: "mon", name: "Monday", index: 0 }],
-  teachers: [{ id: "t1", name: "Teacher One" }],
   activities: [{ id: "math", name: "Mathematics", kind: "ORDINARY" }],
 };
 
@@ -97,7 +98,17 @@ describe("api client", () => {
       school: { id: "s1", name: "Pilot School" },
       academic_year: { id: "y1", label: "2025/2026" },
       class_sections: [{ id: "8a", name: "8-A" }],
+      teachers: [{ id: "t1", name: "Teacher One" }],
     });
+  });
+
+  it("rejects a config response with a malformed 'teachers' field", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { ...VALID_CONFIG_SUPERSET, teachers: [{ id: "t1" }] })),
+    );
+
+    await expect(getSchedulingConfigIndex("s1", "y1")).rejects.toThrow(/malformed 'teachers'/);
   });
 
   it("preserves a backend 404 detail in ApiError", async () => {
@@ -440,6 +451,100 @@ describe("api client", () => {
         detail: "Scheduling configuration not found",
         code: undefined,
       });
+    });
+  });
+
+  // -- getTeacherTimetable (Teacher Timetable, next product slice) ------
+
+  describe("getTeacherTimetable", () => {
+    const VALID_TEACHER_TIMETABLE: TeacherTimetableResponse = {
+      school_id: "s1",
+      school_name: "Pilot School",
+      academic_year_id: "y1",
+      academic_year_label: "2025/2026",
+      teacher_id: "t_math",
+      teacher_name: "Teacher Math",
+      version_number: 1,
+      solver_status: "OPTIMAL",
+      total_soft_penalty: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      is_active: true,
+      days: [{ id: "mon", name: "Monday" }],
+      rows: [
+        {
+          period_id: "p1",
+          period_name: "Period 1",
+          cells: [{ day_id: "mon", entries: [] }],
+        },
+      ],
+    };
+
+    it("requests the exact teacher timetable endpoint path with safely encoded segments", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, VALID_TEACHER_TIMETABLE));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await getTeacherTimetable("school 1", "year/1", "teacher#1");
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/schools/school%201/years/year%2F1/schedule/active/teachers/teacher%231",
+      );
+    });
+
+    it("returns a successful teacher timetable response unchanged", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, VALID_TEACHER_TIMETABLE)));
+
+      const result = await getTeacherTimetable("s1", "y1", "t_math");
+
+      expect(result).toEqual(VALID_TEACHER_TIMETABLE);
+    });
+
+    it("forwards an AbortSignal when supplied", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, VALID_TEACHER_TIMETABLE));
+      vi.stubGlobal("fetch", fetchMock);
+      const controller = new AbortController();
+
+      await getTeacherTimetable("s1", "y1", "t_math", controller.signal);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/schools/s1/years/y1/schedule/active/teachers/t_math",
+        { signal: controller.signal },
+      );
+    });
+
+    it("preserves a backend 404 'Teacher not found' detail in ApiError", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(jsonResponse(404, { detail: "Teacher not found" })),
+      );
+
+      await expect(getTeacherTimetable("s1", "y1", "no-such-teacher")).rejects.toMatchObject({
+        status: 404,
+        detail: "Teacher not found",
+      });
+    });
+
+    it("preserves a backend 404 'Active schedule not found' detail in ApiError", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(jsonResponse(404, { detail: "Active schedule not found" })),
+      );
+
+      await expect(getTeacherTimetable("s1", "y1", "t_math")).rejects.toMatchObject({
+        status: 404,
+        detail: "Active schedule not found",
+      });
+    });
+
+    it("never embeds an absolute localhost/127.0.0.1 backend URL in the request", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, VALID_TEACHER_TIMETABLE));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await getTeacherTimetable("s1", "y1", "t_math");
+
+      const calledUrl = fetchMock.mock.calls[0]?.[0] as string;
+      expect(calledUrl.startsWith("/")).toBe(true);
+      expect(calledUrl).not.toContain("localhost");
+      expect(calledUrl).not.toContain("127.0.0.1");
     });
   });
 });

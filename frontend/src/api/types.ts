@@ -10,12 +10,19 @@
 // -- GET /schools/{school_id}/years/{year_id}/config --------------------
 //
 // The real backend response (`SchedulingConfigResponse`) is a superset of
-// this: it also carries days, periods, teachers, activities, teaching
+// this: it also carries days, periods, activities, teaching
 // requirements, resources, teacher availabilities, reserved blocks, and
-// fixed placements. This frontend slice only ever needs the class
-// selector's index, so only that subset is mirrored here -- dozens of
-// unused configuration fields are deliberately NOT reproduced. If a
-// later slice needs more of `/config`, extend this type then, not now.
+// fixed placements. This frontend slice only ever needs the class/
+// teacher selector index, so only that subset is mirrored here --
+// dozens of unused configuration fields are deliberately NOT
+// reproduced. If a later slice needs more of `/config`, extend this
+// type then, not now. `teachers` was added for the Teacher Timetable
+// mode switch (next product slice after Phase 3C.3) -- the same
+// authoritative, unconditional teacher list `/config` already returns
+// (every teacher, including zero-load ones), reusing the one `/config`
+// fetch `TimetablePage` already makes rather than a second endpoint or
+// any coupling to Teaching Assignments' own separate `TeacherOption`
+// mirror.
 
 export interface SchoolSummary {
   id: string;
@@ -32,10 +39,16 @@ export interface ClassSectionSummary {
   name: string;
 }
 
+export interface TeacherSummary {
+  id: string;
+  name: string;
+}
+
 export interface SchedulingConfigIndexResponse {
   school: SchoolSummary;
   academic_year: AcademicYearSummary;
   class_sections: ClassSectionSummary[];
+  teachers: TeacherSummary[];
 }
 
 // -- GET /schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id} --
@@ -91,6 +104,65 @@ export interface ClassTimetableResponse {
   is_active: boolean;
   days: DayHeader[];
   rows: ClassTimetableRow[];
+}
+
+// -- GET /schools/{school_id}/years/{year_id}/schedule/active/teachers/{teacher_id} --
+//
+// Mirrors the backend's `TeacherTimetableResponse` exactly -- the
+// sibling teacher-timetable projection (next product slice after
+// Phase 3C.3, no new phase number). Deliberately its own type family,
+// not a reuse of `ClassTimetable*` -- `TeacherTimetableEntry`
+// additionally carries `participant_group_role` and resolved
+// `class_sections` (never present on `ClassTimetableEntry`, which
+// doesn't need them), required so the frontend can reproduce the
+// WHOLE_CLASS/SUBGROUP/MERGED_CLASSES display rule already
+// established for Teaching Assignments without ever inferring role
+// from name/count. `DayHeader`/`EntrySource`/`SolverStatus` above are
+// reused as-is -- genuinely generic, not feature-specific.
+
+export interface TeacherTimetableClassSection {
+  id: string;
+  name: string;
+}
+
+export interface TeacherTimetableEntry {
+  source: EntrySource;
+  activity_id: string;
+  activity_name: string;
+  participant_group_id: string | null;
+  participant_group_name: string | null;
+  participant_group_role: string | null;
+  class_sections: TeacherTimetableClassSection[];
+  requirement_id: string | null;
+  reserved_block_id: string | null;
+  resource_id: string | null;
+}
+
+export interface TeacherTimetableCell {
+  day_id: string;
+  entries: TeacherTimetableEntry[];
+}
+
+export interface TeacherTimetableRow {
+  period_id: string;
+  period_name: string;
+  cells: TeacherTimetableCell[];
+}
+
+export interface TeacherTimetableResponse {
+  school_id: string;
+  school_name: string;
+  academic_year_id: string;
+  academic_year_label: string;
+  teacher_id: string;
+  teacher_name: string;
+  version_number: number;
+  solver_status: SolverStatus;
+  total_soft_penalty: number;
+  created_at: string;
+  is_active: boolean;
+  days: DayHeader[];
+  rows: TeacherTimetableRow[];
 }
 
 // -- POST /schools/{school_id}/years/{year_id}/schedule/generate --------

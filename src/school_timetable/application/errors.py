@@ -309,3 +309,29 @@ class ClassSectionNotFoundError(Exception):
             f"no class section {class_section_id!r} for school={school_natural_id!r}, "
             f"academic_year={academic_year_natural_id!r}"
         )
+
+
+class TeacherNotFoundError(Exception):
+    """The requested `teacher_id` does not exist in this school/
+    academic-year's persisted configuration. Mirrors
+    `ClassSectionNotFoundError`'s narrow style exactly: a caller-supplied
+    bad natural ID within an otherwise-valid school/year scope, one
+    level narrower than `SchedulingProblemNotFoundError`. Distinct from
+    "no schedule generated yet" (`TeacherTimetableService.project`
+    returning `None`), which is an ordinary application state, not an
+    error. Never used for a malformed stored reference *inside* an
+    already-loaded entry -- that is a genuine internal/configuration
+    defect and must fail loudly/generically (a raw `KeyError`), never
+    silently invent a label. Carries only the natural identifiers
+    already supplied -- no persistence surrogate ID."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, teacher_id: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.teacher_id = teacher_id
+        super().__init__(
+            f"no teacher {teacher_id!r} for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )

@@ -49,6 +49,7 @@ const CONFIG_INDEX: SchedulingConfigIndexResponse = {
   school: { id: "s1", name: "Pilot School" },
   academic_year: { id: "y1", label: "2025/2026" },
   class_sections: [{ id: "8a", name: "8-A" }],
+  teachers: [{ id: "t1", name: "Teacher One" }],
 };
 
 const TIMETABLE_8A: ClassTimetableResponse = {

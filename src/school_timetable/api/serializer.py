@@ -48,6 +48,11 @@ from school_timetable.api.schemas import (
     TeacherAvailabilityResponse,
     TeacherOptionResponse,
     TeacherResponse,
+    TeacherTimetableCellResponse,
+    TeacherTimetableClassSectionResponse,
+    TeacherTimetableEntryResponse,
+    TeacherTimetableResponse,
+    TeacherTimetableRowResponse,
     TeacherWorkloadResponse,
     TeachingAssignmentClassSectionResponse,
     TeachingAssignmentResponse,
@@ -60,6 +65,7 @@ from school_timetable.api.schemas import (
 )
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.teacher_timetable_models import TeacherTimetableEntry, TeacherTimetableView
 from school_timetable.application.teaching_assignments_projection_models import (
     TeachingAssignmentItem,
     TeachingAssignmentsProjectionView,
@@ -258,6 +264,64 @@ def _class_timetable_entry_response(entry: ClassTimetableEntry) -> ClassTimetabl
         teacher_name=entry.teacher_name,
         participant_group_id=entry.participant_group_id,
         participant_group_name=entry.participant_group_name,
+        requirement_id=entry.requirement_id,
+        reserved_block_id=entry.reserved_block_id,
+        resource_id=entry.resource_id,
+    )
+
+
+# -- Teacher-timetable projection API (next product slice after Phase
+# 3C.3, no new phase number). --------------------------------------------
+
+
+def teacher_timetable_response_from_view(view: TeacherTimetableView) -> TeacherTimetableResponse:
+    """Pure application-view-model -> Pydantic conversion only -- all
+    teacher-membership filtering, cell grouping, calendar ordering, and
+    name/role resolution already happened in `TeacherTimetableService`.
+    This function never re-sorts, re-groups, or re-resolves anything;
+    it preserves `view.days`/`view.rows`/each row's `cells`/each cell's
+    `entries` order exactly, mirroring `class_timetable_response_from_view`."""
+    return TeacherTimetableResponse(
+        school_id=view.school_id,
+        school_name=view.school_name,
+        academic_year_id=view.academic_year_id,
+        academic_year_label=view.academic_year_label,
+        teacher_id=view.teacher_id,
+        teacher_name=view.teacher_name,
+        version_number=view.version_number,
+        solver_status=view.solver_status.value,
+        total_soft_penalty=view.total_soft_penalty,
+        created_at=view.created_at,
+        is_active=view.is_active,
+        days=tuple(DayHeaderResponse(id=d.id, name=d.name) for d in view.days),
+        rows=tuple(
+            TeacherTimetableRowResponse(
+                period_id=row.period_id,
+                period_name=row.period_name,
+                cells=tuple(
+                    TeacherTimetableCellResponse(
+                        day_id=cell.day_id,
+                        entries=tuple(_teacher_timetable_entry_response(e) for e in cell.entries),
+                    )
+                    for cell in row.cells
+                ),
+            )
+            for row in view.rows
+        ),
+    )
+
+
+def _teacher_timetable_entry_response(entry: TeacherTimetableEntry) -> TeacherTimetableEntryResponse:
+    return TeacherTimetableEntryResponse(
+        source=entry.source.value,
+        activity_id=entry.activity_id,
+        activity_name=entry.activity_name,
+        participant_group_id=entry.participant_group_id,
+        participant_group_name=entry.participant_group_name,
+        participant_group_role=entry.participant_group_role,
+        class_sections=tuple(
+            TeacherTimetableClassSectionResponse(id=c.id, name=c.name) for c in entry.class_sections
+        ),
         requirement_id=entry.requirement_id,
         reserved_block_id=entry.reserved_block_id,
         resource_id=entry.resource_id,

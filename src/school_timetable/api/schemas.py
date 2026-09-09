@@ -282,6 +282,68 @@ class ClassTimetableResponse(BaseModel):
     rows: tuple[ClassTimetableRowResponse, ...]
 
 
+# -- Teacher-timetable projection API (next product slice after Phase
+# 3C.3, no new phase number) -- sibling to the class-timetable
+# projection above, same architecture, own independently-owned DTO
+# family (never a reuse of the `ClassTimetable*Response` types, even
+# where structurally similar, matching this module's existing
+# convention -- see `TeachingAssignmentClassSectionResponse` below for
+# the identical precedent). -----------------------------------------
+
+
+class TeacherTimetableClassSectionResponse(BaseModel):
+    id: str
+    name: str
+
+
+class TeacherTimetableEntryResponse(BaseModel):
+    """One flat, locked-shape projected lesson within a cell. A hard
+    solver constraint (teacher non-overlap) means a valid generated
+    schedule has at most one of these per cell, but the shape stays
+    structurally zero-or-more, matching
+    `ClassTimetableCellResponse.entries` exactly, rather than assuming
+    the invariant can never be violated by corrupt data."""
+
+    source: Literal["REQUIREMENT", "RESERVED_BLOCK"]
+    activity_id: str
+    activity_name: str
+    participant_group_id: str | None
+    participant_group_name: str | None
+    participant_group_role: str | None
+    class_sections: tuple[TeacherTimetableClassSectionResponse, ...]
+    requirement_id: str | None
+    reserved_block_id: str | None
+    resource_id: str | None
+
+
+class TeacherTimetableCellResponse(BaseModel):
+    day_id: str
+    entries: tuple[TeacherTimetableEntryResponse, ...]
+
+
+class TeacherTimetableRowResponse(BaseModel):
+    period_id: str
+    period_name: str
+    cells: tuple[TeacherTimetableCellResponse, ...]
+    """Ordered to correspond exactly to `TeacherTimetableResponse.days`."""
+
+
+class TeacherTimetableResponse(BaseModel):
+    school_id: str
+    school_name: str
+    academic_year_id: str
+    academic_year_label: str
+    teacher_id: str
+    teacher_name: str
+    version_number: int
+    solver_status: Literal["OPTIMAL", "FEASIBLE"]
+    total_soft_penalty: int
+    created_at: datetime
+    is_active: bool
+    days: tuple[DayHeaderResponse, ...]
+    rows: tuple[TeacherTimetableRowResponse, ...]
+
+
 # -- Teaching Assignments API (Phase 3C.2b, `docs/DECISIONS.md` #34-#36's
 # locked HTTP contract). --------------------------------------------------
 

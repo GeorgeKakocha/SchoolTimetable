@@ -1231,9 +1231,26 @@ this implementation followed them as given.
     `POST .../schedule/generate` (Decision #31) exactly as built, with no
     backend/schema change. See `docs/PROJECT_STATE.md` for the full
     implementation record. Every other Owner-Decision-5 exclusion
-    (school/year selectors, teacher timetable, schedule history, manual
-    editing, locks, reoptimization, print/export, auth, dashboards,
-    analytics) remains exactly as excluded.
+    (school/year selectors, schedule history, manual editing, locks,
+    reoptimization, print/export, auth, dashboards, analytics) remains
+    exactly as excluded.
+
+    **Implementation note (no new owner decision -- product-owner
+    locked, no phase number invented; implemented on branch
+    `feature/teacher-timetable-view`, pending review -- not yet
+    committed, not merged, not pushed).** The "a teacher timetable"
+    exclusion above is likewise revisited: a sibling read-only
+    projection, `GET .../schedule/active/teachers/{teacher_id}`
+    (`TeacherTimetableService`, mirroring `ClassTimetableService`'s
+    exact architecture -- same two repository ports, same strict-lookup
+    discipline, no new schema/migration), surfaced in `TimetablePage`
+    via a `Class`/`Teacher` mode switch -- still one `/timetable` route,
+    no new top-nav destination. Generate remains Class-mode-only, never
+    duplicated. See `docs/PROJECT_STATE.md` for the full implementation
+    record. Every remaining Owner-Decision-5 exclusion (school/year
+    selectors, schedule history, manual editing, locks, reoptimization,
+    print/export, auth, dashboards, analytics) remains exactly as
+    excluded.
 
     **Owner Decision 6 -- School/AcademicYear are pilot-fixed; ClassSection
     is not.** For the first visual slice, `school_id`/`academic_year_id`

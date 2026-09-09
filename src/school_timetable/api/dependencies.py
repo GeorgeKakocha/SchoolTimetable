@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.teacher_timetable_service import TeacherTimetableService
 from school_timetable.application.teaching_assignment_service import TeachingAssignmentService
 from school_timetable.application.teaching_assignments_projection_service import (
     TeachingAssignmentsProjectionService,
@@ -83,6 +84,17 @@ def get_class_timetable_service() -> ClassTimetableService:
     matching `get_generate_schedule_service` exactly (Phase 3B.1,
     `docs/DECISIONS.md` #32)."""
     return ClassTimetableService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_teacher_timetable_service() -> TeacherTimetableService:
+    """Composes the identical two session-factory-backed adapters
+    `ClassTimetableService` uses -- never a request-scoped `Session` --
+    for the sibling teacher-timetable projection (next product slice
+    after Phase 3C.3, no new phase number)."""
+    return TeacherTimetableService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

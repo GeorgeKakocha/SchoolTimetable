@@ -246,6 +246,42 @@ select:focus-visible {
   font-size: 0.9em;
 }
 
+/* -- Timetable Class/Teacher mode switch (Teacher Timetable, next
+   product slice after Phase 3C.3) -- a compact, restrained toggle
+   pair, not a segmented dashboard control; the active side reuses the
+   same restrained blue accent as the top-nav's own active-link
+   underline (`.app-nav-link-active`), never a filled/loud button. */
+.timetable-mode-switch {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.mode-switch-button {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid #c2c2c2;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #4a4a4a;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.mode-switch-button:hover {
+  background-color: #f2f2f2;
+}
+
+.mode-switch-button[aria-pressed="true"] {
+  border-color: #2563eb;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.mode-switch-button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
 /* -- Teaching Assignments (Phase 3C.3a) ---------------------------------
    Reuses the existing table/border/typography tokens the timetable grid
    already established (`.timetable-grid` above) rather than introducing

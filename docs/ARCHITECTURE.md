@@ -332,7 +332,15 @@ owner ahead of 3C.5's broader reference-data CRUD, no new phase number
 (manually browser-reviewed by the product owner, a full
 Configure -> Generate -> Review browser-only workflow proven end-to-end),
 COMMITTED, and MERGED to `main` at commit `a3bbcb8`, frontend-only,
-zero backend/schema changes -- **CLOSED**: see `docs/PROJECT_STATE.md`
+zero backend/schema changes -- **CLOSED**. The next product slice --
+Teacher Timetable View, chosen ahead of 3C.5's broader reference-data
+CRUD, again no new phase number -- is IMPLEMENTED on branch
+`feature/teacher-timetable-view`, pending review: a sibling
+`TeacherTimetableService`/`GET .../schedule/active/teachers/{teacher_id}`
+projection using the identical backend-projection boundary already
+proven for the class timetable, plus a `TimetablePage` Class/Teacher
+mode switch (still one `/timetable` route, no new top-nav
+destination). Zero backend/schema changes. See `docs/PROJECT_STATE.md`
 for the full record.
 
 ## Phase 3C architecture direction
@@ -341,9 +349,11 @@ for the full record.
 is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is merged to
 `main` at commit `9570358` and CLOSED; 3C.3a is merged to `main` at
 commit `1499377` and CLOSED; 3C.3b is merged to `main` at commit
-`f608b7d` and CLOSED; the schedule-generation trigger UI (see above) is
-merged to `main` at commit `a3bbcb8` and CLOSED, outside this 3C.1-3C.5
-sequencing; 3C.5 itself remains design-locked, not implemented.**
+`f608b7d` and CLOSED; the schedule-generation trigger UI is merged to
+`main` at commit `a3bbcb8` and CLOSED; the Teacher Timetable View is
+implemented on a feature branch, pending review -- both outside this
+3C.1-3C.5 sequencing; 3C.5 itself remains design-locked, not
+implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`

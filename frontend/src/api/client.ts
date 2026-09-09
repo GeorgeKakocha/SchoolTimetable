@@ -18,6 +18,8 @@ import type {
   ClassTimetableResponse,
   GenerateScheduleResponse,
   SchedulingConfigIndexResponse,
+  TeacherSummary,
+  TeacherTimetableResponse,
 } from "./types";
 
 /** A real, non-2xx backend response. `detail` preserves the backend's
@@ -148,7 +150,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string";
 }
 
-function isClassSectionSummary(value: unknown): value is ClassSectionSummary {
+/** `ClassSectionSummary`/`TeacherSummary` are both plain `{id, name}`
+ * pairs -- one shared shape guard for both, rather than duplicating an
+ * identical 3-line check under two names. */
+function isIdNamePair(value: unknown): value is ClassSectionSummary | TeacherSummary {
   if (typeof value !== "object" || value === null) {
     return false;
   }
@@ -159,7 +164,7 @@ function isClassSectionSummary(value: unknown): value is ClassSectionSummary {
 /** Narrows the real `/config` response (a superset of what this slice
  * needs) down to `SchedulingConfigIndexResponse` -- a small manual shape
  * guard, not a schema-validation dependency, so an obviously malformed
- * payload never silently becomes a usable class index. */
+ * payload never silently becomes a usable class/teacher index. */
 function toSchedulingConfigIndex(raw: unknown): SchedulingConfigIndexResponse {
   if (typeof raw !== "object" || raw === null) {
     throw new MalformedResponseError("Scheduling configuration response was not an object.");
@@ -169,6 +174,7 @@ function toSchedulingConfigIndex(raw: unknown): SchedulingConfigIndexResponse {
   const school = candidate["school"];
   const academicYear = candidate["academic_year"];
   const classSections = candidate["class_sections"];
+  const teachers = candidate["teachers"];
 
   if (
     typeof school !== "object" ||
@@ -188,9 +194,14 @@ function toSchedulingConfigIndex(raw: unknown): SchedulingConfigIndexResponse {
       "Scheduling configuration response had a malformed 'academic_year'.",
     );
   }
-  if (!Array.isArray(classSections) || !classSections.every(isClassSectionSummary)) {
+  if (!Array.isArray(classSections) || !classSections.every(isIdNamePair)) {
     throw new MalformedResponseError(
       "Scheduling configuration response had a malformed 'class_sections'.",
+    );
+  }
+  if (!Array.isArray(teachers) || !teachers.every(isIdNamePair)) {
+    throw new MalformedResponseError(
+      "Scheduling configuration response had a malformed 'teachers'.",
     );
   }
 
@@ -198,6 +209,7 @@ function toSchedulingConfigIndex(raw: unknown): SchedulingConfigIndexResponse {
     school: school as SchedulingConfigIndexResponse["school"],
     academic_year: academicYear as SchedulingConfigIndexResponse["academic_year"],
     class_sections: classSections,
+    teachers: teachers,
   };
 }
 
@@ -221,6 +233,21 @@ export function getClassTimetable(
     `/schools/${encodeURIComponent(schoolId)}/years/${encodeURIComponent(academicYearId)}` +
     `/schedule/active/classes/${encodeURIComponent(classSectionId)}`;
   return getJson<ClassTimetableResponse>(path, signal);
+}
+
+/** The sibling teacher-timetable projection (next product slice after
+ * Phase 3C.3, no new phase number) -- same relative-URL/encoding
+ * discipline as `getClassTimetable`. */
+export function getTeacherTimetable(
+  schoolId: string,
+  academicYearId: string,
+  teacherId: string,
+  signal?: AbortSignal,
+): Promise<TeacherTimetableResponse> {
+  const path =
+    `/schools/${encodeURIComponent(schoolId)}/years/${encodeURIComponent(academicYearId)}` +
+    `/schedule/active/teachers/${encodeURIComponent(teacherId)}`;
+  return getJson<TeacherTimetableResponse>(path, signal);
 }
 
 /** `POST .../schedule/generate` takes no request body (Decision #31) --
