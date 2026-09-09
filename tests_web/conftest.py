@@ -32,12 +32,25 @@ def _test_database_url() -> str:
 @pytest.fixture
 def live_db_engine():
     """A real Engine bound to TEST_DATABASE_URL, skipping the test
-    (never failing it) if no database is actually reachable there."""
+    (never failing it) if no database is actually reachable there.
+
+    Function-scoped, so every test gets its own `Engine`/connection
+    pool -- but ownership of that `Engine` stays with this fixture for
+    its whole lifetime: it is always disposed on exit, whether the
+    reachability probe below fails (skip), the test passes, or the test
+    raises. Without this, each test's `Engine` (and the real
+    server-side connections its pool opened) would never be released,
+    and server-side connections would accumulate monotonically across a
+    full suite run until PostgreSQL's `max_connections` is exhausted."""
     engine = create_db_engine(_test_database_url())
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception as exc:  # noqa: BLE001 - deliberately broad: any connectivity failure means "skip"
+        engine.dispose()
         pytest.skip(f"no reachable PostgreSQL at {_test_database_url()!r} ({exc.__class__.__name__}); "
                     f"start it with `docker compose up -d db` to run this test")
-    return engine
+    try:
+        yield engine
+    finally:
+        engine.dispose()

@@ -561,3 +561,60 @@ class TeacherInUseErrorResponse(BaseModel):
     code: Literal["TEACHER_IN_USE"]
     detail: str
     referenced_by: tuple[str, ...]
+
+
+# -- Class CRUD API (Real-School Setup MVP Slice C). ----------------------
+
+
+class ClassSectionProjectionItemResponse(BaseModel):
+    """The canonical WHOLE_CLASS group's own id/role/membership are
+    deliberately never exposed here -- it remains an internal
+    scheduling implementation detail (Owner Decision #33)."""
+
+    id: str
+    name: str
+
+
+class ClassSectionsProjectionResponse(BaseModel):
+    configuration_locked: bool
+    classes: tuple[ClassSectionProjectionItemResponse, ...]
+
+
+class ClassSectionWriteRequest(BaseModel):
+    """POST/PUT request body -- maps 1:1 onto `ClassSectionFields`. The
+    natural ID (and the internal canonical group) is never accepted
+    here -- always server-generated on create, immutable on update
+    (path parameter only)."""
+
+    name: str
+
+
+class ClassSectionWriteResponse(BaseModel):
+    """POST/PUT success body -- the written `ClassSection`'s own
+    resolved fields. No canonical-group ID -- internal only."""
+
+    id: str
+    name: str
+
+
+class ClassSectionDeleteResponse(BaseModel):
+    """DELETE success body. No `warnings` field, no canonical-group ID."""
+
+    deleted_id: str
+
+
+class InvalidClassErrorResponse(BaseModel):
+    code: Literal["INVALID_CLASS"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class DuplicateClassErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_CLASS"]
+    detail: str
+
+
+class ClassSectionInUseErrorResponse(BaseModel):
+    code: Literal["CLASS_IN_USE"]
+    detail: str
+    referenced_by: tuple[str, ...]

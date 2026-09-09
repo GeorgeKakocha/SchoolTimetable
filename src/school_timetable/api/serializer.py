@@ -26,7 +26,9 @@ from school_timetable.api.schemas import (
     ActiveScheduleResponse,
     ActivityOptionResponse,
     ActivityResponse,
+    ClassSectionProjectionItemResponse,
     ClassSectionResponse,
+    ClassSectionsProjectionResponse,
     ClassTimetableCellResponse,
     ClassTimetableEntryResponse,
     ClassTimetableResponse,
@@ -65,6 +67,7 @@ from school_timetable.api.schemas import (
     ValidationDiagnosticResponse,
     WholeClassTargetResponse,
 )
+from school_timetable.application.class_section_projection_models import ClassSectionsProjectionView
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.application.teacher_projection_models import TeachersProjectionView
@@ -407,4 +410,19 @@ def teachers_projection_response_from_view(view: TeachersProjectionView) -> Teac
             )
             for t in view.teachers
         ),
+    )
+
+
+# -- Class CRUD API (Real-School Setup MVP Slice C). -----------------------
+
+
+def class_sections_projection_response_from_view(
+    view: ClassSectionsProjectionView,
+) -> ClassSectionsProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- order
+    already resolved in `ClassSectionProjectionService` (persistence
+    ordinal order); this function never re-sorts anything."""
+    return ClassSectionsProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        classes=tuple(ClassSectionProjectionItemResponse(id=c.id, name=c.name) for c in view.classes),
     )

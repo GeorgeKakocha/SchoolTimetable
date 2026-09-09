@@ -359,6 +359,73 @@ class InvalidTeacherError(Exception):
         )
 
 
+class InvalidClassError(Exception):
+    """A `ClassSectionService` create/update request fails input
+    validation (Real-School Setup MVP Slice C) -- a blank `name` after
+    trimming. Carries the validator's own safe, structured diagnostics
+    as an immutable tuple, exactly like `InvalidTeacherError` -- never
+    an ORM/SQLAlchemy object."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid class for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class DuplicateClassError(Exception):
+    """A `ClassSectionService` create/update request would produce a
+    second `ClassSection` sharing the identical (exact, case-sensitive,
+    trimmed) `name` within one academic year (Real-School Setup MVP
+    Slice C -- an application-level rule, deliberately never a blanket
+    database `UNIQUE` constraint, mirroring
+    `DuplicateTeachingAssignmentError`'s existing precedent). Carries
+    only the natural identifiers already supplied."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, name: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.name = name
+        super().__init__(
+            f"a class named {name!r} already exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class ClassSectionInUseError(Exception):
+    """A `ClassSectionService.delete` request targets a `ClassSection`
+    currently referenced by the persisted scheduling configuration
+    (Real-School Setup MVP Slice C) -- never cascade-deleted.
+    `referenced_by` names every referencing kind found, in the
+    deterministic order `TEACHING_REQUIREMENT`, `RESERVED_BLOCK`,
+    `SUBGROUP`, `MERGED_CLASSES` (only the kinds that actually
+    reference this class), never a persistence surrogate ID."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        class_id: str,
+        referenced_by: tuple[str, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.class_id = class_id
+        self.referenced_by = referenced_by
+        super().__init__(
+            f"class {class_id!r} is still referenced by {list(referenced_by)!r} "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )
+
+
 class TeacherInUseError(Exception):
     """A `TeacherService.delete` request targets a `Teacher` currently
     referenced by the persisted scheduling configuration (Real-School

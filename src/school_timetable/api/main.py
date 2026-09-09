@@ -9,7 +9,8 @@ Phase 3A3.4 adds `GET .../schedule/active` and
 3C.2b adds the Teaching Assignments read projection and write routes --
 see `api/teaching_assignment_routes.py`. Real-School Setup MVP Slice B
 adds the Teacher CRUD read projection and write routes -- see
-`api/teacher_routes.py`.
+`api/teacher_routes.py`. Slice C adds the Class CRUD read projection
+and write routes -- see `api/class_section_routes.py`.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from school_timetable.api.class_section_routes import router as class_section_router
 from school_timetable.api.config_routes import router as config_router
 from school_timetable.api.schedule_routes import router as schedule_router
 from school_timetable.api.teacher_routes import router as teacher_router
@@ -31,6 +33,7 @@ app.include_router(config_router)
 app.include_router(schedule_router)
 app.include_router(teaching_assignment_router)
 app.include_router(teacher_router)
+app.include_router(class_section_router)
 
 
 class HealthResponse(BaseModel):
