@@ -2052,3 +2052,97 @@ this implementation followed them as given.
     complete.** Next slice per the approved setup contract: **Slice D
     -- Subjects/Activities CRUD** (not started, not designed in detail
     here).
+
+---
+
+**Technical correction (NOT an Owner Decision -- Owner Decision #38
+remains unused) -- Teaching Assignment Activity-Kind Invariant (LOCKED;
+IMPLEMENTED, REVIEWED, COMMITTED, and MERGED to `main` at commit
+`bade46c` "fix: enforce ordinary teaching assignment activities" --
+CLOSED. Not pushed.).** This is a
+technical bug-fix record, not a new numbered Owner Decision: the
+invariant it locks was already implied by existing `ActivityKind`
+semantics (see Decision #33's neighboring `role` invariant style for
+the same "already-implied-by-the-model, now-enforced" precedent) --
+nothing here introduces new product scope requiring an owner's sign-off.
+The Slice D design gate's own activity-kind consistency check found a
+genuine, previously-untested defect (CASE B, confirmed by a
+rollback-isolated real-PostgreSQL proof): `ActivityKind` already
+documents `ORDINARY` as "scheduled via a `TeachingRequirement`" and
+`CLUB` as "scheduled via a `ReservedBlock`" (`domain/activities.py`),
+but neither direction was ever enforced -- `TeachingAssignmentService`
+create/update only checked that `activity_id` *existed*, and
+`TeachingAssignmentsProjectionService` exposed every activity,
+including `CLUB`, as a selectable option. A real write against the
+fixture's `club_chess` (`kind=CLUB`) succeeded and produced a genuine
+`TeachingRequirement` before this correction.
+
+**The locked invariant**: `TeachingRequirement.activity_id` must
+reference `ActivityKind.ORDINARY`; `CLUB` is never a valid target.
+`teaching_assignment_rules.py` gained one shared pure helper,
+`require_ordinary_activity`, called from both `validate_create` and
+`validate_update` in place of the old bare existence check -- exactly
+the same function therefore runs in `TeachingAssignmentService`'s fast
+un-locked precheck *and* inside
+`SqlAlchemyTeachingAssignmentRepository`'s authoritative,
+lock-protected recheck (the identical `validate` callback wiring
+already established by Decision #36), with zero persistence-layer
+changes required -- `persistence/teaching_assignment_repository.py` is
+untouched, confirmed by `git diff`. A new error,
+`NonOrdinaryActivityTargetError` (mirroring `NonWholeClassTargetError`'s
+exact shape -- the activity genuinely exists, it is simply invalid for
+this write surface, so this is never `UnknownReferenceError`), maps to
+`422 {"code": "NON_ORDINARY_ACTIVITY_TARGET", "detail": "...",
+"activity_id": "...", "actual_kind": "..."}`.
+`TeachingAssignmentsProjectionService`'s `activities` option list now
+filters to `ActivityKind.ORDINARY` only (one-line change, identical
+response-item shape, zero frontend change -- confirmed,
+`frontend/src/api/types.ts::ActivityOption` already carries no `kind`
+field). `GET /config` remains deliberately unfiltered -- it is the
+general configuration projection, not an editable selector, and
+continues to expose both kinds with `kind` visible.
+
+**Defense-in-depth**: `validation/preflight.py` gained
+`_check_teaching_requirement_activity_kind`, reporting
+`NON_ORDINARY_TEACHING_REQUIREMENT_ACTIVITY` for any
+`TeachingRequirement` targeting a non-`ORDINARY` activity in an
+already-loaded `SchedulingProblem` -- catching a malformed
+configuration reaching generation by any path other than the
+now-guarded write service (legacy data, direct construction, future
+import/admin tooling), never a replacement for the write-time check.
+`ReservedBlock` was deliberately left untouched: no production
+`ReservedBlock` write service/repository/route exists yet (confirmed by
+exhaustive search), so there is no write surface to have a symmetrical
+defect in -- widening scope there would be unjustified.
+
+**Subject duplicate-name scope re-evaluated** (Slice D design
+conclusion, not a new Owner Decision): the earlier Slice D gate's
+"unique across all Activity kinds" recommendation was justified solely
+by this now-corrected projection leak. With Teaching Assignments'
+activity selector genuinely `ORDINARY`-only, `/config` being a general
+kind-labeled dump rather than an unlabeled picker, and Club management
+remaining a distinct future surface, Subject duplicate-name checking
+should be scoped to `ActivityKind.ORDINARY` only (still exact,
+case-sensitive, trimmed, matching Class's own rule) -- an ORDINARY
+"Mathematics" and a CLUB "Mathematics" may coexist. Zero Owner Decision
+required; this is a direct technical consequence of the correction, not
+an independent product preference.
+
+Zero schema/migration impact (Alembic stays at `cae76cba3c58`); zero
+solver/`GenerateScheduleService` change (the existing frozen-dataclass
+structural-equality reload-and-compare already covers
+`problem.teaching_requirements`/`.activities`, unchanged by this
+correction); zero frontend production change. Test gate: 2 new pure
+`tests/test_teaching_assignment_service.py` cases (CLUB rejected on
+create/update) plus 1 confirming ORDINARY still succeeds, 2 new
+`tests/test_preflight.py` cases, 1 corrected + 1 new
+`tests/test_teaching_assignments_projection_service.py` case, 4 new
+`tests_web/test_teaching_assignment_api.py` cases (GET excludes CLUB,
+POST/PUT reject CLUB with the exact 422 contract, `/config` still
+exposes both kinds) -- core `tests -m "not slow"` 256 passed/5
+deselected; canonical single-process `tests_web` 217 passed, zero
+DB-reachability skips, confirmed on two consecutive runs; Teaching
+Assignment regression (API + repository) 40/40; frontend 185/185, build
+clean. Slice D Subject CRUD remains **NOT implemented** -- this
+correction is scoped entirely to the pre-existing Teaching Assignment
+defect.

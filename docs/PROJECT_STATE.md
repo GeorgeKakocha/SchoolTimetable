@@ -1753,3 +1753,46 @@ feature, TeachingAssignment semantic changes, solver changes, auth/user
 integration. The broader Real-School Setup MVP is **not** complete --
 this is Slice C only. Next implementation slice per the approved setup
 contract: **Slice D -- Subjects/Activities CRUD** (not started).
+
+**Pre-Slice-D correction (a technical bug fix, NOT Owner Decision #38 --
+that number remains unused) -- Teaching Assignment Activity-Kind
+Invariant: IMPLEMENTED, REVIEWED, COMMITTED, and MERGED to `main` at
+commit `bade46c` "fix: enforce ordinary teaching assignment
+activities" -- CLOSED. Not pushed.** The
+Slice D design gate's own consistency check found (and a
+rollback-isolated real-PostgreSQL proof confirmed) that
+`TeachingAssignmentService` create/update never verified `activity_id`
+was `ActivityKind.ORDINARY` -- only that it existed -- so a `CLUB`
+activity (`club_chess` in the fixture) could genuinely become a
+`TeachingRequirement`, and `TeachingAssignmentsProjectionService`
+offered every `CLUB` activity as a selectable option. Both are now
+corrected: `teaching_assignment_rules.py` gained one shared
+`require_ordinary_activity` helper (reused by both the fast precheck
+and the authoritative locked recheck via the existing `validate`
+callback wiring -- `persistence/teaching_assignment_repository.py` is
+untouched); a new `NonOrdinaryActivityTargetError` maps to `422
+{"code": "NON_ORDINARY_ACTIVITY_TARGET", ...}`, mirroring
+`NonWholeClassTargetError` exactly; the Teaching Assignments
+`activities` option list now filters to `ORDINARY` only (identical
+response-item shape, zero frontend change); `GET /config` remains
+deliberately unfiltered (general configuration projection, not a
+selector). `validation/preflight.py` gained a defense-in-depth check,
+`NON_ORDINARY_TEACHING_REQUIREMENT_ACTIVITY`, for any already-malformed
+`SchedulingProblem` reaching generation by a path other than the
+now-guarded write service. `ReservedBlock` intentionally untouched --
+no production `ReservedBlock` write surface exists yet, so there is
+nothing to have a symmetrical defect in. Subject duplicate-name
+checking (Slice D's own future design) is corrected to be scoped to
+`ActivityKind.ORDINARY` only, now that the projection leak that
+justified the earlier "unique across all kinds" recommendation is
+fixed -- zero new Owner Decision. Zero schema/migration impact, zero
+solver change, zero frontend production change. Test gate: core `tests
+-m "not slow"` 256 passed/5 deselected (250 pre-existing + 6 new:
+2 Teaching Assignment service + 1 ordinary-still-succeeds + 2 preflight
++ 1 projection); canonical single-process `tests_web` 217 passed (213
+pre-existing + 4 new), zero DB-reachability skips, confirmed on two
+consecutive runs; Teaching Assignment regression (API + repository)
+40/40; frontend 185/185, build clean; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. Slice D Subject CRUD remains
+**NOT implemented** -- this correction is scoped entirely to the
+pre-existing Teaching Assignment defect it fixes.
