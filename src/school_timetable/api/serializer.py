@@ -52,8 +52,10 @@ from school_timetable.api.schemas import (
     TeacherTimetableClassSectionResponse,
     TeacherTimetableEntryResponse,
     TeacherTimetableResponse,
+    TeacherProjectionItemResponse,
     TeacherTimetableRowResponse,
     TeacherWorkloadResponse,
+    TeachersProjectionResponse,
     TeachingAssignmentClassSectionResponse,
     TeachingAssignmentResponse,
     TeachingAssignmentsProjectionResponse,
@@ -65,6 +67,7 @@ from school_timetable.api.schemas import (
 )
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.teacher_projection_models import TeachersProjectionView
 from school_timetable.application.teacher_timetable_models import TeacherTimetableEntry, TeacherTimetableView
 from school_timetable.application.teaching_assignments_projection_models import (
     TeachingAssignmentItem,
@@ -387,3 +390,21 @@ def validation_diagnostic_responses_from_warnings(
     warnings: tuple[ValidationError, ...],
 ) -> tuple[ValidationDiagnosticResponse, ...]:
     return tuple(validation_diagnostic_response_from_error(w) for w in warnings)
+
+
+# -- Teacher CRUD API (Real-School Setup MVP Slice B). --------------------
+
+
+def teachers_projection_response_from_view(view: TeachersProjectionView) -> TeachersProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- order
+    already resolved in `TeacherProjectionService` (persistence ordinal
+    order); this function never re-sorts anything."""
+    return TeachersProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        teachers=tuple(
+            TeacherProjectionItemResponse(
+                id=t.id, first_name=t.first_name, last_name=t.last_name, name=t.name,
+            )
+            for t in view.teachers
+        ),
+    )

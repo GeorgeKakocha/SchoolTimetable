@@ -500,3 +500,64 @@ class ConfigurationLockedErrorResponse(BaseModel):
 
     code: Literal["SCHEDULING_CONFIGURATION_LOCKED"]
     detail: str
+
+
+# -- Teacher CRUD API (Real-School Setup MVP Slice B). -------------------
+
+
+class TeacherProjectionItemResponse(BaseModel):
+    """`name` is `Teacher.full_name` -- included so every consumer (the
+    future School Setup UI included) never has to re-implement the
+    trim/join rule itself; `first_name`/`last_name` remain the raw
+    authoritative edit fields."""
+
+    id: str
+    first_name: str
+    last_name: str
+    name: str
+
+
+class TeachersProjectionResponse(BaseModel):
+    configuration_locked: bool
+    teachers: tuple[TeacherProjectionItemResponse, ...]
+
+
+class TeacherWriteRequest(BaseModel):
+    """POST/PUT request body -- maps 1:1 onto `TeacherFields` (Owner
+    Decision #37). The natural ID is never accepted here -- it is
+    always server-generated on create and immutable on update (path
+    parameter only)."""
+
+    first_name: str
+    last_name: str
+
+
+class TeacherWriteResponse(BaseModel):
+    """POST/PUT success body -- the full written `Teacher`'s own
+    resolved fields. Unlike `TeachingAssignmentWriteResponse`, a Teacher
+    write affects nothing but its own row, so there is no larger page
+    projection to protect against staleness by withholding fields."""
+
+    id: str
+    first_name: str
+    last_name: str
+    name: str
+
+
+class TeacherDeleteResponse(BaseModel):
+    """DELETE success body. No `warnings` field -- Teacher writes have
+    no TeachingAssignment-style quantitative warning mechanism."""
+
+    deleted_id: str
+
+
+class InvalidTeacherErrorResponse(BaseModel):
+    code: Literal["INVALID_TEACHER"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class TeacherInUseErrorResponse(BaseModel):
+    code: Literal["TEACHER_IN_USE"]
+    detail: str
+    referenced_by: tuple[str, ...]

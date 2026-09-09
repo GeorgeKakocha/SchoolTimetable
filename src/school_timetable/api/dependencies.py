@@ -35,6 +35,8 @@ from sqlalchemy.orm import Session
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.teacher_projection_service import TeacherProjectionService
+from school_timetable.application.teacher_service import TeacherService
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
 from school_timetable.application.teaching_assignment_service import TeachingAssignmentService
 from school_timetable.application.teaching_assignments_projection_service import (
@@ -46,6 +48,7 @@ from school_timetable.persistence.problem_repository import (
     SqlAlchemySchedulingProblemRepository,
 )
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
+from school_timetable.persistence.teacher_repository import SqlAlchemyTeacherRepository
 from school_timetable.persistence.teaching_assignment_repository import (
     SqlAlchemyTeachingAssignmentRepository,
 )
@@ -119,5 +122,28 @@ def get_teaching_assignment_service() -> TeachingAssignmentService:
     return TeachingAssignmentService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyTeachingAssignmentRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_teachers_projection_service() -> TeacherProjectionService:
+    """Composes the same two session-factory-backed adapters
+    `ClassTimetableService` uses -- never a request-scoped `Session`
+    (Real-School Setup MVP Slice B)."""
+    return TeacherProjectionService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_teacher_service() -> TeacherService:
+    """Composes `TeacherService`'s three session-factory-backed
+    dependencies -- never a request-scoped `Session`, so
+    `SqlAlchemyTeacherRepository`'s own short lock/reload/validate
+    transactions (Decision #36) stay entirely its own (Real-School
+    Setup MVP Slice B)."""
+    return TeacherService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyTeacherRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

@@ -335,3 +335,51 @@ class TeacherNotFoundError(Exception):
             f"no teacher {teacher_id!r} for school={school_natural_id!r}, "
             f"academic_year={academic_year_natural_id!r}"
         )
+
+
+class InvalidTeacherError(Exception):
+    """A `TeacherService` create/update request fails input validation
+    (Real-School Setup MVP Slice B) -- a blank `first_name`/`last_name`
+    after trimming. Carries the validator's own safe, structured
+    diagnostics as an immutable tuple, exactly like
+    `InvalidTeachingAssignmentError` -- never an ORM/SQLAlchemy object."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid teacher for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class TeacherInUseError(Exception):
+    """A `TeacherService.delete` request targets a `Teacher` currently
+    referenced by the persisted scheduling configuration (Real-School
+    Setup MVP Slice B) -- never cascade-deleted. `referenced_by` names
+    every referencing entity kind found, in the deterministic order
+    `TEACHING_REQUIREMENT`, `TEACHER_AVAILABILITY`, `RESERVED_BLOCK`
+    (only the kinds that actually reference this teacher), never a
+    persistence surrogate ID."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        teacher_id: str,
+        referenced_by: tuple[str, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.teacher_id = teacher_id
+        self.referenced_by = referenced_by
+        super().__init__(
+            f"teacher {teacher_id!r} is still referenced by {list(referenced_by)!r} "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )
