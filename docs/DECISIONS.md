@@ -1968,3 +1968,87 @@ this implementation followed them as given.
     approved setup contract: **Slice C -- Classes CRUD + canonical
     `WHOLE_CLASS` lifecycle** (not started, not designed in detail
     here).
+
+    **Slice C (Classes CRUD + canonical `WHOLE_CLASS` lifecycle)
+    update: IMPLEMENTED, REVIEWED, live API reviewed, test-
+    infrastructure correction reviewed, COMMITTED, and MERGED to
+    `main` at commit `460e42f` "feat: add class CRUD" -- CLOSED. Not
+    pushed. Zero new Owner Decisions
+    required** -- Owner Decision #33 (canonical `WHOLE_CLASS`
+    cardinality) already settled the one candidate architectural fork
+    (an explicit DB-level canonical-group FK vs. reusing the existing
+    role+membership model): the current schema is reused unchanged, no
+    migration. `POST /schools/{school_id}/years/{year_id}/classes`
+    creates a `ClassSection` together with its owned, internal
+    canonical `WHOLE_CLASS` `ParticipantGroup` and the one membership
+    linking them, atomically, under the exact same `AcademicYear` lock/
+    Decision-#35-recheck sequence Teacher and Teaching Assignment
+    writes already use (`persistence/configuration_write_lock.py`,
+    reused entirely unchanged -- confirmed by its two existing
+    consumers' full test suites staying green). The administrator never
+    supplies or manages the canonical group; both natural IDs
+    (`class_<uuid4().hex>`/`group_<uuid4().hex>`) are always
+    server-generated via explicit, independently-injectable factories.
+    `name` is trimmed with a blank result rejected
+    (`422 INVALID_CLASS`); duplicate `ClassSection` names within one
+    `AcademicYear` are rejected by exact, case-sensitive, trimmed
+    comparison (`409 DUPLICATE_CLASS`) -- an application rule, no new
+    DB uniqueness. For classes created/renamed through this new path,
+    the canonical group's display name is kept in sync with the
+    class's own name (`8-A` -> canonical group `8-A`); pre-existing
+    fixture-seeded canonical groups keep their historical `"All of
+    8-A"`-style names untouched -- Slice C never rewrites them, and
+    nothing anywhere resolves a canonical group by its name (only by
+    `role == WHOLE_CLASS` and exact-one-class membership, matching
+    `teaching_assignments_projection_service._whole_class_target`'s
+    existing predicate exactly). Delete is rejected
+    (`ClassSectionInUseError`, `409 CLASS_IN_USE`, `referenced_by`
+    naming every referencing kind in the deterministic order
+    `TEACHING_REQUIREMENT`/`RESERVED_BLOCK`/`SUBGROUP`/
+    `MERGED_CLASSES`) whenever the *current* configuration still
+    references the class or its canonical group; `SUBGROUP`/
+    `MERGED_CLASSES` groups are never created, renamed, or deleted by
+    Class CRUD -- only ever delete-blockers. A zero-or-duplicate
+    canonical-group state is never silently repaired -- it surfaces as
+    an internal defect (`class_section_rules.
+    CanonicalWholeClassGroupInvariantError`, never a public
+    application/HTTP outcome), matching this codebase's existing
+    internal-defect discipline. Reuses `ClassSectionNotFoundError`/
+    `ConfigurationLockedError` verbatim -- no second class-not-found
+    exception, no Class-specific lock code. Zero schema/migration
+    impact (Alembic stays at `cae76cba3c58`); zero frontend production
+    changes. Test gate: 28 new pure `tests/test_class_section_service.py`
+    cases (zero DB); 23 new `tests_web/test_class_section_api.py`
+    HTTP-contract cases plus 11 new
+    `tests_web/test_class_section_repository.py` cases (atomicity
+    proofs for create/update/delete failure paths, plus a
+    deterministic, sequential proof of both generation-vs-write race
+    orderings for a Class mutation). Slice C's larger cumulative test
+    count exposed a pre-existing `tests_web/conftest.py::live_db_engine`
+    lifecycle defect (it `return`ed its `Engine` with no teardown hook,
+    so server-side connections accumulated across a full-suite run
+    until PostgreSQL's `max_connections` was reached); corrected as a
+    narrow test-infrastructure fix (the fixture now `yield`s and
+    disposes its `Engine` on every exit path), no production code
+    touched -- the canonical single-process
+    `uv run python -m pytest -q tests_web` now passes all 213 tests
+    with zero DB-reachability skips, confirmed on two consecutive runs.
+    Live-validated against a new,
+    local-only, unlocked `class-crud-review-school`/
+    `ay-class-crud-2026` dataset (retained, no `Schedule` generated) as
+    well as the running app's real HTTP API -- create, read, rename
+    (identity preserved, both display names updated atomically),
+    duplicate rejection, unused-class delete (owned canonical group
+    confirmed gone), referenced-class delete rejection
+    (`CLASS_IN_USE` with multi-kind deterministic `referenced_by`), and
+    case-sensitive same-*differently-cased*-name coexistence all
+    confirmed; all three prior canonical/review datasets
+    (`synthetic-school`/`ay-2026`, `synthetic-review-school`/
+    `ay-review-2026`, `teacher-crud-review-school`/
+    `ay-teacher-crud-2026`) reconfirmed unchanged throughout, including
+    every pre-existing fixture canonical group's historical `"All of
+    X"` name, verbatim. This entry records Slice C's implementation
+    status only -- **the broader Real-School Setup MVP remains NOT
+    complete.** Next slice per the approved setup contract: **Slice D
+    -- Subjects/Activities CRUD** (not started, not designed in detail
+    here).
