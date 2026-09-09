@@ -69,7 +69,7 @@ def _problem_with_pattern(
         academic_year=AcademicYear(id="ay", label="AY"),
         days=days,
         periods=periods,
-        teachers=(Teacher(id="t_core", name="Core"), Teacher(id="t_filler", name="Filler")),
+        teachers=(Teacher(id="t_core", first_name="Core", last_name=""), Teacher(id="t_filler", first_name="Filler", last_name="")),
         class_sections=(ClassSection(id="c1", name="C1"),),
         participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity(id="core", name="Core"), Activity(id="filler", name="Filler")),

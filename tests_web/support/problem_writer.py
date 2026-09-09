@@ -65,7 +65,10 @@ def write_scheduling_problem(session: Session, problem: SchedulingProblem) -> No
 
     teacher_ids: dict[str, int] = {}
     for ordinal, teacher in enumerate(problem.teachers):
-        row = orm.Teacher(academic_year_id=year_id, natural_id=teacher.id, name=teacher.name, ordinal=ordinal)
+        row = orm.Teacher(
+            academic_year_id=year_id, natural_id=teacher.id,
+            first_name=teacher.first_name, last_name=teacher.last_name, ordinal=ordinal,
+        )
         session.add(row)
         session.flush()
         teacher_ids[teacher.id] = row.id

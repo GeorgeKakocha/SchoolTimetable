@@ -225,7 +225,11 @@ class Teacher(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
-    name: Mapped[str] = mapped_column(Text, nullable=False)
+    first_name: Mapped[str] = mapped_column(Text, nullable=False)
+    last_name: Mapped[str] = mapped_column(Text, nullable=False)
+    """Owner Decision #37: replaces the former single `name` column.
+    No uniqueness on either -- two teachers may share an identical
+    first+last name; `natural_id` remains the real identity."""
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (

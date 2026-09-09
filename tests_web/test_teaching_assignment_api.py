@@ -196,7 +196,10 @@ def test_get_zero_workload_teacher_appears_with_zero_total(client, db):
     next_ordinal = session.execute(
         select(func.max(m.Teacher.ordinal)).where(m.Teacher.academic_year_id == year_id)
     ).scalar_one()
-    session.add(m.Teacher(academic_year_id=year_id, natural_id="t_zero", name="Teacher Zero", ordinal=next_ordinal + 1))
+    session.add(m.Teacher(
+        academic_year_id=year_id, natural_id="t_zero",
+        first_name="Teacher Zero", last_name="", ordinal=next_ordinal + 1,
+    ))
     session.flush()
 
     body = client.get(_url(problem)).json()

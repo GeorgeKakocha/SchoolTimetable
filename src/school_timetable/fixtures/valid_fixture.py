@@ -59,14 +59,14 @@ def build_valid_fixture() -> SchedulingProblem:
     )
 
     teachers = (
-        Teacher(id="t_math", name="Teacher Math"),
-        Teacher(id="t_science", name="Teacher Science"),
-        Teacher(id="t_history", name="Teacher History"),
-        Teacher(id="t_art", name="Teacher Art"),
-        Teacher(id="t_sport", name="Teacher Sport"),
-        Teacher(id="t_dance", name="Teacher Dance"),
-        Teacher(id="t_german", name="Teacher German"),
-        Teacher(id="t_russian", name="Teacher Russian"),
+        Teacher(id="t_math", first_name="Teacher Math", last_name=""),
+        Teacher(id="t_science", first_name="Teacher Science", last_name=""),
+        Teacher(id="t_history", first_name="Teacher History", last_name=""),
+        Teacher(id="t_art", first_name="Teacher Art", last_name=""),
+        Teacher(id="t_sport", first_name="Teacher Sport", last_name=""),
+        Teacher(id="t_dance", first_name="Teacher Dance", last_name=""),
+        Teacher(id="t_german", first_name="Teacher German", last_name=""),
+        Teacher(id="t_russian", first_name="Teacher Russian", last_name=""),
     )
 
     activities = (

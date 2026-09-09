@@ -37,7 +37,7 @@ def _problem(**overrides) -> SchedulingProblem:
             Period(id="p1", name="Period 1", index=0, block_id="morning"),
             Period(id="p2", name="Period 2", index=1, block_id="morning"),
         ),
-        teachers=(Teacher(id="t1", name="Teacher One"),),
+        teachers=(Teacher(id="t1", first_name="Teacher One", last_name=""),),
         class_sections=(ClassSection(id="8a", name="8-A"), ClassSection(id="9a", name="9-A")),
         participant_groups=(ParticipantGroup(id="g1", name="All of 8-A", class_sections=("8a",), role=ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity(id="math", name="Mathematics"),),
@@ -164,7 +164,7 @@ def test_split_parallel_entries_both_survive_in_same_cell():
             ParticipantGroup(id="g_russian", name="8-A Russian", class_sections=("8a",), role=ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity(id="german", name="German"), Activity(id="russian", name="Russian")),
-        teachers=(Teacher(id="t_german", name="Teacher German"), Teacher(id="t_russian", name="Teacher Russian")),
+        teachers=(Teacher(id="t_german", first_name="Teacher German", last_name=""), Teacher(id="t_russian", first_name="Teacher Russian", last_name="")),
     )
     german = _entry(
         activity_id="german", teacher_id="t_german", participant_group_id="g_german", requirement_id="german_8a",

@@ -163,7 +163,7 @@ def class_section_to_domain(row: orm.ClassSection) -> ClassSection:
 
 
 def teacher_to_domain(row: orm.Teacher) -> Teacher:
-    return Teacher(id=row.natural_id, name=row.name)
+    return Teacher(id=row.natural_id, first_name=row.first_name, last_name=row.last_name)
 
 
 def activity_to_domain(row: orm.Activity) -> Activity:

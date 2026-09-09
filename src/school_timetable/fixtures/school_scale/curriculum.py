@@ -184,7 +184,7 @@ def build_curriculum(*, extra_unavailability: bool = False) -> Curriculum:
         ids = []
         for _ in range(count):
             tid = f"teacher_{next_teacher_num:02d}"
-            teacher_defs.append(Teacher(id=tid, name=f"Teacher {next_teacher_num:02d}"))
+            teacher_defs.append(Teacher(id=tid, first_name=f"Teacher {next_teacher_num:02d}", last_name=""))
             ids.append(tid)
             next_teacher_num += 1
         teacher_ids_by_subject[subject] = ids

@@ -149,7 +149,10 @@ def test_same_year_isolation(seeded_db, live_db_engine):
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
-    session.add(m.Teacher(academic_year_id=year2.id, natural_id="t_math", name="Other Teacher Math", ordinal=0))
+    session.add(m.Teacher(
+        academic_year_id=year2.id, natural_id="t_math",
+        first_name="Other Teacher Math", last_name="", ordinal=0,
+    ))
     session.commit()
     year2_id = year2.id
     school2_id = school2.id

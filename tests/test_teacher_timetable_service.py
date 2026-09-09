@@ -39,7 +39,7 @@ def _problem(**overrides) -> SchedulingProblem:
             Period(id="p1", name="Period 1", index=0, block_id="morning"),
             Period(id="p2", name="Period 2", index=1, block_id="morning"),
         ),
-        teachers=(Teacher(id="t1", name="Teacher One"),),
+        teachers=(Teacher(id="t1", first_name="Teacher One", last_name=""),),
         class_sections=(ClassSection(id="8a", name="8-A"), ClassSection(id="9a", name="9-A")),
         participant_groups=(ParticipantGroup(id="g1", name="All of 8-A", class_sections=("8a",), role=ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity(id="math", name="Mathematics"),),
@@ -149,7 +149,7 @@ def test_ordinary_whole_class_lesson_projects_one_correct_entry():
 
 
 def test_entry_for_another_teacher_does_not_appear():
-    problem = _problem(teachers=(Teacher(id="t1", name="Teacher One"), Teacher(id="t2", name="Teacher Two")))
+    problem = _problem(teachers=(Teacher(id="t1", first_name="Teacher One", last_name=""), Teacher(id="t2", first_name="Teacher Two", last_name="")))
     active = _active((_entry(teacher_id="t2"),))
     service = TeacherTimetableService(_FakeProblemRepository(problem), _FakeScheduleRepository(active))
 
@@ -162,7 +162,7 @@ def test_entry_for_another_teacher_does_not_appear():
 
 def test_only_requested_teacher_entries_appear_when_multiple_teachers_have_lessons():
     problem = _problem(
-        teachers=(Teacher(id="t1", name="Teacher One"), Teacher(id="t2", name="Teacher Two")),
+        teachers=(Teacher(id="t1", first_name="Teacher One", last_name=""), Teacher(id="t2", first_name="Teacher Two", last_name="")),
         activities=(Activity(id="math", name="Mathematics"), Activity(id="art", name="Art")),
     )
     mine = _entry(teacher_id="t1", requirement_id="req-mine")
@@ -185,7 +185,7 @@ def test_subgroup_target_reports_authoritative_role_and_class_sections():
             ParticipantGroup(id="g_german", name="8-A German", class_sections=("8a",), role=ParticipantGroupRole.SUBGROUP),
         ),
         activities=(Activity(id="german", name="German"),),
-        teachers=(Teacher(id="t_german", name="Teacher German"),),
+        teachers=(Teacher(id="t_german", first_name="Teacher German", last_name=""),),
     )
     entry = _entry(
         activity_id="german", teacher_id="t_german", participant_group_id="g_german", requirement_id="german_8a",
@@ -211,7 +211,7 @@ def test_merged_classes_target_reports_authoritative_role_and_both_class_section
         ),
         class_sections=(ClassSection(id="9a", name="9-A"), ClassSection(id="9b", name="9-B")),
         activities=(Activity(id="history", name="History"),),
-        teachers=(Teacher(id="t_history", name="Teacher History"),),
+        teachers=(Teacher(id="t_history", first_name="Teacher History", last_name=""),),
     )
     entry = _entry(
         activity_id="history", teacher_id="t_history", class_sections=("9a", "9b"),

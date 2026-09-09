@@ -51,8 +51,10 @@ def test_simple_entities_map_natural_id_never_surrogate():
     class_row = orm.ClassSection(id=3, academic_year_id=202, natural_id="8a", name="8-A", ordinal=0)
     assert mp.class_section_to_domain(class_row) == ClassSection(id="8a", name="8-A")
 
-    teacher_row = orm.Teacher(id=4, academic_year_id=202, natural_id="t_math", name="Teacher Math", ordinal=0)
-    assert mp.teacher_to_domain(teacher_row) == Teacher(id="t_math", name="Teacher Math")
+    teacher_row = orm.Teacher(
+        id=4, academic_year_id=202, natural_id="t_math", first_name="Teacher", last_name="Math", ordinal=0,
+    )
+    assert mp.teacher_to_domain(teacher_row) == Teacher(id="t_math", first_name="Teacher", last_name="Math")
 
     resource_row = orm.Resource(
         id=5, academic_year_id=202, natural_id="gym", name="Indoor Gym", capacity=1, ordinal=0,

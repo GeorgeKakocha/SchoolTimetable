@@ -47,7 +47,9 @@ def _seed_year(session: Session, school_natural: str, year_natural: str) -> dict
     day = m.Day(academic_year_id=year.id, natural_id="mon", name="Monday", idx=0)
     period = m.Period(academic_year_id=year.id, natural_id="p1", name="Period 1", idx=0, block_id="morning")
     class_section = m.ClassSection(academic_year_id=year.id, natural_id="8a", name="8-A", ordinal=0)
-    teacher = m.Teacher(academic_year_id=year.id, natural_id="t_math", name="Teacher Math", ordinal=0)
+    teacher = m.Teacher(
+        academic_year_id=year.id, natural_id="t_math", first_name="Teacher Math", last_name="", ordinal=0,
+    )
     activity = m.Activity(academic_year_id=year.id, natural_id="math", name="Math", ordinal=0)
     resource = m.Resource(academic_year_id=year.id, natural_id="gym", name="Gym", capacity=1, ordinal=0)
     session.add_all([day, period, class_section, teacher, activity, resource])
@@ -168,7 +170,8 @@ def test_natural_id_uniqueness_is_per_academic_year(db_session):
     year_b = _seed_year(db_session, "school-dup-b", "year-dup-b")
 
     _fails(db_session, m.Teacher(
-        academic_year_id=year_a["year"].id, natural_id="t_math", name="Duplicate Teacher Math", ordinal=1,
+        academic_year_id=year_a["year"].id, natural_id="t_math",
+        first_name="Duplicate Teacher Math", last_name="", ordinal=1,
     ))
 
     # Same natural_id, different academic year: allowed (already inserted

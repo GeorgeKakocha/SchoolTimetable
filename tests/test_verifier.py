@@ -27,7 +27,7 @@ def _tiny_problem(**overrides) -> SchedulingProblem:
         academic_year=AcademicYear(id="ay", label="AY"),
         days=days,
         periods=periods,
-        teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection(id="c1", name="C1"),),
         participant_groups=(
             ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),

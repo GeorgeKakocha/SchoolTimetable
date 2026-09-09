@@ -226,7 +226,7 @@ def test_real_zero_load_teacher_returns_valid_all_empty_grid(client, db):
     session, session_factory = db
     problem = build_valid_fixture()
     problem = dataclasses.replace(
-        problem, teachers=problem.teachers + (Teacher(id="t_idle", name="Teacher Idle"),),
+        problem, teachers=problem.teachers + (Teacher(id="t_idle", first_name="Teacher Idle", last_name=""),),
     )
     _problem, active = _seed_and_generate(client, session, session_factory, problem=problem)
 

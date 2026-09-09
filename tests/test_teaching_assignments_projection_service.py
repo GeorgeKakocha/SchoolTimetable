@@ -133,7 +133,7 @@ def test_teacher_workload_sums_every_requirement_type_for_that_teacher():
 
 def test_zero_workload_teacher_appears_with_zero_total():
     problem = build_valid_fixture()
-    problem = replace(problem, teachers=problem.teachers + (Teacher(id="t_zero", name="Teacher Zero"),))
+    problem = replace(problem, teachers=problem.teachers + (Teacher(id="t_zero", first_name="Teacher Zero", last_name=""),))
     view = _service(problem).project(_SCHOOL, _YEAR)
     zero_workload = next(w for w in view.teacher_workloads if w.teacher_id == "t_zero")
     assert zero_workload.total_weekly_periods == 0
@@ -151,7 +151,7 @@ def test_every_teacher_appears_exactly_once_in_workloads():
 def test_teachers_and_activities_option_lists_preserve_full_content_and_order():
     problem = build_valid_fixture()
     view = _service(problem).project(_SCHOOL, _YEAR)
-    assert [(t.id, t.name) for t in view.teachers] == [(t.id, t.name) for t in problem.teachers]
+    assert [(t.id, t.name) for t in view.teachers] == [(t.id, t.full_name) for t in problem.teachers]
     assert [(a.id, a.name) for a in view.activities] == [(a.id, a.name) for a in problem.activities]
 
 

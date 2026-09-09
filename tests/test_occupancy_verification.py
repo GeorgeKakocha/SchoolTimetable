@@ -72,7 +72,7 @@ def test_verifier_detects_a_missing_class_slot():
     """A class with a genuinely empty instructional slot must be flagged,
     even though every requirement's own weekly-count is otherwise fine."""
     problem = _problem(
-        teachers=(Teacher(id="t1", name="T1"),),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""),),
         participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),),
         teaching_requirements=(
             TeachingRequirement(
@@ -94,7 +94,7 @@ def test_verifier_detects_a_genuine_class_double_booking():
     """Two *unrelated* requirements (no split relationship) both landing
     on the same class/slot is a real double-booking and must be flagged."""
     problem = _problem(
-        teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         participant_groups=(
             ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
@@ -124,7 +124,7 @@ def test_verifier_detects_a_genuine_class_double_booking():
 
 def _split_problem():
     return _problem(
-        teachers=(Teacher(id="t_de", name="German Teacher"), Teacher(id="t_ru", name="Russian Teacher")),
+        teachers=(Teacher(id="t_de", first_name="German Teacher", last_name=""), Teacher(id="t_ru", first_name="Russian Teacher", last_name="")),
         participant_groups=(
             ParticipantGroup(id="pg_de", name="German branch", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
             ParticipantGroup(id="pg_ru", name="Russian branch", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
@@ -189,7 +189,7 @@ def test_non_split_overlap_at_same_slot_is_still_flagged_as_double_booking():
     requirements landing on the same class/slot must still be flagged.
     """
     problem = _problem(
-        teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         participant_groups=(
             ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),

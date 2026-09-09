@@ -50,7 +50,7 @@ def fill_occupancy(
         teacher_id = f"filler_teacher_{i}"
         group_id = f"filler_group_{i}"
         req_id = f"filler_req_{i}"
-        teachers.append(Teacher(teacher_id, f"Filler Teacher {i}"))
+        teachers.append(Teacher(id=teacher_id, first_name=f"Filler Teacher {i}", last_name=""))
         groups.append(
             ParticipantGroup(group_id, f"Filler Group {i}", (class_section.id,), ParticipantGroupRole.SUBGROUP)
         )

@@ -82,7 +82,7 @@ class ClassTimetableService:
         )
 
         activities_by_id = {a.id: a.name for a in problem.activities}
-        teachers_by_id = {t.id: t.name for t in problem.teachers}
+        teachers_by_id = {t.id: t.full_name for t in problem.teachers}
         groups_by_id = {g.id: g.name for g in problem.participant_groups}
 
         cells: dict[tuple[str, str], list[ClassTimetableEntry]] = {}

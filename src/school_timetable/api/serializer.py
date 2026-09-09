@@ -88,7 +88,7 @@ def config_response_from_problem(problem: SchedulingProblem) -> SchedulingConfig
             )
             for p in problem.periods
         ),
-        teachers=tuple(TeacherResponse(id=t.id, name=t.name) for t in problem.teachers),
+        teachers=tuple(TeacherResponse(id=t.id, name=t.full_name) for t in problem.teachers),
         class_sections=tuple(ClassSectionResponse(id=c.id, name=c.name) for c in problem.class_sections),
         participant_groups=tuple(
             ParticipantGroupResponse(id=g.id, name=g.name, class_sections=g.class_sections, role=g.role.value)

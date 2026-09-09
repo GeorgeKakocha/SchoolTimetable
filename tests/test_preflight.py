@@ -27,7 +27,7 @@ def _base_problem(**overrides):
         academic_year=AcademicYear(id="ay", label="AY"),
         days=days,
         periods=periods,
-        teachers=(Teacher(id="t1", name="T1"),),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""),),
         class_sections=(ClassSection(id="c1", name="C1"),),
         participant_groups=(ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity(id="a1", name="A1"),),
@@ -178,7 +178,7 @@ def test_split_group_weekly_periods_mismatch_detected():
             ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
             ParticipantGroup(id="pg2", name="PG2", class_sections=("c1",), role=ParticipantGroupRole.SUBGROUP),
         ),
-        teachers=(Teacher(id="t1", name="T1"), Teacher(id="t2", name="T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         teaching_requirements=(
             TeachingRequirement(
                 id="r1", teacher_id="t1", activity_id="a1", participant_group_id="pg1",

@@ -38,10 +38,10 @@ def _build_resource_overcommitted_problem() -> SchedulingProblem:
         days=days,
         periods=periods,
         teachers=(
-            Teacher(id="t_gym_1", name="Gym Teacher 1"),
-            Teacher(id="t_filler_1", name="Filler Teacher 1"),
-            Teacher(id="t_gym_2", name="Gym Teacher 2"),
-            Teacher(id="t_filler_2", name="Filler Teacher 2"),
+            Teacher(id="t_gym_1", first_name="Gym Teacher 1", last_name=""),
+            Teacher(id="t_filler_1", first_name="Filler Teacher 1", last_name=""),
+            Teacher(id="t_gym_2", first_name="Gym Teacher 2", last_name=""),
+            Teacher(id="t_filler_2", first_name="Filler Teacher 2", last_name=""),
         ),
         class_sections=(ClassSection(id="c1", name="C1"), ClassSection(id="c2", name="C2")),
         participant_groups=(

@@ -74,7 +74,7 @@ def _full(problem: SchedulingProblem, entries: tuple[ScheduleEntry, ...]) -> tup
 
 def test_valid_ordinary_move_accepted():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
             ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
@@ -108,7 +108,7 @@ def test_valid_ordinary_move_accepted():
 
 def test_teacher_collision_rejected():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
             ParticipantGroup("pgx", "PGX", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
@@ -147,7 +147,7 @@ def test_teacher_collision_rejected():
 
 def test_target_class_mismatch_rejected():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cz", "CZ")),
         participant_groups=(
             ParticipantGroup("pgx", "PGX", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
@@ -181,7 +181,7 @@ def test_target_class_mismatch_rejected():
 
 def test_unavailable_teacher_target_rejected():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
@@ -211,7 +211,7 @@ def test_unavailable_teacher_target_rejected():
 def test_resource_capacity_conflict_rejected():
     gym = ResourceRequirement(resource_id="gym")
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2"), Teacher("t3", "T3")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name=""), Teacher(id="t3", first_name="T3", last_name="")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
             ParticipantGroup("pgx", "PGX", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
@@ -250,7 +250,7 @@ def test_resource_capacity_conflict_rejected():
 
 def test_fixed_occurrence_move_rejected():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
@@ -278,7 +278,7 @@ def test_target_side_fixed_occurrence_move_rejected():
     that is fixed -- displacing it must be rejected too, not just moving
     a fixed occurrence directly."""
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
@@ -305,7 +305,7 @@ def test_target_side_locked_occurrence_move_rejected():
     """Same protection, but the SOURCE is free and it's the TARGET occupant
     that is manually locked -- displacing it must be rejected too."""
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
@@ -334,7 +334,7 @@ def test_target_side_locked_occurrence_move_rejected():
 
 def test_reserved_block_conflict_rejected():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"),),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""),),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity("math", "Math"), Activity("club_chess", "Chess", kind=ActivityKind.CLUB)),
@@ -364,7 +364,7 @@ def test_reserved_block_conflict_rejected():
 
 def _required_block_problem():
     return _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),
@@ -429,7 +429,7 @@ def _split_problem(t_german_unavailable_at=None):
     if t_german_unavailable_at:
         availabilities = (TeacherAvailability("t_de", *t_german_unavailable_at, AvailabilityStatus.UNAVAILABLE),)
     return _problem(
-        teachers=(Teacher("t_de", "DE"), Teacher("t_ru", "RU"), Teacher("t3", "T3")),
+        teachers=(Teacher(id="t_de", first_name="DE", last_name=""), Teacher(id="t_ru", first_name="RU", last_name=""), Teacher(id="t3", first_name="T3", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
             ParticipantGroup("pg_de", "DE branch", ("cx",), ParticipantGroupRole.SUBGROUP),
@@ -487,7 +487,7 @@ def test_split_move_rejected_if_target_invalid_for_either_branch():
 
 def test_merged_group_move_uses_both_classes():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
             ParticipantGroup("pg_merged", "Merged", ("cx", "cy"), ParticipantGroupRole.MERGED_CLASSES),
@@ -519,7 +519,7 @@ def test_merged_group_move_uses_both_classes():
 
 def test_max_periods_per_day_violation_rejected():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
             ParticipantGroup("pg2", "PG2", ("cx",), ParticipantGroupRole.SUBGROUP)),

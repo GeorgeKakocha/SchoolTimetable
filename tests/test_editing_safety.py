@@ -76,7 +76,7 @@ def _full(problem, entries):
 
 def _two_class_problem():
     return _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2"), Teacher("t3", "T3")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name=""), Teacher(id="t3", first_name="T3", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
             ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
@@ -138,7 +138,7 @@ def test_stale_plan_rejected_when_swap_partner_moves_away():
 
 def test_stale_plan_rejected_when_unrelated_change_causes_teacher_conflict():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2"), Teacher("t7", "T7")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name=""), Teacher(id="t7", first_name="T7", last_name="")),
         class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
         participant_groups=(
             ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
@@ -223,7 +223,7 @@ def test_normal_validate_then_apply_still_succeeds_on_unchanged_schedule():
 
 def _malformed_required_problem_and_schedule():
     problem = _problem(
-        teachers=(Teacher("t1", "T1"),),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""),),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),),
         activities=(Activity("math", "Math"),),

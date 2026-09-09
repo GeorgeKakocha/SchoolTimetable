@@ -67,7 +67,7 @@ class TeachingAssignmentsProjectionService:
         configuration_locked = active is not None
 
         # (3) Build the view model purely in memory -- no further DB access.
-        teachers_by_id = {t.id: t.name for t in problem.teachers}
+        teachers_by_id = {t.id: t.full_name for t in problem.teachers}
         activities_by_id = {a.id: a.name for a in problem.activities}
         groups_by_id = {g.id: g for g in problem.participant_groups}
         class_sections_by_id = {c.id: c.name for c in problem.class_sections}
@@ -77,7 +77,7 @@ class TeachingAssignmentsProjectionService:
             for r in problem.teaching_requirements
         )
 
-        teachers = tuple(TeacherOption(id=t.id, name=t.name) for t in problem.teachers)
+        teachers = tuple(TeacherOption(id=t.id, name=t.full_name) for t in problem.teachers)
         activities = tuple(ActivityOption(id=a.id, name=a.name) for a in problem.activities)
 
         whole_class_targets = tuple(
@@ -95,7 +95,7 @@ class TeachingAssignmentsProjectionService:
                 totals_by_teacher[requirement.teacher_id] += requirement.weekly_periods
         teacher_workloads = tuple(
             TeacherWorkload(
-                teacher_id=t.id, teacher_name=t.name, total_weekly_periods=totals_by_teacher[t.id],
+                teacher_id=t.id, teacher_name=t.full_name, total_weekly_periods=totals_by_teacher[t.id],
             )
             for t in problem.teachers
         )

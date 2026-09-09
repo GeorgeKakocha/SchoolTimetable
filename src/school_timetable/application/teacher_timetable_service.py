@@ -114,7 +114,7 @@ class TeacherTimetableService:
             academic_year_id=problem.academic_year.id,
             academic_year_label=problem.academic_year.label,
             teacher_id=teacher.id,
-            teacher_name=teacher.name,
+            teacher_name=teacher.full_name,
             version_number=active.version_number,
             solver_status=active.solver_status,
             total_soft_penalty=active.total_soft_penalty,

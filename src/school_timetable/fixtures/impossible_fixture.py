@@ -31,8 +31,8 @@ def build_impossible_fixture() -> SchedulingProblem:
     )
 
     teachers = (
-        Teacher(id="t_normal", name="Teacher Normal"),
-        Teacher(id="t_overloaded", name="Teacher Overloaded"),
+        Teacher(id="t_normal", first_name="Teacher Normal", last_name=""),
+        Teacher(id="t_overloaded", first_name="Teacher Overloaded", last_name=""),
     )
     activities = (
         Activity(id="filler", name="Filler Subject"),

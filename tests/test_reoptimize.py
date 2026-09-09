@@ -49,7 +49,7 @@ def _six_single_period_problem(**overrides) -> SchedulingProblem:
     """3 days x 2 periods = 6 slots, 6 requirements of weekly_periods=1
     each -- exactly fills class cx. Simple building block for all four
     re-optimization scenarios."""
-    teachers = tuple(Teacher(f"t{i}", f"T{i}") for i in range(1, 7))
+    teachers = tuple(Teacher(id=f"t{i}", first_name=f"T{i}", last_name="") for i in range(1, 7))
     groups = tuple(
         ParticipantGroup(
             f"pg{i}", f"PG{i}", ("cx",),
@@ -220,7 +220,7 @@ def test_new_fixed_placement_conflicting_with_reference_is_repaired():
 
 def test_new_resource_capacity_conflicting_with_reference_is_repaired():
     gym = ResourceRequirement(resource_id="gym")
-    teachers = (Teacher("t_a", "A"), Teacher("t_a2", "A2"), Teacher("t_b", "B"), Teacher("t_b2", "B2"))
+    teachers = (Teacher(id="t_a", first_name="A", last_name=""), Teacher(id="t_a2", first_name="A2", last_name=""), Teacher(id="t_b", first_name="B", last_name=""), Teacher(id="t_b2", first_name="B2", last_name=""))
     groups = (
         ParticipantGroup("pg_a", "A", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
         ParticipantGroup("pg_a2", "A2", ("cx",), ParticipantGroupRole.SUBGROUP),
@@ -285,7 +285,7 @@ def test_new_reserved_block_conflicting_with_reference_is_repaired():
     # instructional slots) never needs to change; only WHICH slots are
     # reserved does -- the same total footprint just moves.
     four_days = DAYS + (Day(id="d4", name="Day4", index=3),)
-    teachers = tuple(Teacher(f"t{i}", f"T{i}") for i in range(1, 7))
+    teachers = tuple(Teacher(id=f"t{i}", first_name=f"T{i}", last_name="") for i in range(1, 7))
     groups = tuple(
         ParticipantGroup(
             f"pg{i}", f"PG{i}", ("cx",),
@@ -356,7 +356,7 @@ def test_tightened_max_periods_per_day_conflicting_with_reference_is_repaired():
     problem = SchedulingProblem(
         school=School(id="s", name="S"), academic_year=AcademicYear(id="ay", label="AY"),
         days=small_days, periods=PERIODS,
-        teachers=(Teacher("t1", "T1"), Teacher("t2", "T2")),
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
         class_sections=(ClassSection("cx", "CX"),),
         participant_groups=(
             ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
