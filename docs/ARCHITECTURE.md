@@ -326,12 +326,14 @@ UI) is IMPLEMENTED, REVIEWED (manually browser-reviewed by the product
 owner against a real unlocked review dataset), COMMITTED, and MERGED to
 `main` at commit `f608b7d` -- 3C.3b CLOSED; **Phase 3C.3 (Teaching
 Assignments frontend milestone) is complete.** The next product slice
--- a minimal schedule-generation trigger UI, chosen by the product
+-- the Minimal Schedule Generation Trigger UI, chosen by the product
 owner ahead of 3C.5's broader reference-data CRUD, no new phase number
-(outside 3C.1-3C.5's own locked scope) -- is implemented on branch
-`feature/schedule-generation-ui`, pending review, frontend-only, zero
-backend/schema changes: see `docs/PROJECT_STATE.md` for the full
-record.
+(outside 3C.1-3C.5's own locked scope) -- is IMPLEMENTED, REVIEWED
+(manually browser-reviewed by the product owner, a full
+Configure -> Generate -> Review browser-only workflow proven end-to-end),
+COMMITTED, and MERGED to `main` at commit `a3bbcb8`, frontend-only,
+zero backend/schema changes -- **CLOSED**: see `docs/PROJECT_STATE.md`
+for the full record.
 
 ## Phase 3C architecture direction
 
@@ -339,10 +341,9 @@ record.
 is merged to `main` at commit `2f4f9e6` and CLOSED; 3C.2b is merged to
 `main` at commit `9570358` and CLOSED; 3C.3a is merged to `main` at
 commit `1499377` and CLOSED; 3C.3b is merged to `main` at commit
-`f608b7d` and CLOSED; the schedule-generation trigger UI (see above)
-is implemented on a feature branch, pending review, outside this
-3C.1-3C.5 sequencing; 3C.5 itself remains design-locked, not
-implemented.**
+`f608b7d` and CLOSED; the schedule-generation trigger UI (see above) is
+merged to `main` at commit `a3bbcb8` and CLOSED, outside this 3C.1-3C.5
+sequencing; 3C.5 itself remains design-locked, not implemented.**
 
 Today, every one of the 17 configuration tables under one
 `academic_year_id` (Decision #26) is fully readable via `GET /config`

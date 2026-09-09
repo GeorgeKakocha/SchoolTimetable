@@ -1340,11 +1340,12 @@ analysis). The product owner chose this before continuing into the
 broader 3C.5 reference-data-CRUD direction: it closes the one real gap
 in the school-configuration -> generation -> timetable-review pipeline
 -- until now, `POST .../schedule/generate` (fully built and tested
-since Phase 3A3) was reachable only outside the browser. **Implemented
-on branch `feature/schedule-generation-ui`, pending review -- not yet
-committed, not merged, not pushed.** Frontend-only, zero backend/schema
-changes (the already-locked Decision #31 contract is reused exactly as
-merged); Alembic head unchanged at `01b2ae564170`, no drift.
+since Phase 3A3) was reachable only outside the browser. **IMPLEMENTED,
+REVIEWED (manually browser-reviewed by the product owner), COMMITTED,
+and MERGED to `main` at commit `a3bbcb8` -- CLOSED.** Frontend-only,
+zero backend/schema changes (the already-locked Decision #31 contract
+is reused exactly as merged); Alembic head unchanged at
+`01b2ae564170`, no drift.
 
 The trigger lives entirely inside `TimetablePage`'s existing
 "no schedule has been generated yet" empty state -- one primary
@@ -1406,8 +1407,7 @@ that exclusion is exactly what this slice deliberately supersedes);
 (`pytest tests_web` 136 passed; `pytest tests -m "not slow"` 180
 passed/5 deselected); Alembic still `01b2ae564170 (head)`, no drift.
 
-**Manual browser review by the product owner PASSED** (implementation
-itself remains uncommitted/unmerged/unpushed as this is written), using
+**Manual browser review by the product owner PASSED**, using
 the local-only, unlocked `synthetic-review-school`/`ay-review-2026`
 dataset. Owner-confirmed pre-generation state: no active schedule
 existed, "Generate schedule" was visible, the timetable grid was
@@ -1430,6 +1430,9 @@ work, not pulled into this slice: a teacher timetable view, lunch/break
 visual presentation, an all-school/master timetable, manual schedule
 editing, locks UI, reoptimization, the regeneration lifecycle, and
 schedule history.
+
+**Minimal Schedule Generation Trigger UI is CLOSED.** Next product
+slice: to be selected after Schedule Generation UI closure.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**
