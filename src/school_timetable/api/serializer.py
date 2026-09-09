@@ -47,6 +47,8 @@ from school_timetable.api.schemas import (
     ScheduleEntryResponse,
     SchedulingConfigResponse,
     SchoolResponse,
+    SubjectProjectionItemResponse,
+    SubjectsProjectionResponse,
     TeacherAvailabilityResponse,
     TeacherOptionResponse,
     TeacherResponse,
@@ -70,6 +72,7 @@ from school_timetable.api.schemas import (
 from school_timetable.application.class_section_projection_models import ClassSectionsProjectionView
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.subject_projection_models import SubjectsProjectionView
 from school_timetable.application.teacher_projection_models import TeachersProjectionView
 from school_timetable.application.teacher_timetable_models import TeacherTimetableEntry, TeacherTimetableView
 from school_timetable.application.teaching_assignments_projection_models import (
@@ -425,4 +428,17 @@ def class_sections_projection_response_from_view(
     return ClassSectionsProjectionResponse(
         configuration_locked=view.configuration_locked,
         classes=tuple(ClassSectionProjectionItemResponse(id=c.id, name=c.name) for c in view.classes),
+    )
+
+
+# -- Subject CRUD API (Real-School Setup MVP Slice D). ----------------------
+
+
+def subjects_projection_response_from_view(view: SubjectsProjectionView) -> SubjectsProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- order
+    already resolved in `SubjectProjectionService` (persistence ordinal
+    order, filtered to ORDINARY); this function never re-sorts anything."""
+    return SubjectsProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        subjects=tuple(SubjectProjectionItemResponse(id=s.id, name=s.name) for s in view.subjects),
     )

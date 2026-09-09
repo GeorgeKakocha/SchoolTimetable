@@ -477,3 +477,93 @@ class TeacherInUseError(Exception):
             f"teacher {teacher_id!r} is still referenced by {list(referenced_by)!r} "
             f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
         )
+
+
+class InvalidSubjectError(Exception):
+    """A `SubjectService` create/update request fails input validation
+    (Real-School Setup MVP Slice D -- "Subject" is the user-facing name
+    for `Activity(kind=ORDINARY)`, never a separate domain entity) -- a
+    blank `name` after trimming. Carries the validator's own safe,
+    structured diagnostics as an immutable tuple, exactly like
+    `InvalidClassError`."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid subject for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class DuplicateSubjectError(Exception):
+    """A `SubjectService` create/update request would produce a second
+    `Activity(kind=ORDINARY)` sharing the identical (exact,
+    case-sensitive, trimmed) `name` within one academic year (Real-School
+    Setup MVP Slice D). Checked ONLY against other `ORDINARY` activities
+    -- a `CLUB` activity sharing the same name is never a conflict.
+    Deliberately never a blanket database `UNIQUE` constraint, mirroring
+    `DuplicateClassError`'s existing precedent."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, name: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.name = name
+        super().__init__(
+            f"a subject named {name!r} already exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class SubjectNotFoundError(Exception):
+    """No `ActivityKind.ORDINARY` activity with this natural ID exists
+    in this school/academic-year's persisted configuration (Real-School
+    Setup MVP Slice D). Raised identically whether `activity_id` does
+    not exist at all, or it exists but is `ActivityKind.CLUB` -- a CLUB
+    activity is indistinguishable from a missing Subject through this
+    filtered resource surface, so `ActivityKind` is never leaked here.
+    Carries only the natural identifiers already supplied -- no
+    persistence surrogate ID."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, subject_id: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.subject_id = subject_id
+        super().__init__(
+            f"no subject {subject_id!r} for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class SubjectInUseError(Exception):
+    """A `SubjectService.delete` request targets an
+    `Activity(kind=ORDINARY)` currently referenced by the persisted
+    scheduling configuration (Real-School Setup MVP Slice D) -- never
+    cascade-deleted. `referenced_by` names every referencing entity kind
+    found, in the deterministic order `TEACHING_REQUIREMENT`,
+    `RESERVED_BLOCK` (only the kinds that actually reference this
+    subject), never a persistence surrogate ID."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        subject_id: str,
+        referenced_by: tuple[str, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.subject_id = subject_id
+        self.referenced_by = referenced_by
+        super().__init__(
+            f"subject {subject_id!r} is still referenced by {list(referenced_by)!r} "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )

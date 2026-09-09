@@ -37,6 +37,8 @@ from school_timetable.application.class_section_service import ClassSectionServi
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.subject_projection_service import SubjectProjectionService
+from school_timetable.application.subject_service import SubjectService
 from school_timetable.application.teacher_projection_service import TeacherProjectionService
 from school_timetable.application.teacher_service import TeacherService
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
@@ -44,6 +46,7 @@ from school_timetable.application.teaching_assignment_service import TeachingAss
 from school_timetable.application.teaching_assignments_projection_service import (
     TeachingAssignmentsProjectionService,
 )
+from school_timetable.persistence.activity_repository import SqlAlchemyActivityRepository
 from school_timetable.persistence.class_section_repository import SqlAlchemyClassSectionRepository
 from school_timetable.persistence.db import SessionLocal, get_session
 from school_timetable.persistence.problem_repository import (
@@ -171,5 +174,28 @@ def get_class_section_service() -> ClassSectionService:
     return ClassSectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyClassSectionRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_subjects_projection_service() -> SubjectProjectionService:
+    """Composes the same two session-factory-backed adapters
+    `ClassTimetableService` uses -- never a request-scoped `Session`
+    (Real-School Setup MVP Slice D)."""
+    return SubjectProjectionService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_subject_service() -> SubjectService:
+    """Composes `SubjectService`'s three session-factory-backed
+    dependencies -- never a request-scoped `Session`, so
+    `SqlAlchemyActivityRepository`'s own short lock/reload/validate
+    transactions (Decision #36) stay entirely its own (Real-School
+    Setup MVP Slice D)."""
+    return SubjectService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyActivityRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

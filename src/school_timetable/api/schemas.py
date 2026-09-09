@@ -625,3 +625,61 @@ class ClassSectionInUseErrorResponse(BaseModel):
     code: Literal["CLASS_IN_USE"]
     detail: str
     referenced_by: tuple[str, ...]
+
+
+# -- Subject CRUD API (Real-School Setup MVP Slice D). ---------------------
+
+
+class SubjectProjectionItemResponse(BaseModel):
+    """No `kind` field -- every member of this resource is already,
+    by construction, `ActivityKind.ORDINARY` (Owner Decision -- Subject
+    = Activity(kind=ORDINARY), never a separate domain entity)."""
+
+    id: str
+    name: str
+
+
+class SubjectsProjectionResponse(BaseModel):
+    configuration_locked: bool
+    subjects: tuple[SubjectProjectionItemResponse, ...]
+
+
+class SubjectWriteRequest(BaseModel):
+    """POST/PUT request body -- maps 1:1 onto `SubjectFields`. The
+    natural ID and `kind` are never accepted here -- the natural ID is
+    always server-generated on create and immutable on update (path
+    parameter only), and `kind` is always `ORDINARY`, never
+    client-controlled."""
+
+    name: str
+
+
+class SubjectWriteResponse(BaseModel):
+    """POST/PUT success body -- the written `Activity`'s own resolved
+    fields. No `kind` -- internal/always ORDINARY on this surface."""
+
+    id: str
+    name: str
+
+
+class SubjectDeleteResponse(BaseModel):
+    """DELETE success body. No `warnings` field, no `kind`."""
+
+    deleted_id: str
+
+
+class InvalidSubjectErrorResponse(BaseModel):
+    code: Literal["INVALID_SUBJECT"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class DuplicateSubjectErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_SUBJECT"]
+    detail: str
+
+
+class SubjectInUseErrorResponse(BaseModel):
+    code: Literal["SUBJECT_IN_USE"]
+    detail: str
+    referenced_by: tuple[str, ...]
