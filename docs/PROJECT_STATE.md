@@ -1609,6 +1609,60 @@ part of Slice A, real future work: Teacher/Classes/Subjects CRUD
 endpoints and write services, School Setup UI, exposing
 `first_name`/`last_name` on any public API response, real-school data
 entry, and auth/user integration. The broader Real-School Setup MVP is
-**not** complete -- this is Slice A only. Next implementation slice
-per the approved setup contract: **Slice B -- reference-data write
-foundation + Teacher CRUD** (not started).
+**not** complete -- this is Slice A only.
+
+**Real-School Setup MVP -- Slice B (reference-data write foundation +
+Teacher CRUD): IMPLEMENTED, REVIEWED, live API reviewed, COMMITTED,
+and MERGED to `main` at commit `6fb4bed` "feat: add teacher CRUD" --
+CLOSED. Not pushed.** Adds `GET/POST
+/schools/{school_id}/years/{year_id}/teachers` and `PUT/DELETE
+.../teachers/{teacher_id}`, backed by `TeacherService`/
+`SqlAlchemyTeacherRepository`, shaped exactly like the existing
+Teaching Assignment write path (Decision #34): a fast un-locked
+Decision #35 lock precheck, then an authoritative, Decision-#36-locked
+recheck against a freshly-reloaded `SchedulingProblem` immediately
+before committing. The `AcademicYear` resolve/lock/lock-recheck
+sequence, previously private to `teaching_assignment_repository.py`,
+is now shared (unchanged behavior, confirmed by its full existing test
+suite staying green) via a new persistence-private module,
+`persistence/configuration_write_lock.py`. Teacher natural IDs are
+always server-generated (`teacher_<uuid4().hex>`), never
+client-supplied; `first_name`/`last_name` are trimmed with a blank
+result rejected (`422 INVALID_TEACHER`), no uniqueness, same-name
+teachers explicitly allowed. Delete is rejected
+(`409 TEACHER_IN_USE`) whenever the teacher is still referenced by a
+current `TeachingRequirement`/`TeacherAvailability`/`ReservedBlock`
+(deterministic `referenced_by` ordering), enforced at the application
+layer even where the DB's own `teacher_availability` FK is `ON DELETE
+CASCADE` -- never a silent cascade. Reuses the existing
+`ConfigurationLockedError`/`TeacherNotFoundError` verbatim; zero new
+Owner Decisions (`DECISIONS.md` #37's Slice B update covers the
+technical detail). Live-validated this session against a new,
+local-only, unlocked `teacher-crud-review-school`/
+`ay-teacher-crud-2026` dataset (seeded via the existing TEST-ONLY
+`write_scheduling_problem` writer, retained per the same convention as
+`synthetic-review-school`/`ay-review-2026`; no `Schedule` generated for
+it): create, read, update (name change with ID preserved), delete (an
+unused teacher succeeds; a referenced teacher returns
+`TEACHER_IN_USE`), and same-name-teacher coexistence all confirmed
+through the running app's real HTTP API, with the new/updated teacher
+immediately visible through `GET /config` and `GET
+/teaching-assignments` (workload `0`) with no special synchronization
+step. Both canonical datasets (`synthetic-school`/`ay-2026`,
+`synthetic-review-school`/`ay-review-2026`) confirmed unchanged
+throughout. Test gate: core `tests -m "not slow"` 222 passed/5
+deselected (199 pre-existing + 23 new pure `tests/test_teacher_service.py`
+cases); `tests_web` 179 passed (147 pre-existing + 23 new
+`tests_web/test_teacher_api.py` HTTP-contract cases + 9 new
+`tests_web/test_teacher_repository.py` cases, including a
+deterministic proof of both Decision #36 race orderings for a Teacher
+write); frontend 185/185, build clean, zero frontend production file
+changes; Alembic unchanged at `cae76cba3c58`, single head, no drift.
+Explicitly not part of Slice B: Teacher availability editing, Classes
+CRUD, Subjects/Activities CRUD, ParticipantGroup editing, School Setup
+UI, any frontend production feature, TeachingAssignment semantic
+changes, solver changes, schedule editing, auth/user integration. The
+broader Real-School Setup MVP is **not** complete -- this is Slice B
+only. Next implementation slice per the approved setup contract:
+**Slice C -- Classes CRUD + canonical `WHOLE_CLASS` lifecycle** (not
+started).

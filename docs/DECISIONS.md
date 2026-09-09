@@ -1909,3 +1909,62 @@ this implementation followed them as given.
     approved setup contract: **Slice B -- reference-data write
     foundation + Teacher CRUD** (not started, not designed in detail
     here).
+
+    **Slice B (Teacher CRUD + shared reference-data write foundation)
+    update: IMPLEMENTED, REVIEWED, live API reviewed, COMMITTED, and
+    MERGED to `main` at commit `6fb4bed` "feat: add teacher CRUD" --
+    CLOSED. Not pushed. Zero new Owner Decisions
+    required** -- every open question was resolved from direct repository
+    precedent (Decision #34's write-port shape, Decision #35's lock
+    reuse, Decision #36's race-safety reuse), not a new product
+    decision. `GET/POST /schools/{school_id}/years/{year_id}/teachers`
+    and `PUT/DELETE .../teachers/{teacher_id}` -- `TeacherService`
+    (`application/teacher_service.py`) create/update/delete, shaped
+    exactly like `TeachingAssignmentService`: a fast un-locked
+    configuration-lock precheck, then the authoritative,
+    lock-protected recheck inside `SqlAlchemyTeacherRepository`
+    (`persistence/teacher_repository.py`). The `AcademicYear`
+    resolve/lock/Decision-#35-recheck sequence -- previously private to
+    `teaching_assignment_repository.py` -- is now shared, unchanged,
+    via `persistence/configuration_write_lock.py` (persistence-private;
+    `_natural_to_surrogate`/ordinal helpers deliberately stay local to
+    each repository, never generalized into a model-agnostic
+    framework); `TeachingAssignmentRepository`'s own behavior is
+    unchanged by this pure refactor (its full test suite still green).
+    Teacher natural IDs are always server-generated
+    (`teacher_<uuid4().hex>`), never client-supplied. `first_name`/
+    `last_name` are trimmed and a blank result after trimming is
+    rejected (`InvalidTeacherError`, `422 INVALID_TEACHER`) -- no
+    uniqueness, no ASCII-only or alphabet-only restriction, no new
+    max-length beyond the existing unbounded `Text` column convention;
+    same-name teachers are explicitly allowed. Deletion is rejected
+    (`TeacherInUseError`, `409 TEACHER_IN_USE`, `referenced_by` naming
+    every referencing kind in the deterministic order
+    `TEACHING_REQUIREMENT`/`TEACHER_AVAILABILITY`/`RESERVED_BLOCK`)
+    whenever the *current* configuration still references the teacher
+    -- an application-level rule enforced even where the underlying
+    `teacher_availability` FK is `ON DELETE CASCADE`, never relying on
+    the database to silently cascade meaningful configuration away;
+    `teaching_requirement`/`reserved_block`'s own `RESTRICT` FKs remain
+    structural backstops only. Reuses `ConfigurationLockedError`/
+    `TeacherNotFoundError` verbatim -- no Teacher-specific lock code, no
+    second not-found exception. Zero schema/migration impact (Alembic
+    stays at `cae76cba3c58`); zero frontend production changes. Test
+    gate: 23 new pure `tests/test_teacher_service.py` cases (zero DB);
+    23 new `tests_web/test_teacher_api.py` HTTP-contract cases plus 9
+    new `tests_web/test_teacher_repository.py` cases (including a
+    deterministic, sequential proof of both generation-vs-write race
+    orderings, mirroring `test_teaching_assignment_repository.py`'s own
+    proof exactly). Live-validated against a new, local-only, unlocked
+    `teacher-crud-review-school`/`ay-teacher-crud-2026` dataset
+    (retained, no `Schedule` generated) as well as the running app's
+    real HTTP API -- create/read/update/delete, same-name coexistence,
+    and the `TEACHER_IN_USE`/`SCHEDULING_CONFIGURATION_LOCKED` error
+    contracts all confirmed; both canonical datasets
+    (`synthetic-school`/`ay-2026`, `synthetic-review-school`/
+    `ay-review-2026`) reconfirmed unchanged throughout. This entry
+    records Slice B's implementation status only -- **the broader
+    Real-School Setup MVP remains NOT complete.** Next slice per the
+    approved setup contract: **Slice C -- Classes CRUD + canonical
+    `WHOLE_CLASS` lifecycle** (not started, not designed in detail
+    here).
