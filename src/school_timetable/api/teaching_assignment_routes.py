@@ -33,6 +33,13 @@ Error mapping (locked, no remaining owner decisions):
 - `NonWholeClassTargetError` -> 422, `{"code": "NON_WHOLE_CLASS_TARGET",
   "detail": "...", "participant_group_id": "...", "actual_role": "..."}`.
   POST/PUT.
+- `NonOrdinaryActivityTargetError` -> 422, `{"code":
+  "NON_ORDINARY_ACTIVITY_TARGET", "detail": "...", "activity_id": "...",
+  "actual_kind": "..."}` -- pre-Slice-D correction: the activity
+  genuinely exists but is not `ActivityKind.ORDINARY` (e.g. a `CLUB`
+  activity, which is scheduled via `ReservedBlock`, never a
+  `TeachingRequirement`), so this is not `UnknownReferenceError`.
+  POST/PUT.
 - `AdvancedRequirementNotEditableError` -> 409, `{"code":
   "ADVANCED_REQUIREMENT_NOT_EDITABLE", "detail": "...",
   "advanced_reasons": [...]}` -- a conflict with the target's own
@@ -70,6 +77,7 @@ from school_timetable.api.schemas import (
     ConfigurationLockedErrorResponse,
     DuplicateTeachingAssignmentErrorResponse,
     InvalidTeachingAssignmentErrorResponse,
+    NonOrdinaryActivityTargetErrorResponse,
     NonWholeClassTargetErrorResponse,
     TeachingAssignmentDeleteResponse,
     TeachingAssignmentsProjectionResponse,
@@ -86,6 +94,7 @@ from school_timetable.application.errors import (
     ConfigurationLockedError,
     DuplicateTeachingAssignmentError,
     InvalidTeachingAssignmentError,
+    NonOrdinaryActivityTargetError,
     NonWholeClassTargetError,
     SchedulingProblemNotFoundError,
     TeachingAssignmentNotFoundError,
@@ -197,6 +206,7 @@ def _fields_from_request(body: TeachingAssignmentWriteRequest) -> TeachingAssign
 _WRITE_ERRORS = (
     UnknownReferenceError,
     NonWholeClassTargetError,
+    NonOrdinaryActivityTargetError,
     AdvancedRequirementNotEditableError,
     DuplicateTeachingAssignmentError,
     InvalidTeachingAssignmentError,
@@ -226,6 +236,16 @@ def _write_error_response(exc: Exception) -> JSONResponse:
                 detail=str(exc),
                 participant_group_id=exc.participant_group_id,
                 actual_role=exc.actual_role,
+            ).model_dump(),
+        )
+    if isinstance(exc, NonOrdinaryActivityTargetError):
+        return JSONResponse(
+            status_code=422,
+            content=NonOrdinaryActivityTargetErrorResponse(
+                code="NON_ORDINARY_ACTIVITY_TARGET",
+                detail=str(exc),
+                activity_id=exc.activity_id,
+                actual_kind=exc.actual_kind,
             ).model_dump(),
         )
     if isinstance(exc, AdvancedRequirementNotEditableError):

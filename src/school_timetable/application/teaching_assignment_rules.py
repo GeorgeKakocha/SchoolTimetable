@@ -19,10 +19,12 @@ from school_timetable.application.errors import (
     AdvancedRequirementNotEditableError,
     DuplicateTeachingAssignmentError,
     InvalidTeachingAssignmentError,
+    NonOrdinaryActivityTargetError,
     NonWholeClassTargetError,
     TeachingAssignmentNotFoundError,
     UnknownReferenceError,
 )
+from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.groups import ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import (
@@ -47,6 +49,27 @@ WARNING_ONLY_VALIDATION_CODES = frozenset({"TEACHER_OVERLOADED", "CLASS_OCCUPANC
 
 def find_participant_group(problem: SchedulingProblem, participant_group_id: str) -> ParticipantGroup | None:
     return next((g for g in problem.participant_groups if g.id == participant_group_id), None)
+
+
+def find_activity(problem: SchedulingProblem, activity_id: str) -> Activity | None:
+    return next((a for a in problem.activities if a.id == activity_id), None)
+
+
+def require_ordinary_activity(
+    problem: SchedulingProblem, school_natural_id: str, academic_year_natural_id: str, activity_id: str,
+) -> None:
+    """Shared by `validate_create`/`validate_update`: raises
+    `UnknownReferenceError` if `activity_id` does not exist at all, or
+    `NonOrdinaryActivityTargetError` if it exists but is not
+    `ActivityKind.ORDINARY` (pre-Slice-D correction -- `CLUB` activities
+    are scheduled via `ReservedBlock`, never a `TeachingRequirement`)."""
+    activity = find_activity(problem, activity_id)
+    if activity is None:
+        raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "activity", activity_id)
+    if activity.kind != ActivityKind.ORDINARY:
+        raise NonOrdinaryActivityTargetError(
+            school_natural_id, academic_year_natural_id, activity_id, activity.kind.value,
+        )
 
 
 def find_requirement(problem: SchedulingProblem, natural_id: str) -> TeachingRequirement | None:
@@ -150,8 +173,7 @@ def validate_create(
         )
     if not any(t.id == teacher_id for t in problem.teachers):
         raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "teacher", teacher_id)
-    if not any(a.id == activity_id for a in problem.activities):
-        raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "activity", activity_id)
+    require_ordinary_activity(problem, school_natural_id, academic_year_natural_id, activity_id)
     group = find_participant_group(problem, participant_group_id)
     if group is None:
         raise UnknownReferenceError(
@@ -207,8 +229,7 @@ def validate_update(
         )
     if not any(t.id == teacher_id for t in problem.teachers):
         raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "teacher", teacher_id)
-    if not any(a.id == activity_id for a in problem.activities):
-        raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "activity", activity_id)
+    require_ordinary_activity(problem, school_natural_id, academic_year_natural_id, activity_id)
     group = find_participant_group(problem, participant_group_id)
     if group is None:
         raise UnknownReferenceError(

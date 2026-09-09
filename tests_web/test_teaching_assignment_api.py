@@ -38,6 +38,7 @@ from school_timetable.application.teaching_assignments_projection_service import
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
+from school_timetable.persistence.db import get_session
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.persistence.teaching_assignment_repository import SqlAlchemyTeachingAssignmentRepository
@@ -87,10 +88,14 @@ def _client(session_factory, *, raise_server_exceptions: bool = True) -> TestCli
             SqlAlchemyScheduleVersionRepository(session_factory),
         )
 
+    def override_get_session():
+        yield session_factory()
+
     app.dependency_overrides[get_schedule_version_repository] = override_schedule_repo
     app.dependency_overrides[get_generate_schedule_service] = override_generate_service
     app.dependency_overrides[get_teaching_assignments_projection_service] = override_projection_service
     app.dependency_overrides[get_teaching_assignment_service] = override_assignment_service
+    app.dependency_overrides[get_session] = override_get_session
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
@@ -108,6 +113,7 @@ def _clear_overrides() -> None:
     app.dependency_overrides.pop(get_generate_schedule_service, None)
     app.dependency_overrides.pop(get_teaching_assignments_projection_service, None)
     app.dependency_overrides.pop(get_teaching_assignment_service, None)
+    app.dependency_overrides.pop(get_session, None)
 
 
 def _seed(session: Session) -> SchedulingProblem:
@@ -235,7 +241,19 @@ def test_get_deterministic_ordering(client, db):
     body = client.get(_url(problem)).json()
     assert [a["id"] for a in body["assignments"]] == [r.id for r in problem.teaching_requirements]
     assert [t["id"] for t in body["teachers"]] == [t.id for t in problem.teachers]
-    assert [a["id"] for a in body["activities"]] == [a.id for a in problem.activities]
+    # Pre-Slice-D correction: activities options are ORDINARY-only.
+    ordinary_activity_ids = [a.id for a in problem.activities if a.kind.value == "ORDINARY"]
+    assert [a["id"] for a in body["activities"]] == ordinary_activity_ids
+
+
+def test_get_activity_options_exclude_club_activities(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    body = client.get(_url(problem)).json()
+    activity_ids = {a["id"] for a in body["activities"]}
+    assert "club_chess" not in activity_ids
+    assert "club_robotics" not in activity_ids
 
 
 def test_get_configuration_locked_true_after_generate_and_assignments_still_visible(client, db):
@@ -254,6 +272,20 @@ def test_get_unknown_school_year_returns_config_not_found(client):
     response = client.get("/schools/no-such-school/years/no-such-year/teaching-assignments")
     assert response.status_code == 404
     assert response.json() == {"detail": "Scheduling configuration not found"}
+
+
+def test_config_still_includes_club_activities_with_kind(client, db):
+    # /config is the general scheduling configuration projection and is
+    # deliberately NOT filtered by the pre-Slice-D correction -- only
+    # the Teaching Assignments editable activity options are.
+    session, _session_factory = db
+    problem = _seed(session)
+
+    body = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/config").json()
+    activities_by_id = {a["id"]: a for a in body["activities"]}
+    assert activities_by_id["club_chess"]["kind"] == "CLUB"
+    assert activities_by_id["club_robotics"]["kind"] == "CLUB"
+    assert activities_by_id["math"]["kind"] == "ORDINARY"
 
 
 # -- POST -------------------------------------------------------------------
@@ -310,6 +342,20 @@ def test_post_merged_classes_target_returns_422(client, db):
     body = response.json()
     assert body["code"] == "NON_WHOLE_CLASS_TARGET"
     assert body["actual_role"] == "MERGED_CLASSES"
+
+
+def test_post_club_activity_target_returns_422(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json={
+        "teacher_id": "t_art", "participant_group_id": "pg_9b", "activity_id": "club_chess", "weekly_periods": 1,
+    })
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "NON_ORDINARY_ACTIVITY_TARGET"
+    assert body["activity_id"] == "club_chess"
+    assert body["actual_kind"] == "CLUB"
 
 
 def test_post_duplicate_returns_409(client, db):
@@ -410,6 +456,20 @@ def test_put_non_whole_class_target_returns_422(client, db):
     })
     assert response.status_code == 422
     assert response.json()["code"] == "NON_WHOLE_CLASS_TARGET"
+
+
+def test_put_club_activity_target_returns_422(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(_url(problem, "science_8a"), json={
+        "teacher_id": "t_science", "participant_group_id": "pg_8a", "activity_id": "club_chess", "weekly_periods": 7,
+    })
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "NON_ORDINARY_ACTIVITY_TARGET"
+    assert body["activity_id"] == "club_chess"
+    assert body["actual_kind"] == "CLUB"
 
 
 def test_put_locked_configuration_returns_409(client, db):

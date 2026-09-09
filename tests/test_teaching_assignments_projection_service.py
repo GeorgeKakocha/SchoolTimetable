@@ -20,6 +20,7 @@ from school_timetable.application.errors import SchedulingProblemNotFoundError
 from school_timetable.application.teaching_assignments_projection_service import (
     TeachingAssignmentsProjectionService,
 )
+from school_timetable.domain.activities import ActivityKind
 from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
@@ -152,7 +153,19 @@ def test_teachers_and_activities_option_lists_preserve_full_content_and_order():
     problem = build_valid_fixture()
     view = _service(problem).project(_SCHOOL, _YEAR)
     assert [(t.id, t.name) for t in view.teachers] == [(t.id, t.full_name) for t in problem.teachers]
-    assert [(a.id, a.name) for a in view.activities] == [(a.id, a.name) for a in problem.activities]
+    # Pre-Slice-D correction: activity options are ORDINARY-only -- CLUB
+    # activities (club_chess/club_robotics in the fixture) are excluded,
+    # since a TeachingRequirement may never target a CLUB activity.
+    ordinary_activities = [a for a in problem.activities if a.kind == ActivityKind.ORDINARY]
+    assert [(a.id, a.name) for a in view.activities] == [(a.id, a.name) for a in ordinary_activities]
+
+
+def test_activity_options_exclude_club_activities():
+    problem = build_valid_fixture()
+    view = _service(problem).project(_SCHOOL, _YEAR)
+    activity_ids = {a.id for a in view.activities}
+    assert "club_chess" not in activity_ids
+    assert "club_robotics" not in activity_ids
 
 
 def test_canonical_whole_class_target_mapping_correct():

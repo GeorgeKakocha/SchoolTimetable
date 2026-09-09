@@ -471,6 +471,13 @@ class NonWholeClassTargetErrorResponse(BaseModel):
     actual_role: str
 
 
+class NonOrdinaryActivityTargetErrorResponse(BaseModel):
+    code: Literal["NON_ORDINARY_ACTIVITY_TARGET"]
+    detail: str
+    activity_id: str
+    actual_kind: str
+
+
 class AdvancedRequirementNotEditableErrorResponse(BaseModel):
     """Exposes `advanced_reasons` even though a prior GET already would
     have -- this protects a stale client whose displayed disabled-state

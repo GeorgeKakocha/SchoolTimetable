@@ -165,6 +165,33 @@ class NonWholeClassTargetError(Exception):
         )
 
 
+class NonOrdinaryActivityTargetError(Exception):
+    """A `TeachingAssignmentService` create/update request targets an
+    `Activity` whose `kind` is not `ORDINARY` (pre-Slice-D correction:
+    `ActivityKind.CLUB` is scheduled via `ReservedBlock`, never via a
+    `TeachingRequirement` -- see `domain/activities.py`). Mirrors
+    `NonWholeClassTargetError`'s exact pattern: the `Activity` genuinely
+    exists (this is not `UnknownReferenceError`), it is simply invalid
+    for this narrow write surface. Carries the activity's actual kind
+    so a caller can explain why, never a persistence surrogate ID."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        activity_id: str,
+        actual_kind: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.activity_id = activity_id
+        self.actual_kind = actual_kind
+        super().__init__(
+            f"activity {activity_id!r} has kind {actual_kind!r}, not ORDINARY, "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )
+
+
 class AdvancedRequirementNotEditableError(Exception):
     """The `TeachingRequirement` an update/delete request targets is not
     "plain" (Phase 3C.2, `docs/DECISIONS.md` #34) -- it carries at least

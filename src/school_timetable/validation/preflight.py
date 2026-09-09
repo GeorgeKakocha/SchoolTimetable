@@ -4,6 +4,7 @@ reasons about the plain domain objects.
 """
 from __future__ import annotations
 
+from school_timetable.domain.activities import ActivityKind
 from school_timetable.domain.calendar import period_windows
 from school_timetable.domain.groups import ParticipantGroupRole
 from school_timetable.domain.indexing import ProblemIndex
@@ -24,6 +25,7 @@ def run_preflight(problem: SchedulingProblem) -> list[ValidationError]:
         return errors
 
     errors.extend(_check_participant_group_roles(problem))
+    errors.extend(_check_teaching_requirement_activity_kind(problem, index))
     errors.extend(_check_block_patterns(problem, index))
     errors.extend(_check_split_group_consistency(problem, index))
     errors.extend(_check_fixed_placement_availability(problem, index))
@@ -197,6 +199,36 @@ def _check_participant_group_roles(problem: SchedulingProblem) -> list[Validatio
                 f"ClassSection {class_id!r} has {len(owners)} WHOLE_CLASS participant "
                 f"groups (expected exactly 1): {owners!r}",
                 {"class_id": class_id, "whole_class_group_ids": owners},
+            ))
+
+    return errors
+
+
+def _check_teaching_requirement_activity_kind(
+    problem: SchedulingProblem, index: ProblemIndex,
+) -> list[ValidationError]:
+    """Defense-in-depth (pre-Slice-D correction): every
+    `TeachingRequirement.activity_id` must reference an
+    `ActivityKind.ORDINARY` activity -- `CLUB` activities are scheduled
+    via `ReservedBlock`, never a `TeachingRequirement` (see
+    `domain/activities.py`). `TeachingAssignmentService`'s own write
+    validation (`teaching_assignment_rules.require_ordinary_activity`)
+    already rejects this at save time; this check exists only to catch
+    an already-malformed `SchedulingProblem` reaching preflight by some
+    other path (legacy data, direct construction, future import/admin
+    tooling) before it can ever reach the solver. Assumes
+    `_check_references` has already run with no errors, so every
+    `activity_id` is a known-good key in `index.activities_by_id`."""
+    errors: list[ValidationError] = []
+
+    for req in problem.teaching_requirements:
+        activity = index.activities_by_id[req.activity_id]
+        if activity.kind != ActivityKind.ORDINARY:
+            errors.append(ValidationError(
+                "NON_ORDINARY_TEACHING_REQUIREMENT_ACTIVITY",
+                f"Requirement {req.id!r} references activity {req.activity_id!r} with kind "
+                f"{activity.kind.value!r}, expected ORDINARY",
+                {"requirement_id": req.id, "activity_id": req.activity_id, "actual_kind": activity.kind.value},
             ))
 
     return errors

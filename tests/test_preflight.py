@@ -1,4 +1,4 @@
-from school_timetable.domain.activities import Activity
+from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import FixedPlacement
 from school_timetable.domain.calendar import TimeSlot, AcademicYear
 from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
@@ -72,6 +72,37 @@ def test_unknown_resource_reference():
     )
     codes = {e.code for e in run_preflight(problem)}
     assert "UNKNOWN_RESOURCE" in codes
+
+
+def test_teaching_requirement_targeting_club_activity_is_rejected():
+    # Pre-Slice-D correction (defense-in-depth): a TeachingRequirement
+    # may never target a CLUB activity -- CLUB is scheduled via
+    # ReservedBlock, never a TeachingRequirement.
+    problem = _base_problem(
+        activities=(Activity(id="a1", name="A1", kind=ActivityKind.CLUB),),
+        teaching_requirements=(
+            TeachingRequirement(
+                id="r1", teacher_id="t1", activity_id="a1",
+                participant_group_id="pg1", weekly_periods=1, block_policy=FLEXIBLE,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "NON_ORDINARY_TEACHING_REQUIREMENT_ACTIVITY" in codes
+
+
+def test_teaching_requirement_targeting_ordinary_activity_produces_no_kind_diagnostic():
+    problem = _base_problem(
+        activities=(Activity(id="a1", name="A1", kind=ActivityKind.ORDINARY),),
+        teaching_requirements=(
+            TeachingRequirement(
+                id="r1", teacher_id="t1", activity_id="a1",
+                participant_group_id="pg1", weekly_periods=1, block_policy=FLEXIBLE,
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "NON_ORDINARY_TEACHING_REQUIREMENT_ACTIVITY" not in codes
 
 
 def test_block_pattern_total_mismatch():

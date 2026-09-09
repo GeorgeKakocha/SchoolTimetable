@@ -31,6 +31,7 @@ from school_timetable.application.teaching_assignments_projection_models import 
     TeachingAssignmentsProjectionView,
     WholeClassTarget,
 )
+from school_timetable.domain.activities import ActivityKind
 from school_timetable.domain.groups import ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import TeachingRequirement
@@ -78,7 +79,15 @@ class TeachingAssignmentsProjectionService:
         )
 
         teachers = tuple(TeacherOption(id=t.id, name=t.full_name) for t in problem.teachers)
-        activities = tuple(ActivityOption(id=a.id, name=a.name) for a in problem.activities)
+        # Pre-Slice-D correction: a TeachingRequirement may only ever
+        # target an ORDINARY activity (CLUB activities are scheduled via
+        # ReservedBlock, never here) -- this editable options list must
+        # never offer a CLUB activity as a selectable target.
+        activities = tuple(
+            ActivityOption(id=a.id, name=a.name)
+            for a in problem.activities
+            if a.kind == ActivityKind.ORDINARY
+        )
 
         whole_class_targets = tuple(
             target

@@ -12,6 +12,7 @@ from school_timetable.application.errors import (
     AdvancedRequirementNotEditableError,
     ConfigurationLockedError,
     DuplicateTeachingAssignmentError,
+    NonOrdinaryActivityTargetError,
     NonWholeClassTargetError,
     TeachingAssignmentNotFoundError,
     UnknownReferenceError,
@@ -150,6 +151,32 @@ def test_create_unknown_activity_rejected():
         )
 
 
+def test_create_club_activity_rejected():
+    # club_chess is Activity(kind=CLUB) in the fixture -- never a valid
+    # TeachingRequirement target (CLUB is scheduled via ReservedBlock).
+    service, _ = _service()
+    with pytest.raises(NonOrdinaryActivityTargetError) as exc_info:
+        service.create(
+            _SCHOOL, _YEAR, TeachingAssignmentFields(
+                teacher_id="t_art", participant_group_id="pg_9b", activity_id="club_chess", weekly_periods=3,
+            ),
+        )
+    assert exc_info.value.activity_id == "club_chess"
+    assert exc_info.value.actual_kind == "CLUB"
+
+
+def test_create_ordinary_activity_still_succeeds():
+    # Explicitly proves ORDINARY targets remain valid after the
+    # pre-Slice-D correction -- history is Activity(kind=ORDINARY).
+    service, write_port = _service()
+    result = service.create(
+        _SCHOOL, _YEAR, TeachingAssignmentFields(
+            teacher_id="t_history", participant_group_id="pg_9a", activity_id="history", weekly_periods=3,
+        ),
+    )
+    assert result.natural_id in {c[0] for c in write_port.create_calls}
+
+
 def test_create_unknown_participant_group_rejected():
     service, _ = _service()
     with pytest.raises(UnknownReferenceError):
@@ -245,6 +272,20 @@ def test_update_changing_target_to_subgroup_rejected():
                 teacher_id="t_science", participant_group_id="pg_8a_german", activity_id="science", weekly_periods=7,
             ),
         )
+
+
+def test_update_changing_target_to_club_activity_rejected():
+    # science_8a is a plain, editable requirement -- updating it to
+    # target club_chess (kind=CLUB) must be rejected the same way create is.
+    service, _ = _service()
+    with pytest.raises(NonOrdinaryActivityTargetError) as exc_info:
+        service.update(
+            _SCHOOL, _YEAR, "science_8a", TeachingAssignmentFields(
+                teacher_id="t_science", participant_group_id="pg_8a", activity_id="club_chess", weekly_periods=7,
+            ),
+        )
+    assert exc_info.value.activity_id == "club_chess"
+    assert exc_info.value.actual_kind == "CLUB"
 
 
 def test_update_advanced_block_policy_requirement_rejected():
