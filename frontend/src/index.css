@@ -820,3 +820,255 @@ select:focus-visible {
   font-size: 0.9em;
   cursor: pointer;
 }
+
+/* -- School Setup (Real-School Setup MVP Slice E) -----------------------
+   Reuses the existing table/button/banner vocabulary established by
+   Teaching Assignments rather than introducing a second visual
+   language or a CSS variable/token system. */
+
+.setup-tablist {
+  display: flex;
+  gap: 1.5rem;
+  border-bottom: 1px solid #e2e2e2;
+  margin-bottom: 1.25rem;
+}
+
+.setup-tab {
+  padding: 0.5rem 0.1rem 0.6rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #4a4a4a;
+  font-size: 0.95em;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.setup-tab:hover {
+  color: #1a1a1a;
+}
+
+.setup-tab-active {
+  color: #1a1a1a;
+  font-weight: 600;
+  border-bottom-color: #2563eb;
+}
+
+.setup-tab:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.setup-tabpanel:focus-visible {
+  outline: none;
+}
+
+.setup-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.panel-error {
+  margin: 0 0 1.25rem;
+}
+
+.refreshing-note {
+  margin: 0 0 0.75rem;
+  color: #6b6b6b;
+  font-size: 0.85em;
+}
+
+/* Contained surface for the collapsible inline create form -- deliberately
+   distinct from both the page subtitle (plain muted text) and the list
+   rows below it (bordered table), so an editable form is never confused
+   with explanatory content or with the read-only list. */
+.create-panel {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  background-color: #f7f8fa;
+  border: 1px solid #dcdfe4;
+  border-radius: 4px;
+}
+
+.create-panel-heading {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.create-panel label {
+  display: block;
+  margin: 0 0 0.75rem;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.create-panel input {
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+  margin-top: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 1em;
+}
+
+.create-panel-error {
+  margin: 0 0 0.75rem;
+  color: #b00020;
+  font-size: 0.88em;
+}
+
+.create-panel-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.create-panel-actions button[type="button"] {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #b0b0b0;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #333333;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.setup-empty-state {
+  padding: 1.5rem 0;
+  color: #4a4a4a;
+}
+
+.setup-empty-state p {
+  margin: 0 0 0.5rem;
+}
+
+.setup-table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.setup-table th,
+.setup-table td {
+  border: 1px solid #e2e2e2;
+  padding: 0.55rem 0.7rem;
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: break-word;
+}
+
+.setup-table thead th {
+  background-color: #f2f2f2;
+  border-bottom: 2px solid #b0b0b0;
+  font-size: 0.82em;
+  text-transform: uppercase;
+}
+
+.col-setup-actions {
+  width: 18%;
+}
+
+.row-edit-form label {
+  display: block;
+  margin: 0 0 0.5rem;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.row-edit-form input {
+  display: block;
+  width: 100%;
+  max-width: 16rem;
+  margin-top: 0.25rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.95em;
+}
+
+.row-edit-error {
+  margin: 0 0 0.5rem;
+  color: #b00020;
+  font-size: 0.85em;
+}
+
+/* Narrow-width: convert the Teachers/Classes/Subjects tables from
+   rows/columns into a stacked card layout (each `<tr>` becomes one
+   bordered block) rather than forcing horizontal scroll -- matching
+   the existing `.workload-grid` narrow-width convention. `data-label`
+   attributes on the name/actions cells drive the printed label via
+   `::before`, since the (now hidden) `<thead>` no longer supplies one. */
+@media (max-width: 640px) {
+  .setup-tablist {
+    gap: 1rem;
+  }
+
+  .setup-table,
+  .setup-table thead,
+  .setup-table tbody,
+  .setup-table tr,
+  .setup-table th,
+  .setup-table td {
+    display: block;
+    width: auto;
+  }
+
+  .setup-table thead {
+    position: absolute;
+    left: -9999px;
+  }
+
+  .setup-table tr {
+    border: 1px solid #e2e2e2;
+    border-radius: 4px;
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .setup-table th,
+  .setup-table td {
+    border: none;
+    padding: 0.3rem 0;
+  }
+
+  .setup-table td[data-label]::before,
+  .setup-table th[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    color: #8a8a8a;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 0.15rem;
+  }
+}
+
+.row-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.row-edit-actions button[type="button"] {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid #b0b0b0;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #333333;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+.row-edit-actions button[type="button"]:not(:disabled):hover,
+.create-panel-actions button[type="button"]:not(:disabled):hover {
+  background-color: #f2f2f2;
+}
+
+.row-edit-actions button:disabled,
+.create-panel-actions button[type="button"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.row-edit-actions button:focus-visible,
+.create-panel-actions button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}

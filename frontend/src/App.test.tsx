@@ -102,6 +102,25 @@ describe("App routing", () => {
     await screen.findByRole("combobox", { name: "Class" });
   });
 
+  it("renders the School Setup page at /configuration/setup", async () => {
+    window.history.pushState({}, "", "/configuration/setup");
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "School Setup", level: 1 });
+  });
+
+  it("shows exactly one School Setup nav link, ordered between Timetable and Teaching Assignments", async () => {
+    window.history.pushState({}, "", "/timetable");
+
+    render(<App />);
+
+    const links = await screen.findAllByRole("link");
+    const labels = links.map((link) => link.textContent);
+    expect(labels).toEqual(["Timetable", "School Setup", "Teaching Assignments"]);
+    expect(screen.getAllByRole("link", { name: "School Setup" })).toHaveLength(1);
+  });
+
   it("renders the Teaching Assignments page at /configuration/teaching-assignments", async () => {
     window.history.pushState({}, "", "/configuration/teaching-assignments");
 

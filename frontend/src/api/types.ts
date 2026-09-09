@@ -285,3 +285,112 @@ export interface TeachingAssignmentDeleteResponse {
   deleted_id: string;
   warnings: ValidationDiagnostic[];
 }
+
+// -- GET/POST /schools/{school_id}/years/{year_id}/teachers -------------
+// -- PUT/DELETE .../teachers/{teacher_id} --------------------------------
+//
+// Mirrors the Real-School Setup MVP Slice B Teacher CRUD contract exactly
+// (`docs/DECISIONS.md`, `api/schemas.py`'s `TeacherProjectionItemResponse`/
+// `TeachersProjectionResponse`/`TeacherWriteRequest`/`TeacherWriteResponse`/
+// `TeacherDeleteResponse`). `name` is the backend's own derived
+// `Teacher.full_name` -- included so no consumer re-implements the
+// trim/join rule; `first_name`/`last_name` remain the raw authoritative
+// edit fields. There is deliberately no duplicate-name rule on this
+// resource (unlike Classes/Subjects) -- the frontend must not invent one.
+
+export interface TeacherProjectionItem {
+  id: string;
+  first_name: string;
+  last_name: string;
+  name: string;
+}
+
+export interface TeachersProjectionResponse {
+  configuration_locked: boolean;
+  teachers: TeacherProjectionItem[];
+}
+
+export interface TeacherWriteRequest {
+  first_name: string;
+  last_name: string;
+}
+
+export interface TeacherWriteResponse {
+  id: string;
+  first_name: string;
+  last_name: string;
+  name: string;
+}
+
+export interface TeacherDeleteResponse {
+  deleted_id: string;
+}
+
+// -- GET/POST /schools/{school_id}/years/{year_id}/classes ---------------
+// -- PUT/DELETE .../classes/{class_id} ------------------------------------
+//
+// Mirrors the Real-School Setup MVP Slice C Class CRUD contract exactly
+// (`docs/DECISIONS.md`, `api/schemas.py`'s `ClassSectionProjectionItemResponse`/
+// `ClassSectionsProjectionResponse`/`ClassSectionWriteRequest`/
+// `ClassSectionWriteResponse`/`ClassSectionDeleteResponse`). The canonical
+// WHOLE_CLASS `ParticipantGroup` (Owner Decision #33) is never exposed
+// here -- no group id/role/membership/ordinal field exists on this type
+// family at all.
+
+export interface ClassSectionProjectionItem {
+  id: string;
+  name: string;
+}
+
+export interface ClassesProjectionResponse {
+  configuration_locked: boolean;
+  classes: ClassSectionProjectionItem[];
+}
+
+export interface ClassSectionWriteRequest {
+  name: string;
+}
+
+export interface ClassSectionWriteResponse {
+  id: string;
+  name: string;
+}
+
+export interface ClassSectionDeleteResponse {
+  deleted_id: string;
+}
+
+// -- GET/POST /schools/{school_id}/years/{year_id}/subjects --------------
+// -- PUT/DELETE .../subjects/{subject_id} ---------------------------------
+//
+// Mirrors the Real-School Setup MVP Slice D Subject CRUD contract exactly
+// (`docs/DECISIONS.md`, `api/schemas.py`'s `SubjectProjectionItemResponse`/
+// `SubjectsProjectionResponse`/`SubjectWriteRequest`/`SubjectWriteResponse`/
+// `SubjectDeleteResponse`). "Subject" is the user-facing name for
+// `Activity(kind=ORDINARY)` -- there is deliberately no `kind` field
+// anywhere on this type family; the endpoint contract itself guarantees
+// every returned item is ORDINARY, so the frontend never filters by kind
+// itself.
+
+export interface SubjectProjectionItem {
+  id: string;
+  name: string;
+}
+
+export interface SubjectsProjectionResponse {
+  configuration_locked: boolean;
+  subjects: SubjectProjectionItem[];
+}
+
+export interface SubjectWriteRequest {
+  name: string;
+}
+
+export interface SubjectWriteResponse {
+  id: string;
+  name: string;
+}
+
+export interface SubjectDeleteResponse {
+  deleted_id: string;
+}

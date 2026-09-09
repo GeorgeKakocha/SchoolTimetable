@@ -5,11 +5,18 @@ import { loadAppConfig } from "../config/appConfig";
 
 /**
  * Phase 3C.3a: the shared top-navigation shell introduced now that the
- * product has two real pages (Timetable, Teaching Assignments) -- a
- * compact top bar, not a sidebar, matching this product's identity as a
- * professional scheduling tool rather than a generic school LMS. Only
- * real, routed destinations appear here; no placeholder nav items for
- * unbuilt future sections (School Setup, Constraints, ...).
+ * product has multiple real pages -- a compact top bar, not a sidebar,
+ * matching this product's identity as a professional scheduling tool
+ * rather than a generic school LMS. Only real, routed destinations
+ * appear here; no placeholder nav items for unbuilt future sections
+ * (Constraints, ...).
+ *
+ * Real-School Setup MVP Slice E adds "School Setup" as a third flat
+ * link, ordered before "Teaching Assignments" (reference data logically
+ * precedes workload assignment) -- an explicitly approved design-gate
+ * deviation keeps this nav flat rather than introducing a "Configuration"
+ * dropdown/group container; the `/configuration/...` URL prefix stays a
+ * conceptual grouping only, not a new navigation construct.
  *
  * Owns the ONE visible "school · academic year" context line (never a
  * raw natural ID) -- `TimetablePage` deliberately no longer renders its
@@ -83,6 +90,9 @@ function AppShell() {
         <nav className="app-nav" aria-label="Main">
           <NavLink to="/timetable" className={navLinkClassName}>
             Timetable
+          </NavLink>
+          <NavLink to="/configuration/setup" className={navLinkClassName}>
+            School Setup
           </NavLink>
           <NavLink to="/configuration/teaching-assignments" className={navLinkClassName}>
             Teaching Assignments
