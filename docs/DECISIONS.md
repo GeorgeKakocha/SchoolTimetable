@@ -2396,9 +2396,12 @@ canonical/review datasets (`synthetic-school`/`ay-2026`,
 `teacher-crud-review-school`/`ay-teacher-crud-2026`,
 `class-crud-review-school`/`ay-class-crud-2026`,
 `subject-crud-review-school`/`ay-subject-crud-2026`) were snapshotted
-before and after the entire Slice F run and confirmed byte-for-byte
-identical (same Teacher/Class/ORDINARY/CLUB/TeachingRequirement/
-Schedule counts) -- none were touched.
+before and after the entire Slice F run, comparing Teacher/Class/
+ORDINARY/CLUB/TeachingRequirement/Schedule counts -- the same recorded
+counts held before and after for every one of the five, with no
+change in any of them; this is unchanged according to the recorded
+pre/post dataset snapshot fields, not a row-by-row or byte-level
+database comparison, which was not performed.
 
 One accurately-recorded limitation, non-blocking per the Slice E
 precedent: a live narrow-viewport (640px) browser screenshot remained
