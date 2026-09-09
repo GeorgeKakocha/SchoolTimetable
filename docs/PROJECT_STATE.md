@@ -1796,3 +1796,62 @@ consecutive runs; Teaching Assignment regression (API + repository)
 `cae76cba3c58`, single head, no drift. Slice D Subject CRUD remains
 **NOT implemented** -- this correction is scoped entirely to the
 pre-existing Teaching Assignment defect it fixes.
+
+**Real-School Setup MVP -- Slice D (Subjects / ORDINARY Activities
+CRUD): IMPLEMENTED, REVIEWED, live API reviewed, COMMITTED, and
+MERGED to `main` at commit `104bed6` "feat: add subject CRUD" --
+CLOSED. Not pushed.** "Subject" is not a new domain
+entity -- it is the user-facing name for `Activity(kind=ORDINARY)`; no
+Subject dataclass or table. Adds `GET/POST
+/schools/{school_id}/years/{year_id}/subjects` and `PUT/DELETE
+.../subjects/{subject_id}`, backed by `SubjectService`/
+`SqlAlchemyActivityRepository`, shaped exactly like Class CRUD and
+reusing `persistence/configuration_write_lock.py` entirely unchanged.
+Natural IDs are always server-generated as `activity_<uuid4().hex>`;
+`kind` is never client-controlled and never mutated after create --
+create always persists `ORDINARY`, update/delete only ever resolve an
+existing `ORDINARY` target (checked both at the pure-rule level and
+authoritatively against the raw ORM row). A `CLUB` activity ID passed
+to `/subjects/{id}` is indistinguishable from a missing Subject (`404
+"Subject not found"` in both cases). Duplicate `Activity` names within
+one `AcademicYear` are rejected (`409 DUPLICATE_SUBJECT`, exact/
+case-sensitive/trimmed) checked ONLY against other `ORDINARY`
+activities -- an identically-named Subject and Club may coexist,
+resolving the earlier open question from the pre-Slice-D correction.
+Delete is rejected (`409 SUBJECT_IN_USE`, deterministic
+`referenced_by`) whenever a current `TeachingRequirement` or
+`ReservedBlock` still references the subject -- the only two direct
+`Activity` references in the schema. `GET /subjects` never exposes
+`kind`; `GET /config` remains fully unfiltered; Teaching Assignments'
+already-`ORDINARY`-only activity options automatically include every
+new/renamed Subject with zero sync step and zero code change to that
+service. Zero schema/migration impact, zero frontend production
+change, zero solver change. Live-validated this session against a new,
+local-only, unlocked `subject-crud-review-school`/
+`ay-subject-crud-2026` dataset (retained, no `Schedule` generated):
+create, read, rename (identity preserved across `/subjects`, `/config`,
+Teaching Assignments), duplicate rejection, case-variant and
+same-name-as-CLUB coexistence, unused-subject delete, referenced-
+subject delete rejection, and CLUB-target PUT/DELETE both returning
+`404` with the CLUB row left intact all confirmed through the running
+app's real HTTP API; all four prior datasets (`synthetic-school`/
+`ay-2026`, `synthetic-review-school`/`ay-review-2026`,
+`teacher-crud-review-school`/`ay-teacher-crud-2026`,
+`class-crud-review-school`/`ay-class-crud-2026`) reconfirmed unchanged.
+Test gate: core `tests -m "not slow"` 283 passed/5 deselected (256
+pre-existing + 27 new pure `tests/test_subject_service.py` cases);
+`tests_web` 254 passed in one process (217 pre-existing + 37 new: 25
+`tests_web/test_subject_api.py` + 12
+`tests_web/test_subject_repository.py`), zero DB-reachability skips,
+confirmed on two consecutive runs; Teaching Assignment regression
+(API + repository) 40/40 and the pre-Slice-D preflight Activity-Kind
+tests 26/26 both reconfirmed unregressed; frontend 185/185, build
+clean; Alembic unchanged at `cae76cba3c58`, single head, no drift.
+Explicitly not part of Slice D: Club CRUD, ReservedBlock CRUD,
+`ActivityKind` editing, Teacher/Class changes, TeachingAssignment
+semantic changes, ParticipantGroup CRUD, Teacher Availability, School/
+AcademicYear CRUD, calendar CRUD, solver changes, auth/user
+integration, any frontend production feature. The broader Real-School
+Setup MVP is **not** complete -- this is Slice D only. Next
+implementation slice per the approved setup contract: **Slice E --
+School Setup frontend** (not started).

@@ -2146,3 +2146,90 @@ Assignment regression (API + repository) 40/40; frontend 185/185, build
 clean. Slice D Subject CRUD remains **NOT implemented** -- this
 correction is scoped entirely to the pre-existing Teaching Assignment
 defect.
+
+---
+
+**Slice D (Subjects / ORDINARY Activities CRUD) update: IMPLEMENTED,
+REVIEWED, live API reviewed, COMMITTED, and MERGED to `main` at
+commit `104bed6` "feat: add subject CRUD" -- CLOSED. Not pushed. Zero
+new Owner Decisions required; Owner Decision #38 remains unused.**
+"Subject" is not a new domain entity -- it is
+the user-facing name for `Activity(kind=ORDINARY)`
+(`domain/activities.py`), exactly as the pre-Slice-D correction's own
+invariant already established; no Subject dataclass, no Subject table.
+`GET/POST /schools/{school_id}/years/{year_id}/subjects` and
+`PUT/DELETE .../subjects/{subject_id}`, backed by `SubjectService`/
+`SqlAlchemyActivityRepository`, shaped exactly like `ClassSectionService`/
+`SqlAlchemyClassSectionRepository`: a fast un-locked Decision #35 lock
+precheck, then an authoritative, Decision #36-locked recheck against a
+freshly-reloaded `SchedulingProblem` before committing, reusing
+`persistence/configuration_write_lock.py` entirely unchanged. Natural
+IDs are always server-generated as `activity_<uuid4().hex>` (never
+`subject_<uuid>` -- the persisted/domain identity genuinely is an
+`Activity`) via an injectable `activity_id_factory`; `kind` is never
+accepted as client input and never mutated after create -- create
+always persists `ORDINARY`, and update/delete only ever resolve an
+existing `ORDINARY` target, both at the pure-rule level
+(`subject_rules.find_ordinary_subject`) and authoritatively re-checked
+against the raw ORM row inside `SqlAlchemyActivityRepository` itself
+(`row.kind != "ORDINARY"` treated identically to a missing row).
+
+**Filtered-resource-surface contract**: a `CLUB` activity ID passed to
+`/subjects/{id}` is indistinguishable from a missing Subject --
+`SubjectNotFoundError` (`404 {"detail": "Subject not found"}`) in
+both cases, never a wrong-kind signal, never leaking `ActivityKind`.
+`name` is trimmed with a blank result rejected (`422 INVALID_SUBJECT`,
+diagnostic `BLANK_SUBJECT_NAME`); duplicate `Activity` names within
+one `AcademicYear` are rejected (`409 DUPLICATE_SUBJECT`) by exact,
+case-sensitive, trimmed comparison -- checked ONLY against other
+`ORDINARY` activities, never against `CLUB` ones, so an identically-
+named Subject and Club may coexist (this is the resolved conclusion
+from the pre-Slice-D correction's own re-evaluation, not a new product
+preference). Delete is rejected (`SubjectInUseError`, `409
+SUBJECT_IN_USE`, `referenced_by` naming every referencing kind in the
+deterministic order `TEACHING_REQUIREMENT`/`RESERVED_BLOCK` -- the
+only two direct `activity_id` references in the persisted schema,
+confirmed by exhaustive search; `FixedPlacement`/`ResourceRequirement`
+are never direct references) whenever the *current* configuration
+still references the subject; a direct `ReservedBlock` reference to an
+`ORDINARY` activity still blocks deletion even though `ReservedBlock`
+conceptually belongs to `CLUB` -- existing/imported data is never
+silently reinterpreted. Activity ordinal is computed across BOTH
+`ORDINARY` and `CLUB` rows (one shared ordering domain for the whole
+`activity` table), never `ORDINARY` alone. `GET /subjects` never
+exposes `kind` -- every member is already, by construction, a Subject.
+`GET /config` remains fully unfiltered (both kinds, `kind` visible);
+Teaching Assignments' activity options (already `ORDINARY`-only since
+the pre-Slice-D correction) automatically include every new/renamed
+Subject with zero sync step -- confirmed unmodified,
+`teaching_assignments_projection_service.py` needed no change.
+
+Zero schema/migration impact (Alembic stays at `cae76cba3c58`); zero
+frontend production change; zero solver change. Test gate: 27 new pure
+`tests/test_subject_service.py` cases (zero DB); 25 new
+`tests_web/test_subject_api.py` HTTP-contract cases plus 12 new
+`tests_web/test_subject_repository.py` cases (atomicity proofs for
+create/update/delete failure paths including a CLUB-target repository-
+level guard proof, plus a deterministic, sequential proof of both
+generation-vs-write race orderings for a Subject mutation). Live-
+validated against a new, local-only, unlocked
+`subject-crud-review-school`/`ay-subject-crud-2026` dataset (retained,
+no `Schedule` generated) as well as the running app's real HTTP API --
+create, read, rename (identity preserved across `/subjects`, `/config`,
+and Teaching Assignments), duplicate rejection, case-variant
+coexistence, same-name-as-CLUB coexistence, unused-subject delete,
+referenced-subject delete rejection, and CLUB-target
+PUT/DELETE-through-`/subjects` both returning `404`/leaving the CLUB
+row intact all confirmed; all four prior canonical/review datasets
+(`synthetic-school`/`ay-2026`, `synthetic-review-school`/
+`ay-review-2026`, `teacher-crud-review-school`/`ay-teacher-crud-2026`,
+`class-crud-review-school`/`ay-class-crud-2026`) reconfirmed unchanged
+throughout. Core `tests -m "not slow"` 283 passed/5 deselected;
+canonical single-process `tests_web` 254 passed, zero DB-reachability
+skips, confirmed on two consecutive runs; Teaching Assignment
+regression (API + repository) 40/40 and the pre-Slice-D preflight
+Activity-Kind tests 26/26, both reconfirmed unregressed; frontend
+185/185, build clean. This entry records Slice D's implementation
+status only -- **the broader Real-School Setup MVP remains NOT
+complete.** Next slice per the approved setup contract: **Slice E --
+School Setup frontend** (not started, not designed in detail here).
