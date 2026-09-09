@@ -2324,3 +2324,110 @@ AcademicYear CRUD, users/auth, solver configuration, any change to
 **not** complete -- this is Slice E only. Next slice per the approved
 setup contract: **Slice F -- real-school browser acceptance / setup
 smoke** (not started).
+
+---
+
+**Slice F (Real-school browser acceptance / setup smoke): EXECUTED,
+PASSED, CLOSED.** Zero new Owner Decisions required; Owner Decision
+#38 remains unused. This was a pure acceptance/QA slice against the
+already-CLOSED Slices A-E -- zero production code (backend or
+frontend) was changed, zero migrations were created, zero test files
+were modified.
+
+Dedicated acceptance dataset created and retained as durable local
+evidence: `real-school-browser-smoke-school`/
+`ay-real-school-browser-smoke-2026` -- a complete, generation-capable
+clone of the canonical `synthetic-school`/`ay-2026` pilot configuration
+(8 teachers, 4 classes, 8 ORDINARY + 2 CLUB activities, 25 teaching
+requirements), built via the existing TEST-ONLY
+`tests_web/support/problem_writer.py::write_scheduling_problem`
+against a `SchedulingProblem` loaded from the pilot and remapped to
+the new natural IDs -- created with zero `Schedule`/`ScheduleVersion`
+rows so the acceptance workflow could start from a genuinely unlocked
+state.
+
+Using an isolated second Vite dev server (port 5174, shell-level
+`VITE_SCHOOL_ID`/`VITE_ACADEMIC_YEAR_ID` env overrides, the normal
+port-5173 canonical dev server and `frontend/.env.local` both left
+untouched) against the real backend, the full real-browser acceptance
+workflow was executed and observed passing at every step: School
+Setup loaded unlocked with the correct nav order and default tab;
+Teacher create/edit worked through the UI, and two identically-named
+Teachers were both accepted and both cleanly deleted, proving the
+no-duplicate-name contract live; Class create/edit worked, an exact
+duplicate name was rejected with a clear inline message and left no
+second row, and the canonical WHOLE_CLASS group/id was never rendered
+(only ever confirmed via read-only DB inspection: e.g. the class
+`Browser-QA-1A` and its canonical group `group_025367a7...` both
+stayed entirely server-side); Subject create/edit worked identically,
+an exact duplicate was rejected the same way, and the persisted
+`Activity.kind` (`ORDINARY`) and natural ID (`activity_<uuid>`, never
+`subject_<uuid>`) were only ever confirmed via read-only inspection,
+never exposed in the UI; the newly-created Teacher/Class/Subject all
+appeared automatically in the Teaching Assignments create drawer with
+zero manual sync step, and no CLUB activity was ever offered there. A
+real temporary Teaching Assignment was created through the browser
+referencing all three, which then correctly blocked deletion of the
+Teacher/Class/Subject with the exact same human-readable
+`referenced_by` mapping documented in Slice E ("Teaching
+assignments" -- never a raw `TEACHING_REQUIREMENT` string). The
+temporary assignment was deleted through the browser, after which all
+three temporary reference-data records deleted successfully, and the
+smoke dataset's Teacher/Class/ORDINARY-Activity/CLUB-Activity/
+TeachingRequirement counts were confirmed to return to their exact
+pre-browser baseline (8/4/8/2/25) with zero leftover temporary
+natural IDs or names, and `run_preflight` against the reloaded
+`SchedulingProblem` returned zero errors both before and after this
+whole round trip.
+
+With the configuration restored to its complete baseline, a real
+Schedule was generated through the browser's existing Timetable page
+"Generate schedule" control (never the generation API called
+directly) -- generation succeeded (`solver_status: OPTIMAL`, version
+1), confirmed both by the rendered class timetable and by read-only
+`Schedule`/`ScheduleVersion` inspection. School Setup was then
+reloaded and confirmed locked exactly as designed on all three tabs:
+every record stayed visible and readable (including the full
+ORDINARY-only Subjects list, still zero Club rows), and every
+Add/Edit/Delete control was visibly disabled with the `.lock-banner`
+explanation -- no controls were bypassed. All five pre-existing
+canonical/review datasets (`synthetic-school`/`ay-2026`,
+`synthetic-review-school`/`ay-review-2026`,
+`teacher-crud-review-school`/`ay-teacher-crud-2026`,
+`class-crud-review-school`/`ay-class-crud-2026`,
+`subject-crud-review-school`/`ay-subject-crud-2026`) were snapshotted
+before and after the entire Slice F run and confirmed byte-for-byte
+identical (same Teacher/Class/ORDINARY/CLUB/TeachingRequirement/
+Schedule counts) -- none were touched.
+
+One accurately-recorded limitation, non-blocking per the Slice E
+precedent: a live narrow-viewport (640px) browser screenshot remained
+unobtainable in this session's browser-automation tooling (window
+resize did not affect the captured viewport); the 640px stacked-row
+responsive CSS itself was not modified and remains code-reviewed only,
+matching Slice E's own documented limitation. Desktop is the current
+primary product target, so this does not block Slice F closure.
+
+Regression baseline reconfirmed unchanged throughout: frontend `npm
+test` 259 passed (one pre-existing, already-known timing-sensitive
+flake in `TimetablePage.test.tsx` -- a file untouched by any slice --
+was isolated and confirmed non-reproducible, both alone and across a
+full clean rerun), `npm run build` clean; backend core `tests -m "not
+slow"` 283 passed/5 deselected; canonical single-process `tests_web`
+254 passed, zero DB-reachability skips; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. `git status`/`git diff` were
+empty at every gate throughout Slice F -- the entire acceptance
+workflow changed only local PostgreSQL state (the new smoke dataset),
+never a single tracked file.
+
+**Slices A through F are now CLOSED. The scoped Real-School Setup MVP
+is COMPLETE**: the product now supports, end-to-end, through the real
+browser -- School Setup (Teachers, Classes, Subjects) -> Teaching
+Assignments -> Schedule Generation -> Timetable/read-only
+configuration-lock workflow. This explicitly does **not** mean the
+broader SchoolTimetable product is finished: Teacher Availability
+editing, Clubs/Reserved Blocks editing, Subgroups/Merged Classes
+editing, rooms/resources administration, a calendar/day-period editor,
+School/AcademicYear CRUD, authentication/user management, and other
+advanced scheduling-policy UI all remain explicitly outside this MVP's
+scope, as future work.
