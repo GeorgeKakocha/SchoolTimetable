@@ -219,6 +219,33 @@ select:focus-visible {
   margin-top: 0.5rem;
 }
 
+/* -- Timetable schedule-generation trigger ------------------------------
+   Lives entirely inside the existing "no schedule yet" empty state --
+   compact, not a dashboard/CTA card. `.btn-primary` (introduced for
+   "Add assignment") is reused as-is, matching product primary-action
+   language. */
+.generate-action p {
+  margin: 0 0 0.6rem;
+}
+
+.generate-action .btn-primary {
+  margin-bottom: 0.5rem;
+}
+
+.generate-error {
+  margin-top: 0.4rem;
+}
+
+.generate-error p {
+  margin: 0;
+}
+
+.generate-diagnostics {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.9em;
+}
+
 /* -- Teaching Assignments (Phase 3C.3a) ---------------------------------
    Reuses the existing table/border/typography tokens the timetable grid
    already established (`.timetable-grid` above) rather than introducing

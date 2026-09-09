@@ -1331,9 +1331,105 @@ click (never one-click) and the confirmed delete removed the row; the
 header-collision fix and restrained Delete styling were both accepted.
 
 **With 3C.3a and 3C.3b both CLOSED, Phase 3C.3 (Teaching Assignments
-frontend milestone) is complete.** Next product slice: to be defined
-after Phase 3C.3 closure (see "Recommended sequencing" below for the
-already-locked 3C.4/3C.5 direction).
+frontend milestone) is complete.**
+
+**Next product slice: Minimal Schedule Generation Trigger UI** (no new
+phase number -- this sits outside 3C.1-3C.5's own locked decision set;
+see the read-only gate record above/below for the full trade-off
+analysis). The product owner chose this before continuing into the
+broader 3C.5 reference-data-CRUD direction: it closes the one real gap
+in the school-configuration -> generation -> timetable-review pipeline
+-- until now, `POST .../schedule/generate` (fully built and tested
+since Phase 3A3) was reachable only outside the browser. **Implemented
+on branch `feature/schedule-generation-ui`, pending review -- not yet
+committed, not merged, not pushed.** Frontend-only, zero backend/schema
+changes (the already-locked Decision #31 contract is reused exactly as
+merged); Alembic head unchanged at `01b2ae564170`, no drift.
+
+The trigger lives entirely inside `TimetablePage`'s existing
+"no schedule has been generated yet" empty state -- one primary
+"Generate schedule" button (`.btn-primary`, the same primary-action
+language "Add assignment" already established), visible only when no
+active schedule exists yet; absent once a timetable is loaded, in the
+no-classes state, and in the config-error state. No confirmation
+dialog (initial generation is non-destructive; the backend already
+rejects a duplicate). On click: the existing, already-merged, no-
+request-body `POST .../schedule/generate` (`generateSchedule` in
+`api/client.ts`, reusing the shared `postJson` -- `body` passed as
+`undefined` exactly like `deleteJson` already does, so no
+`Content-Type` header and no `{}` body are ever sent) -- the button
+disables and its label becomes "Generating…" while in flight, with no
+fake progress percentage/bar and no polling (a single synchronous
+request/response, matching CP-SAT's actual ~1-2s solve time at this
+pilot's scale). On success, a small `generationRefreshToken` counter
+(mirroring `TeachingAssignmentsPage`'s existing `retryToken` pattern)
+is bumped and added to the *already-existing* per-class
+`getClassTimetable` fetch effect's dependency list -- the exact same
+authoritative GET this page already performs re-runs and the grid
+renders; there is no second, hand-built display path from
+`GenerateScheduleResponse`'s own body, no manual reload, no navigation
+away from `/timetable`. `TeachingAssignmentsPage` becomes
+`configuration_locked: true` purely from its own next `GET` -- zero
+coupling was introduced between the two pages.
+
+A stale-browser `409 SCHEDULE_ALREADY_EXISTS` is deliberately **not**
+shown as an error: it triggers the identical success-path refetch (the
+schedule the browser didn't know about yet simply renders), mirroring
+3C.3b's `SCHEDULING_CONFIGURATION_LOCKED` stale-lock-race handling
+exactly. `409 CONFIGURATION_CHANGED_DURING_GENERATION` shows an inline
+retryable message ("Scheduling configuration changed during
+generation. Please try again.") and re-enables the button -- never a
+false success. `422 INVALID_CONFIGURATION` renders its
+`error.body.errors` diagnostic messages inline (reusing the exact
+structured-diagnostic pattern from 3C.3b's `INVALID_TEACHING_ASSIGNMENT`
+handling; an unrecognized/malformed diagnostic shape is filtered out
+rather than rendered or thrown -- fails safe, never raw JSON). `409
+SCHEDULE_INFEASIBLE` and a plain `404 Scheduling configuration not
+found` both show their own safe backend `detail` string inline. Any
+other/network failure falls back to the existing generic "Something
+went wrong. Please try again." message. Every failure path re-enables
+the button for another attempt.
+
+Explicitly out of scope for this slice, unchanged: regeneration/
+reoptimization, schedule history, manual schedule editing, locks UI,
+a school/year selector, and all of 3C.5's broader reference-data CRUD.
+
+Frontend test gate: 154 tests passing (the pre-existing 133 plus 21 new
+-- 7 `api/client.test.ts` `generateSchedule` tests plus 14
+`TimetablePage.test.tsx` tests covering visibility, the in-flight/
+double-click guard, success, the stale-already-exists refresh, and
+each structured failure path; one pre-existing test that had asserted
+"no Generate button exists" -- accurate for its Phase 3B-era scope --
+was updated to assert the button is now present and enabled, since
+that exclusion is exactly what this slice deliberately supersedes);
+`npm run build` succeeds. Backend regression reconfirmed unaffected
+(`pytest tests_web` 136 passed; `pytest tests -m "not slow"` 180
+passed/5 deselected); Alembic still `01b2ae564170 (head)`, no drift.
+
+**Manual browser review by the product owner PASSED** (implementation
+itself remains uncommitted/unmerged/unpushed as this is written), using
+the local-only, unlocked `synthetic-review-school`/`ay-review-2026`
+dataset. Owner-confirmed pre-generation state: no active schedule
+existed, "Generate schedule" was visible, the timetable grid was
+absent. The product owner clicked Generate schedule exactly once;
+afterward: the generated timetable appeared automatically on the same
+`/timetable` page with no manual browser reload, Version 1 rendered
+correctly, and the class selector remained functional throughout.
+`TeachingAssignmentsPage`, on its own next load, correctly showed
+`"Assignments are read-only because a schedule has already been
+generated for this configuration."`, with "Add assignment" disabled and
+every editable row's Edit/Delete controls locked -- entirely from the
+existing, unmodified `configuration_locked` contract, with zero
+coupling code added between the two pages. **The full browser-only
+Configure -> Generate -> Review workflow PASSED end-to-end for the
+first time.** The canonical `synthetic-school`/`ay-2026` pilot was
+reconfirmed completely untouched throughout (`configuration_locked:
+true`, 25 assignments, its pre-existing version-1 schedule unchanged).
+No backend/schema change was needed or made. Explicitly still future
+work, not pulled into this slice: a teacher timetable view, lunch/break
+visual presentation, an all-school/master timetable, manual schedule
+editing, locks UI, reoptimization, the regeneration lifecycle, and
+schedule history.
 
 Recommended sequencing (`DECISIONS.md` #35 for full detail): **3C.1**
 `ParticipantGroup` role domain/persistence contract (no UI) -> **3C.2**

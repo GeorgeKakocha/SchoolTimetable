@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TimetablePage from "./TimetablePage";
-import { ApiError, getClassTimetable, getSchedulingConfigIndex } from "../api/client";
+import { ApiError, generateSchedule, getClassTimetable, getSchedulingConfigIndex } from "../api/client";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
 import type { ClassTimetableResponse, SchedulingConfigIndexResponse } from "../api/types";
 
@@ -15,6 +15,7 @@ vi.mock("../api/client", async (importOriginal) => {
     ...actual,
     getSchedulingConfigIndex: vi.fn(),
     getClassTimetable: vi.fn(),
+    generateSchedule: vi.fn(),
   };
 });
 
@@ -28,6 +29,7 @@ vi.mock("../config/appConfig", async (importOriginal) => {
 
 const mockedGetSchedulingConfigIndex = vi.mocked(getSchedulingConfigIndex);
 const mockedGetClassTimetable = vi.mocked(getClassTimetable);
+const mockedGenerateSchedule = vi.mocked(generateSchedule);
 const mockedLoadAppConfig = vi.mocked(loadAppConfig);
 
 /** A promise this test controls the resolution/rejection of, to assert
@@ -246,7 +248,9 @@ describe("TimetablePage", () => {
 
     await screen.findByText("No schedule has been generated yet for this class.");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /generate/i })).not.toBeInTheDocument();
+    // The schedule-generation trigger (next product slice) now lives
+    // exactly here -- enabled, not an error state of its own.
+    expect(screen.getByRole("button", { name: "Generate schedule" })).toBeEnabled();
   });
 
   it("shows a generic error message for an unrecognized timetable API failure", async () => {
@@ -266,5 +270,242 @@ describe("TimetablePage", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("Scheduling configuration not found"),
     );
+  });
+});
+
+// -- Schedule generation (next product slice, product-owner locked) -----
+//
+// `mockedGenerateSchedule` is reset after every test in this block only
+// (the surrounding file's existing tests never call it, and rely on
+// their own `mockResolvedValue`/`mockReturnValueOnce` setup instead --
+// this scoped reset avoids disturbing that established convention
+// while still preventing a queued/uncleared mock from leaking between
+// these generation-specific tests).
+describe("Schedule generation", () => {
+  afterEach(() => {
+    mockedGenerateSchedule.mockReset();
+  });
+
+  it("[A] shows Generate schedule enabled when there is no active schedule", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+
+    render(<TimetablePage />);
+
+    expect(await screen.findByRole("button", { name: "Generate schedule" })).toBeEnabled();
+  });
+
+  it("[A] shows no Generate action once a timetable is loaded", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+
+    render(<TimetablePage />);
+
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: /generate/i })).not.toBeInTheDocument();
+  });
+
+  it("[A] shows no Generate action in the no-classes or config-error states", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue({ ...CONFIG_INDEX, class_sections: [] });
+
+    render(<TimetablePage />);
+
+    await screen.findByText("No classes are configured for this school/year yet.");
+    expect(screen.queryByRole("button", { name: /generate/i })).not.toBeInTheDocument();
+  });
+
+  it("[B] clicking Generate issues the exact POST with no signal/body arguments beyond school/year", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    const { promise, resolve } = deferred<{
+      version_number: number;
+      solver_status: "OPTIMAL";
+      total_soft_penalty: number;
+      created_at: string;
+      is_active: boolean;
+    }>();
+    mockedGenerateSchedule.mockReturnValueOnce(promise);
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    expect(mockedGenerateSchedule).toHaveBeenCalledWith("s1", "y1");
+    resolve({ version_number: 1, solver_status: "OPTIMAL", total_soft_penalty: 0, created_at: "2026-01-01T00:00:00Z", is_active: true });
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    await screen.findByRole("table");
+  });
+
+  it("[B] disables the button and shows an in-flight label while generation is running, preventing a duplicate POST", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    const { promise, resolve } = deferred<{
+      version_number: number;
+      solver_status: "OPTIMAL";
+      total_soft_penalty: number;
+      created_at: string;
+      is_active: boolean;
+    }>();
+    mockedGenerateSchedule.mockReturnValueOnce(promise);
+
+    render(<TimetablePage />);
+    const button = await screen.findByRole("button", { name: "Generate schedule" });
+    fireEvent.click(button);
+
+    const inFlightButton = await screen.findByRole("button", { name: "Generating…" });
+    expect(inFlightButton).toBeDisabled();
+    fireEvent.click(inFlightButton);
+    fireEvent.click(inFlightButton);
+
+    expect(mockedGenerateSchedule).toHaveBeenCalledTimes(1);
+
+    resolve({ version_number: 1, solver_status: "OPTIMAL", total_soft_penalty: 0, created_at: "2026-01-01T00:00:00Z", is_active: true });
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    await screen.findByRole("table");
+  });
+
+  it("[C] on success, re-fetches the class timetable and renders the grid, with Generate gone and no reload/navigation needed", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValueOnce(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockResolvedValueOnce({
+      version_number: 1,
+      solver_status: "OPTIMAL",
+      total_soft_penalty: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      is_active: true,
+    });
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: /generate/i })).not.toBeInTheDocument();
+    expect(mockedGetClassTimetable).toHaveBeenCalledWith("s1", "y1", "8a", expect.any(AbortSignal));
+  });
+
+  it("[D] treats a stale-browser SCHEDULE_ALREADY_EXISTS as a refresh trigger, not a fatal error", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValueOnce(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockRejectedValueOnce(
+      new ApiError(409, "A schedule already exists for this school and academic year", "SCHEDULE_ALREADY_EXISTS"),
+    );
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    await screen.findByRole("table");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockedGetClassTimetable).toHaveBeenCalledWith("s1", "y1", "8a", expect.any(AbortSignal));
+  });
+
+  it("[E] shows a retryable inline message for CONFIGURATION_CHANGED_DURING_GENERATION and re-enables the button for another attempt", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockRejectedValueOnce(
+      new ApiError(
+        409,
+        "Scheduling configuration changed during generation; retry generation",
+        "CONFIGURATION_CHANGED_DURING_GENERATION",
+      ),
+    );
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    await screen.findByText("Scheduling configuration changed during generation. Please try again.");
+    const retryButton = screen.getByRole("button", { name: "Generate schedule" });
+    expect(retryButton).toBeEnabled();
+
+    mockedGenerateSchedule.mockResolvedValueOnce({
+      version_number: 1,
+      solver_status: "OPTIMAL",
+      total_soft_penalty: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      is_active: true,
+    });
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    fireEvent.click(retryButton);
+
+    expect(mockedGenerateSchedule).toHaveBeenCalledTimes(2);
+    await screen.findByRole("table");
+  });
+
+  it("[F] renders INVALID_CONFIGURATION diagnostic messages, never raw JSON, and re-enables the button", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockRejectedValueOnce(
+      new ApiError(422, "Scheduling configuration is invalid", "INVALID_CONFIGURATION", {
+        code: "INVALID_CONFIGURATION",
+        errors: [{ code: "SOME_CODE", message: "A specific structural problem was found.", context: {} }],
+      }),
+    );
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    await screen.findByText("A specific structural problem was found.");
+    expect(screen.queryByText(/"code"/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"context"/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate schedule" })).toBeEnabled();
+  });
+
+  it("[F] fails safe (renders nothing extra) for a malformed/unknown diagnostic shape", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockRejectedValueOnce(
+      new ApiError(422, "Scheduling configuration is invalid", "INVALID_CONFIGURATION", {
+        code: "INVALID_CONFIGURATION",
+        errors: [{ unexpected: "shape" }],
+      }),
+    );
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    await screen.findByText("Scheduling configuration is invalid");
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("[G] shows a safe inline message for SCHEDULE_INFEASIBLE and re-enables the button", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockRejectedValueOnce(
+      new ApiError(
+        409,
+        "No feasible schedule exists for this school and academic year",
+        "SCHEDULE_INFEASIBLE",
+      ),
+    );
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    await screen.findByText("No feasible schedule exists for this school and academic year");
+    expect(screen.getByRole("button", { name: "Generate schedule" })).toBeEnabled();
+  });
+
+  it("[H] shows a safe inline message for a 404 Scheduling configuration not found", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockRejectedValueOnce(new ApiError(404, "Scheduling configuration not found"));
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    await screen.findByText("Scheduling configuration not found");
+    expect(screen.getByRole("button", { name: "Generate schedule" })).toBeEnabled();
+  });
+
+  it("[I] shows the generic safe fallback for a network/unexpected failure, and allows retry", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+
+    await screen.findByText("Something went wrong. Please try again.");
+    expect(screen.getByRole("button", { name: "Generate schedule" })).toBeEnabled();
   });
 });

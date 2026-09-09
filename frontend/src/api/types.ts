@@ -93,6 +93,26 @@ export interface ClassTimetableResponse {
   rows: ClassTimetableRow[];
 }
 
+// -- POST /schools/{school_id}/years/{year_id}/schedule/generate --------
+//
+// Mirrors Phase 3A3.4's `GenerateScheduleResponse` exactly
+// (`docs/DECISIONS.md` #31): the same five public version-summary
+// fields `ClassTimetableResponse` already carries, and nothing else --
+// no `entries` (the caller re-fetches the per-class timetable
+// projection for that). Structured generation failures
+// (`SCHEDULE_ALREADY_EXISTS`/`SCHEDULE_INFEASIBLE`/
+// `CONFIGURATION_CHANGED_DURING_GENERATION`/`INVALID_CONFIGURATION`)
+// are read off the existing `ApiError.code`/`.body` (3C.3b) -- no
+// dedicated error DTO types are introduced for them.
+
+export interface GenerateScheduleResponse {
+  version_number: number;
+  solver_status: SolverStatus;
+  total_soft_penalty: number;
+  created_at: string;
+  is_active: boolean;
+}
+
 // -- GET /schools/{school_id}/years/{year_id}/teaching-assignments ------
 //
 // Mirrors Phase 3C.2b's `TeachingAssignmentsProjectionResponse` exactly

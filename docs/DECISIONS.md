@@ -1219,6 +1219,22 @@ this implementation followed them as given.
     a REAL generated/persisted timetable rendered correctly in the
     browser -- never mock/static data as the integration proof.
 
+    **Implementation note (no new owner decision -- product-owner
+    locked, no phase number invented since this falls outside 3C.1-3C.5's
+    own scope; implemented on branch `feature/schedule-generation-ui`,
+    pending review -- not yet committed, not merged, not pushed).** The
+    "no Generate button" exclusion above was scoped to Phase 3B's first
+    slice, never revisited by any Phase 3C decision (#33-#36 cover only
+    teaching-assignment CRUD) -- until now: a minimal Generate trigger
+    was added to `TimetablePage`'s existing no-schedule empty state,
+    reusing the already-merged, no-request-body `POST
+    .../schedule/generate` (Decision #31) exactly as built, with no
+    backend/schema change. See `docs/PROJECT_STATE.md` for the full
+    implementation record. Every other Owner-Decision-5 exclusion
+    (school/year selectors, teacher timetable, schedule history, manual
+    editing, locks, reoptimization, print/export, auth, dashboards,
+    analytics) remains exactly as excluded.
+
     **Owner Decision 6 -- School/AcademicYear are pilot-fixed; ClassSection
     is not.** For the first visual slice, `school_id`/`academic_year_id`
     are pilot-fixed, not selectors -- but never scattered as literal IDs

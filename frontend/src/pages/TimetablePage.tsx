@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import ClassSelector from "../components/ClassSelector";
 import TimetableGrid from "../components/TimetableGrid";
-import { ApiError, getClassTimetable, getSchedulingConfigIndex } from "../api/client";
-import type { ClassTimetableResponse, SchedulingConfigIndexResponse } from "../api/types";
+import { ApiError, generateSchedule, getClassTimetable, getSchedulingConfigIndex } from "../api/client";
+import type { ClassTimetableResponse, SchedulingConfigIndexResponse, ValidationDiagnostic } from "../api/types";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
 
 /**
@@ -10,8 +10,8 @@ import { AppConfigError, loadAppConfig } from "../config/appConfig";
  * timetable. Orchestrates, on mount: load the (pilot-fixed) app config
  * -> load the scheduling config index (for the class selector) ->
  * select the first backend-provided class -> load its live timetable.
- * No Generate button, no school/year selectors, no teacher timetable,
- * no history/editing/auth -- all explicitly out of Phase 3B.3 scope.
+ * No school/year selectors, no teacher timetable, no history/editing/
+ * auth -- still out of scope.
  *
  * Phase 3C.3a: moved from `App.tsx` under the `/timetable` route with no
  * behavior change -- `App.tsx` now only wires up routing/the shared
@@ -24,6 +24,21 @@ import { AppConfigError, loadAppConfig } from "../config/appConfig";
  * config fetch itself stays here unchanged -- still needed for
  * `class_sections`/the loading/error/no-classes states -- only its
  * former display of `school.name`/`academic_year.label` was removed.
+ *
+ * Next product slice (product-owner locked, no phase number invented):
+ * a minimal schedule-generation trigger, living entirely in this
+ * page's existing "no-schedule" empty state -- the one missing step in
+ * the school configuration -> generation -> timetable review pipeline
+ * that was previously only reachable outside the browser. Reuses the
+ * already-merged, no-request-body `POST .../schedule/generate`
+ * (Decision #31) unchanged; on success (or a stale-browser
+ * `SCHEDULE_ALREADY_EXISTS`) it re-runs the exact same authoritative
+ * `getClassTimetable` fetch this page already performs -- never a
+ * hand-built timetable from the generate response body, never a
+ * second display path. State stays local (`generating`/
+ * `generateError`/`generateDiagnostics`/`generationRefreshToken`); no
+ * Redux/Zustand/query library, no coupling to `TeachingAssignmentsPage`
+ * (it becomes locked purely from its own next `GET`).
  */
 
 type AppConfigResult =
@@ -53,6 +68,40 @@ function describeApiError(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
+function isValidationDiagnostic(value: unknown): value is ValidationDiagnostic {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Record<string, unknown>)["code"] === "string" &&
+    typeof (value as Record<string, unknown>)["message"] === "string"
+  );
+}
+
+/** Maps a `POST .../schedule/generate` failure to a safe inline
+ * message plus, for `INVALID_CONFIGURATION`, the structured diagnostic
+ * list -- reusing `ApiError.code`/`.body` (3C.3b) exactly, no new
+ * error-DTO types. `SCHEDULE_ALREADY_EXISTS` is deliberately NOT
+ * handled here: the caller treats it as a stale-browser state, not a
+ * failure to describe. An unrecognized/malformed diagnostic shape is
+ * filtered out rather than rendered or thrown -- fails safe. */
+function describeGenerationError(error: unknown): { message: string; diagnostics: ValidationDiagnostic[] } {
+  if (!(error instanceof ApiError)) {
+    return { message: "Something went wrong. Please try again.", diagnostics: [] };
+  }
+  if (error.code === "CONFIGURATION_CHANGED_DURING_GENERATION") {
+    return { message: "Scheduling configuration changed during generation. Please try again.", diagnostics: [] };
+  }
+  if (error.code === "INVALID_CONFIGURATION") {
+    const rawErrors = error.body?.["errors"];
+    const diagnostics = Array.isArray(rawErrors) ? rawErrors.filter(isValidationDiagnostic) : [];
+    return { message: error.detail, diagnostics };
+  }
+  // SCHEDULE_INFEASIBLE, the 404 "Scheduling configuration not found",
+  // and any other/unexpected structured error all fall back to the
+  // backend's own safe `detail` string -- never a raw JSON dump.
+  return { message: error.detail, diagnostics: [] };
+}
+
 function TimetablePage() {
   const [appConfigResult] = useState<AppConfigResult>(() => {
     try {
@@ -69,6 +118,15 @@ function TimetablePage() {
   const [configState, setConfigState] = useState<ConfigState>({ status: "loading" });
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [timetableState, setTimetableState] = useState<TimetableState>({ status: "idle" });
+
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateDiagnostics, setGenerateDiagnostics] = useState<ValidationDiagnostic[]>([]);
+  // Bumped on a successful (or stale-browser "already exists") generate
+  // so the existing timetable-fetch effect below re-runs -- the sole
+  // mechanism by which a generated schedule becomes visible; never a
+  // second, hand-built display path.
+  const [generationRefreshToken, setGenerationRefreshToken] = useState(0);
 
   // Load the scheduling config index (for the class selector) once.
   useEffect(() => {
@@ -101,10 +159,13 @@ function TimetablePage() {
   }, [appConfigResult]);
 
   // Load the selected class's live timetable. Re-runs whenever the
-  // selected class changes; the previous request is aborted first (via
-  // this effect's own cleanup), so a stale/aborted response can never
-  // overwrite a newer selection -- the timetable is cleared to
-  // "loading" immediately rather than left showing the old class.
+  // selected class changes, or `generationRefreshToken` bumps (the
+  // sole re-fetch trigger after a successful/stale-already-exists
+  // generate -- see `handleGenerateClick` below); the previous request
+  // is aborted first (via this effect's own cleanup), so a
+  // stale/aborted response can never overwrite a newer selection -- the
+  // timetable is cleared to "loading" immediately rather than left
+  // showing the old class.
   useEffect(() => {
     if (!appConfigResult.ok || configState.status !== "ready" || selectedClassId === "") {
       return;
@@ -138,7 +199,34 @@ function TimetablePage() {
     return () => {
       controller.abort();
     };
-  }, [appConfigResult, configState.status, selectedClassId]);
+  }, [appConfigResult, configState.status, selectedClassId, generationRefreshToken]);
+
+  async function handleGenerateClick() {
+    if (!appConfigResult.ok || generating) {
+      return;
+    }
+    setGenerating(true);
+    setGenerateError(null);
+    setGenerateDiagnostics([]);
+    try {
+      await generateSchedule(appConfigResult.schoolId, appConfigResult.academicYearId);
+      setGenerationRefreshToken((token) => token + 1);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "SCHEDULE_ALREADY_EXISTS") {
+        // Stale browser state, not a generation failure -- someone/
+        // something else already generated one. Show the real current
+        // state via the same authoritative re-fetch a real success
+        // uses, never a scary error and never a second POST.
+        setGenerationRefreshToken((token) => token + 1);
+      } else {
+        const { message, diagnostics } = describeGenerationError(error);
+        setGenerateError(message);
+        setGenerateDiagnostics(diagnostics);
+      }
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   return (
     <>
@@ -163,7 +251,24 @@ function TimetablePage() {
 
               {timetableState.status === "loading" && <p>Loading timetable…</p>}
               {timetableState.status === "no-schedule" && (
-                <p>No schedule has been generated yet for this class.</p>
+                <div className="generate-action">
+                  <p>No schedule has been generated yet for this class.</p>
+                  <button type="button" className="btn-primary" onClick={handleGenerateClick} disabled={generating}>
+                    {generating ? "Generating…" : "Generate schedule"}
+                  </button>
+                  {generateError !== null && (
+                    <div role="alert" className="generate-error">
+                      <p>{generateError}</p>
+                      {generateDiagnostics.length > 0 && (
+                        <ul className="generate-diagnostics">
+                          {generateDiagnostics.map((diagnostic, index) => (
+                            <li key={`${diagnostic.code}-${index}`}>{diagnostic.message}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
               {timetableState.status === "error" && <p role="alert">{timetableState.message}</p>}
               {timetableState.status === "loaded" && (

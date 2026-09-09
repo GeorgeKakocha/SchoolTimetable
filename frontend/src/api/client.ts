@@ -16,6 +16,7 @@
 import type {
   ClassSectionSummary,
   ClassTimetableResponse,
+  GenerateScheduleResponse,
   SchedulingConfigIndexResponse,
 } from "./types";
 
@@ -220,4 +221,17 @@ export function getClassTimetable(
     `/schools/${encodeURIComponent(schoolId)}/years/${encodeURIComponent(academicYearId)}` +
     `/schedule/active/classes/${encodeURIComponent(classSectionId)}`;
   return getJson<ClassTimetableResponse>(path, signal);
+}
+
+/** `POST .../schedule/generate` takes no request body (Decision #31) --
+ * `postJson`'s `body` argument is passed as `undefined` explicitly, the
+ * same way `deleteJson` already does, so `sendJson` sends a bodyless
+ * POST with no `Content-Type` header rather than an empty `{}` object. */
+export function generateSchedule(
+  schoolId: string,
+  academicYearId: string,
+  signal?: AbortSignal,
+): Promise<GenerateScheduleResponse> {
+  const path = `/schools/${encodeURIComponent(schoolId)}/years/${encodeURIComponent(academicYearId)}/schedule/generate`;
+  return postJson<GenerateScheduleResponse>(path, undefined, signal);
 }

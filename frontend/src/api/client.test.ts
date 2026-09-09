@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, deleteJson, getClassTimetable, getSchedulingConfigIndex, postJson, putJson } from "./client";
-import type { ClassTimetableResponse } from "./types";
+import {
+  ApiError,
+  deleteJson,
+  generateSchedule,
+  getClassTimetable,
+  getSchedulingConfigIndex,
+  postJson,
+  putJson,
+} from "./client";
+import type { ClassTimetableResponse, GenerateScheduleResponse } from "./types";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -298,6 +306,140 @@ describe("api client", () => {
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
       await expect(postJson("/x", {})).rejects.toThrow("Failed to fetch");
+    });
+  });
+
+  // -- generateSchedule (next product slice: schedule-generation UI) ----
+
+  describe("generateSchedule", () => {
+    const VALID_GENERATE_RESPONSE: GenerateScheduleResponse = {
+      version_number: 1,
+      solver_status: "OPTIMAL",
+      total_soft_penalty: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      is_active: true,
+    };
+
+    it("POSTs the exact endpoint path with safely encoded segments and NO request body", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, VALID_GENERATE_RESPONSE));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await generateSchedule("school 1", "year/1");
+
+      expect(fetchMock).toHaveBeenCalledWith("/schools/school%201/years/year%2F1/schedule/generate", {
+        method: "POST",
+      });
+      expect(result).toEqual(VALID_GENERATE_RESPONSE);
+    });
+
+    it("sends no Content-Type header, since there is no body", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, VALID_GENERATE_RESPONSE));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await generateSchedule("s1", "y1");
+
+      const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(init).not.toHaveProperty("headers");
+      expect(init).not.toHaveProperty("body");
+    });
+
+    it("forwards an AbortSignal when supplied, still with no body", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, VALID_GENERATE_RESPONSE));
+      vi.stubGlobal("fetch", fetchMock);
+      const controller = new AbortController();
+
+      await generateSchedule("s1", "y1", controller.signal);
+
+      expect(fetchMock).toHaveBeenCalledWith("/schools/s1/years/y1/schedule/generate", {
+        method: "POST",
+        signal: controller.signal,
+      });
+    });
+
+    it("propagates a structured 409 SCHEDULE_ALREADY_EXISTS error", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          jsonResponse(409, {
+            code: "SCHEDULE_ALREADY_EXISTS",
+            detail: "A schedule already exists for this school and academic year",
+          }),
+        ),
+      );
+
+      await expect(generateSchedule("s1", "y1")).rejects.toMatchObject({
+        status: 409,
+        code: "SCHEDULE_ALREADY_EXISTS",
+        detail: "A schedule already exists for this school and academic year",
+      });
+    });
+
+    it("propagates a structured 409 SCHEDULE_INFEASIBLE error", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          jsonResponse(409, {
+            code: "SCHEDULE_INFEASIBLE",
+            detail: "No feasible schedule exists for this school and academic year",
+          }),
+        ),
+      );
+
+      await expect(generateSchedule("s1", "y1")).rejects.toMatchObject({
+        status: 409,
+        code: "SCHEDULE_INFEASIBLE",
+      });
+    });
+
+    it("propagates a structured 409 CONFIGURATION_CHANGED_DURING_GENERATION error", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          jsonResponse(409, {
+            code: "CONFIGURATION_CHANGED_DURING_GENERATION",
+            detail: "Scheduling configuration changed during generation; retry generation",
+          }),
+        ),
+      );
+
+      await expect(generateSchedule("s1", "y1")).rejects.toMatchObject({
+        status: 409,
+        code: "CONFIGURATION_CHANGED_DURING_GENERATION",
+      });
+    });
+
+    it("propagates a structured 422 INVALID_CONFIGURATION error with its diagnostics in .body", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          jsonResponse(422, {
+            code: "INVALID_CONFIGURATION",
+            detail: "Scheduling configuration is invalid",
+            errors: [{ code: "SOME_CODE", message: "A specific structural problem was found.", context: {} }],
+          }),
+        ),
+      );
+
+      await expect(generateSchedule("s1", "y1")).rejects.toMatchObject({
+        status: 422,
+        code: "INVALID_CONFIGURATION",
+        body: {
+          errors: [{ code: "SOME_CODE", message: "A specific structural problem was found.", context: {} }],
+        },
+      });
+    });
+
+    it("preserves a plain 404 detail (no code) unchanged", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(jsonResponse(404, { detail: "Scheduling configuration not found" })),
+      );
+
+      await expect(generateSchedule("s1", "y1")).rejects.toMatchObject({
+        status: 404,
+        detail: "Scheduling configuration not found",
+        code: undefined,
+      });
     });
   });
 });
