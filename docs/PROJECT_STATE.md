@@ -1577,3 +1577,38 @@ dedicated backend class-timetable projection endpoint (`DECISIONS.md`
 
 Roadmap: **3A2.4 -> 3A3 -> 3B (3B.1 -> 3B.2 -> 3B.3 -> 3B.4) -> 3C
 (3C.1 -> 3C.2 -> 3C.3 -> 3C.4 -> 3C.5).**
+
+**Real-School Setup MVP -- Slice A (Teacher `first_name`/`last_name`
+migration): IMPLEMENTED, REVIEWED, COMMITTED, and MERGED to `main` at
+commit `4775684` "feat: split teacher name fields" -- CLOSED. Not
+pushed.** Migration verified on both the dev and test databases
+(upgrade backfill correct, downgrade/upgrade round trip exact); API
+compatibility verified live against the running dev app; frontend
+confirmed unchanged. Owner Decision #37
+(`DECISIONS.md`) locks Teacher identity as `first_name`/`last_name`
+instead of one `name`, both required constructor arguments (no
+dataclass default), with a derived `full_name` display property.
+Scope was deliberately narrow: domain `Teacher`, the `teacher` ORM
+table (new staged/reversible Alembic migration `cae76cba3c58`), the
+mapper, and every existing display-name call site (`GET /config`,
+Teaching Assignments, Class Timetable, Teacher Timetable) updated to
+derive their one public `name`/`teacher_name` string from
+`teacher.full_name` -- no public API gained `first_name`/`last_name`
+fields, no Teacher CRUD/write path was added, and zero frontend files
+changed. Live-validated against the real dev database (both the
+canonical pilot and the local review dataset, `pg_dump`-backed up
+first) and the separate test database: existing teacher names resolve
+unchanged through the running app's endpoints post-migration, and the
+downgrade/upgrade round trip is exact; both databases left on the new
+head. Test gate: `tests_web` 147/147; core `tests -m "not slow"`
+199 passed/5 deselected (194 pre-existing + 5 new in the new
+`tests/test_people.py`, covering `full_name` behavior and mapper
+round-tripping); frontend 185/185, build clean; Alembic: exactly one
+new head (`cae76cba3c58`), current == head, no drift. Explicitly not
+part of Slice A, real future work: Teacher/Classes/Subjects CRUD
+endpoints and write services, School Setup UI, exposing
+`first_name`/`last_name` on any public API response, real-school data
+entry, and auth/user integration. The broader Real-School Setup MVP is
+**not** complete -- this is Slice A only. Next implementation slice
+per the approved setup contract: **Slice B -- reference-data write
+foundation + Teacher CRUD** (not started).

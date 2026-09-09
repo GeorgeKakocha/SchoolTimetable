@@ -1837,3 +1837,75 @@ this implementation followed them as given.
     - No persistence schema change; Alembic head unchanged at
       `01b2ae564170`. No frontend/React Router work -- Phase 3C.3 is
       still not started.
+
+37. **Owner Decision -- Teacher identity is `first_name`/`last_name`,
+    never a single `name` (LOCKED; Real-School Setup MVP Slice A is
+    IMPLEMENTED, REVIEWED, COMMITTED, and MERGED to `main` at commit
+    `4775684` "feat: split teacher name fields" -- CLOSED. Not
+    pushed.).**
+    The domain `Teacher` gains
+    `first_name: str` and `last_name: str` as **both required**
+    constructor arguments -- no dataclass default papers over the old
+    single-`name` shape, and every construction site across `src/`,
+    `tests/`, and `tests_web/` was migrated to pass both explicitly.
+    Migrated legacy rows may legitimately carry an explicit
+    `last_name=""` (the migration backfills it that way, non-
+    heuristically, to preserve the old single-token display name
+    byte-for-byte) -- that is a fact about persisted data, never a
+    constructor convenience; the future Teacher CRUD (Slice B) owns
+    real create/update input validation for genuinely new teachers.
+    This replaces the former single `name` field, plus a derived
+    `full_name` property (trims each part,
+    joins non-empty parts with exactly one space, never a trailing or
+    double space) that is now the *one* authoritative display name.
+    Every existing user-facing read contract that used to expose the
+    old single `name`/`teacher_name` string (`GET /config`'s
+    `TeacherResponse`, Teaching Assignments' `teacher_name` and
+    `TeacherWorkload.teacher_name`, Class Timetable's `teacher_name`,
+    Teacher Timetable's top-level `teacher_name`) continues to expose
+    exactly one resolved string, now sourced from `teacher.full_name`
+    -- Slice A adds zero first_name/last_name fields to any public API
+    response (that is Slice B's job, if and when it happens) and
+    changes zero frontend files (confirmed: `git diff --stat --
+    frontend/src` empty).
+
+    The ORM `teacher` table gains `first_name TEXT NOT NULL`/
+    `last_name TEXT NOT NULL`, replacing the dropped `name` column, via
+    a new Alembic migration (`cae76cba3c58`, `down_revision =
+    '01b2ae564170'`) that is deliberately staged and reversible --
+    unlike Decision #33's fail-closed `role` migration, this one has
+    real pre-existing data to preserve: add both columns nullable ->
+    backfill (`first_name = name`, `last_name = ''`, scoped to
+    `teacher` only) -> `NOT NULL` -> drop `name`; downgrade reverses
+    this exactly, rebuilding `name` via the identical whitespace-safe
+    trim-and-join SQL that mirrors `full_name`'s own logic, so every
+    pre-existing synthetic teacher name (`"Teacher Math"`, `"Teacher
+    History"`, `"Teacher German"`, ...) round-trips byte-for-byte
+    through upgrade -> downgrade -> upgrade. No heuristic first/last
+    splitting was attempted or wanted. Live-validated this session
+    against the real dev database (`school_timetable`, both the
+    canonical `synthetic-school`/`ay-2026` pilot and the local-only
+    `synthetic-review-school`/`ay-review-2026` review dataset, backed
+    up via `pg_dump` beforehand) and the separate test database: the
+    running app's `GET /config`, teaching-assignments, class-timetable,
+    and teacher-timetable endpoints all confirmed to return the exact
+    pre-migration teacher names, unchanged, after upgrade; the
+    downgrade/upgrade round trip confirmed exact on the dev database;
+    both databases left on the new head. `tests_web` 147/147 and the
+    core `tests -m "not slow"` suite 199/5 (194 pre-existing + 5 new
+    `tests/test_people.py` cases covering `full_name` with a real
+    first+last, an explicit empty `last_name`, whitespace trimming,
+    `last_name` being a required constructor argument (a missing
+    `last_name` raises `TypeError`), and pre-migration name
+    preservation) both green; frontend 185/185 green, build clean.
+
+    Explicitly out of scope for Slice A (deferred to a later slice, not
+    decided here): Teacher CRUD endpoints/write services, exposing
+    `first_name`/`last_name` on any public API response, Classes/
+    Subjects CRUD, School Setup UI, real-school data entry, any change
+    to `TeachingAssignment` semantics, the solver, or auth/user
+    integration. This decision record covers Slice A only -- **the
+    broader Real-School Setup MVP is NOT complete.** Next slice per the
+    approved setup contract: **Slice B -- reference-data write
+    foundation + Teacher CRUD** (not started, not designed in detail
+    here).
