@@ -49,7 +49,14 @@ from school_timetable.api.schemas import (
     SchoolResponse,
     SubjectProjectionItemResponse,
     SubjectsProjectionResponse,
+    TeacherAvailabilityDayResponse,
+    TeacherAvailabilityExceptionResponse,
+    TeacherAvailabilityPeriodResponse,
+    TeacherAvailabilityProjectionResponse,
     TeacherAvailabilityResponse,
+    TeacherAvailabilityTeacherResponse,
+    TeacherAvailabilityWriteExceptionResponse,
+    TeacherAvailabilityWriteResponse,
     TeacherOptionResponse,
     TeacherResponse,
     TeacherTimetableCellResponse,
@@ -73,6 +80,8 @@ from school_timetable.application.class_section_projection_models import ClassSe
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.application.subject_projection_models import SubjectsProjectionView
+from school_timetable.application.teacher_availability_models import TeacherAvailabilityWriteResult
+from school_timetable.application.teacher_availability_projection_models import TeacherAvailabilityProjectionView
 from school_timetable.application.teacher_projection_models import TeachersProjectionView
 from school_timetable.application.teacher_timetable_models import TeacherTimetableEntry, TeacherTimetableView
 from school_timetable.application.teaching_assignments_projection_models import (
@@ -441,4 +450,46 @@ def subjects_projection_response_from_view(view: SubjectsProjectionView) -> Subj
     return SubjectsProjectionResponse(
         configuration_locked=view.configuration_locked,
         subjects=tuple(SubjectProjectionItemResponse(id=s.id, name=s.name) for s in view.subjects),
+    )
+
+
+# -- Teacher Availability API (Owner Decision #38). ------------------------
+
+
+def teacher_availability_projection_response_from_view(
+    view: TeacherAvailabilityProjectionView,
+) -> TeacherAvailabilityProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- order
+    already resolved in `TeacherAvailabilityProjectionService`
+    (persistence ordinal/index order); this function never re-sorts
+    anything, and never projects an `AVAILABLE` row (already filtered
+    out by the projection service itself)."""
+    return TeacherAvailabilityProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        teachers=tuple(TeacherAvailabilityTeacherResponse(id=t.id, name=t.name) for t in view.teachers),
+        days=tuple(TeacherAvailabilityDayResponse(id=d.id, name=d.name, index=d.index) for d in view.days),
+        periods=tuple(
+            TeacherAvailabilityPeriodResponse(
+                id=p.id, name=p.name, index=p.index, block_id=p.block_id, is_instructional=p.is_instructional,
+            )
+            for p in view.periods
+        ),
+        exceptions=tuple(
+            TeacherAvailabilityExceptionResponse(
+                teacher_id=e.teacher_id, day_id=e.day_id, period_id=e.period_id, status=e.status,
+            )
+            for e in view.exceptions
+        ),
+    )
+
+
+def teacher_availability_write_response_from_result(
+    result: TeacherAvailabilityWriteResult,
+) -> TeacherAvailabilityWriteResponse:
+    return TeacherAvailabilityWriteResponse(
+        teacher_id=result.teacher_id,
+        exceptions=tuple(
+            TeacherAvailabilityWriteExceptionResponse(day_id=e.day_id, period_id=e.period_id, status=e.status)
+            for e in result.exceptions
+        ),
     )

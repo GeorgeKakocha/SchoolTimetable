@@ -39,6 +39,10 @@ from school_timetable.application.generate_schedule_service import GenerateSched
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
 from school_timetable.application.subject_projection_service import SubjectProjectionService
 from school_timetable.application.subject_service import SubjectService
+from school_timetable.application.teacher_availability_projection_service import (
+    TeacherAvailabilityProjectionService,
+)
+from school_timetable.application.teacher_availability_service import TeacherAvailabilityService
 from school_timetable.application.teacher_projection_service import TeacherProjectionService
 from school_timetable.application.teacher_service import TeacherService
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
@@ -54,6 +58,9 @@ from school_timetable.persistence.problem_repository import (
     SqlAlchemySchedulingProblemRepository,
 )
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
+from school_timetable.persistence.teacher_availability_repository import (
+    SqlAlchemyTeacherAvailabilityRepository,
+)
 from school_timetable.persistence.teacher_repository import SqlAlchemyTeacherRepository
 from school_timetable.persistence.teaching_assignment_repository import (
     SqlAlchemyTeachingAssignmentRepository,
@@ -197,5 +204,28 @@ def get_subject_service() -> SubjectService:
     return SubjectService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyActivityRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_teacher_availability_projection_service() -> TeacherAvailabilityProjectionService:
+    """Composes the same two session-factory-backed adapters
+    `ClassTimetableService` uses -- never a request-scoped `Session`
+    (Owner Decision #38)."""
+    return TeacherAvailabilityProjectionService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_teacher_availability_service() -> TeacherAvailabilityService:
+    """Composes `TeacherAvailabilityService`'s three session-factory-backed
+    dependencies -- never a request-scoped `Session`, so
+    `SqlAlchemyTeacherAvailabilityRepository`'s own short
+    lock/reload/validate transactions (Decision #36) stay entirely its
+    own (Owner Decision #38)."""
+    return TeacherAvailabilityService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyTeacherAvailabilityRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

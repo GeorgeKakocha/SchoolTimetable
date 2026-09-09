@@ -94,6 +94,8 @@ def _check_references(problem: SchedulingProblem, index: ProblemIndex) -> list[V
                 {"teacher_id": avail.teacher_id, "day_id": avail.day_id, "period_id": avail.period_id},
             ))
 
+    errors.extend(_check_duplicate_teacher_availability_cells(problem))
+
     for block in problem.reserved_blocks:
         if block.activity_id not in index.activities_by_id:
             errors.append(ValidationError(
@@ -138,6 +140,35 @@ def _check_references(problem: SchedulingProblem, index: ProblemIndex) -> list[V
                 {"fixed_placement_id": fp.id},
             ))
 
+    return errors
+
+
+def _check_duplicate_teacher_availability_cells(problem: SchedulingProblem) -> list[ValidationError]:
+    """Defense-in-depth (Owner Decision #38): an in-memory
+    `SchedulingProblem` could in principle contain two
+    `TeacherAvailability` entries for the identical `(teacher_id,
+    day_id, period_id)` cell -- persistence itself cannot produce this
+    (the table's composite primary key forbids it), but nothing
+    upstream of preflight guarantees it for an arbitrary in-memory/
+    imported problem, and `ProblemIndex.get_availability` would
+    otherwise silently let the last one win. Reported once per
+    duplicated cell, regardless of how many times it repeats or
+    whether the repeated entries agree on `status`."""
+    errors: list[ValidationError] = []
+    seen: set[tuple[str, str, str]] = set()
+    duplicates: set[tuple[str, str, str]] = set()
+    for avail in problem.teacher_availabilities:
+        cell = (avail.teacher_id, avail.day_id, avail.period_id)
+        if cell in seen:
+            duplicates.add(cell)
+        seen.add(cell)
+    for teacher_id, day_id, period_id in sorted(duplicates):
+        errors.append(ValidationError(
+            "DUPLICATE_TEACHER_AVAILABILITY_CELL",
+            f"Teacher {teacher_id!r} has more than one availability entry for slot "
+            f"({day_id!r}, {period_id!r})",
+            {"teacher_id": teacher_id, "day_id": day_id, "period_id": period_id},
+        ))
     return errors
 
 

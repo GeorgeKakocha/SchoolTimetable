@@ -683,3 +683,94 @@ class SubjectInUseErrorResponse(BaseModel):
     code: Literal["SUBJECT_IN_USE"]
     detail: str
     referenced_by: tuple[str, ...]
+
+
+# -- Teacher Availability API (Owner Decision #38). ------------------------
+
+
+class TeacherAvailabilityTeacherResponse(BaseModel):
+    id: str
+    name: str
+
+
+class TeacherAvailabilityDayResponse(BaseModel):
+    id: str
+    name: str
+    index: int
+
+
+class TeacherAvailabilityPeriodResponse(BaseModel):
+    id: str
+    name: str
+    index: int
+    block_id: str
+    is_instructional: bool
+
+
+class TeacherAvailabilityExceptionResponse(BaseModel):
+    """One sparse exception cell -- `status` is always `PREFER_NOT` or
+    `UNAVAILABLE`; `AVAILABLE` is never a member of this response
+    (Owner Decision #38's sparse contract -- represented by a cell's
+    absence, never an explicit row)."""
+
+    teacher_id: str
+    day_id: str
+    period_id: str
+    status: str
+
+
+class TeacherAvailabilityProjectionResponse(BaseModel):
+    configuration_locked: bool
+    teachers: tuple[TeacherAvailabilityTeacherResponse, ...]
+    days: tuple[TeacherAvailabilityDayResponse, ...]
+    periods: tuple[TeacherAvailabilityPeriodResponse, ...]
+    exceptions: tuple[TeacherAvailabilityExceptionResponse, ...]
+
+
+class TeacherAvailabilityExceptionRequest(BaseModel):
+    """One requested exception cell. `status` is deliberately a plain
+    `str`, never a Pydantic `Literal` -- every status value (including
+    `AVAILABLE` and any unrecognized string) must reach the
+    application-level `teacher_availability_rules.validate_replace`
+    validation, so every kind of bad status produces the exact same
+    `INVALID_TEACHER_AVAILABILITY` contract rather than FastAPI's
+    generic, differently-shaped Pydantic validation-error body."""
+
+    day_id: str
+    period_id: str
+    status: str
+
+
+class TeacherAvailabilityReplaceRequest(BaseModel):
+    """PUT request body -- the complete desired sparse exception set
+    for one Teacher. An empty `exceptions` list clears every explicit
+    exception for that Teacher."""
+
+    exceptions: tuple[TeacherAvailabilityExceptionRequest, ...]
+
+
+class TeacherAvailabilityWriteExceptionResponse(BaseModel):
+    """One saved exception cell within a PUT response -- no `teacher_id`
+    (already the write response's own top-level field, so never
+    repeated per cell, unlike the flat multi-teacher projection's
+    `TeacherAvailabilityExceptionResponse`)."""
+
+    day_id: str
+    period_id: str
+    status: str
+
+
+class TeacherAvailabilityWriteResponse(BaseModel):
+    """PUT success body -- the written Teacher's own resolved,
+    authoritative exception set. Never the full page projection --
+    matches `TeacherWriteResponse`'s "hand back the written row's own
+    state" discipline."""
+
+    teacher_id: str
+    exceptions: tuple[TeacherAvailabilityWriteExceptionResponse, ...]
+
+
+class InvalidTeacherAvailabilityErrorResponse(BaseModel):
+    code: Literal["INVALID_TEACHER_AVAILABILITY"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]

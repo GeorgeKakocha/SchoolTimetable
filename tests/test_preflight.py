@@ -188,6 +188,39 @@ def test_fixed_placement_on_unavailable_slot_is_rejected():
     assert "FIXED_PLACEMENT_TEACHER_UNAVAILABLE" in codes
 
 
+def test_duplicate_teacher_availability_cell_same_status_detected():
+    problem = _base_problem(
+        teacher_availabilities=(
+            TeacherAvailability("t1", "mon", "p1", AvailabilityStatus.UNAVAILABLE),
+            TeacherAvailability("t1", "mon", "p1", AvailabilityStatus.UNAVAILABLE),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "DUPLICATE_TEACHER_AVAILABILITY_CELL" in codes
+
+
+def test_duplicate_teacher_availability_cell_conflicting_status_detected():
+    problem = _base_problem(
+        teacher_availabilities=(
+            TeacherAvailability("t1", "mon", "p1", AvailabilityStatus.UNAVAILABLE),
+            TeacherAvailability("t1", "mon", "p1", AvailabilityStatus.PREFER_NOT),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "DUPLICATE_TEACHER_AVAILABILITY_CELL" in codes
+
+
+def test_distinct_teacher_availability_cells_not_flagged_as_duplicate():
+    problem = _base_problem(
+        teacher_availabilities=(
+            TeacherAvailability("t1", "mon", "p1", AvailabilityStatus.UNAVAILABLE),
+            TeacherAvailability("t1", "tue", "p2", AvailabilityStatus.PREFER_NOT),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "DUPLICATE_TEACHER_AVAILABILITY_CELL" not in codes
+
+
 def test_class_occupancy_mismatch_detected():
     # Only 1 weekly period declared for a class that has 40 instructional
     # slots -- nowhere near full occupancy.

@@ -567,3 +567,29 @@ class SubjectInUseError(Exception):
             f"subject {subject_id!r} is still referenced by {list(referenced_by)!r} "
             f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
         )
+
+
+class InvalidTeacherAvailabilityError(Exception):
+    """A `TeacherAvailabilityService.replace_exceptions` request fails
+    input validation (Teacher Availability, Owner Decision #38) --
+    an explicit `AVAILABLE` entry in the requested exception set (the
+    sparse contract requires it to be omitted, never stated), a
+    duplicate `(day_id, period_id)` cell within one request, or an
+    unrecognized status string. Carries the validator's own safe,
+    structured diagnostics as an immutable tuple, exactly like
+    `InvalidTeacherError`/`InvalidClassError`/`InvalidSubjectError` --
+    never an ORM/SQLAlchemy object."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid teacher availability replacement for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )

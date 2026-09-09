@@ -22,6 +22,11 @@ Slice D) is the fourth, narrowly scoped to the user-facing "Subject"
 write surface -- `Activity(kind=ORDINARY)` create/update/delete only,
 never `CLUB` activities and never a `kind` mutation; this is not a
 generic Activity CRUD port and never will be one for Club management.
+`TeacherAvailabilityRepository` (Owner Decision #38) is the fifth,
+narrowly scoped to one mutation -- atomically replacing one Teacher's
+entire sparse `PREFER_NOT`/`UNAVAILABLE` exception set -- never
+per-cell create/update/delete, and never a generic constraint
+repository.
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.teacher_availability_models import TeacherAvailabilityExceptionFields
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import ScheduleEntry, SolverStatus
 
@@ -410,4 +416,45 @@ class ActivityRepository(Protocol):
         ever reached -- the database's own `RESTRICT` foreign keys from
         `teaching_requirement`/`reserved_block` remain a structural
         backstop only, never the primary business rule."""
+        ...
+
+
+class TeacherAvailabilityRepository(Protocol):
+    """Teacher Availability configuration *write* port (Owner Decision
+    #38) -- narrowly scoped to one mutation: atomically reconciling one
+    Teacher's entire sparse exception set, mirroring
+    `TeacherRepository`'s exact lock/recheck/validate discipline
+    (shared via `persistence/configuration_write_lock.py`): resolves
+    the `AcademicYear` surrogate ID; acquires the short exclusive row
+    lock (Owner Decision #36); authoritatively rechecks, under that
+    lock, that no `Schedule` has been generated for this year
+    (`docs/DECISIONS.md` #35) -- raising `application.errors.
+    ConfigurationLockedError` if one has, regardless of what an
+    earlier, un-locked caller precheck found; reloads the current
+    authoritative `SchedulingProblem` under the same lock and invokes
+    the caller-supplied `validate` callback against it (never against
+    a stale, pre-lock snapshot); and only if `validate` does not
+    raise, reconciles the persisted rows and commits, still holding
+    the lock until that commit -- never a partial mutation. This is
+    NOT per-cell create/update/delete -- the complete desired
+    exception set for one Teacher is the unit of mutation, and
+    `AVAILABLE` is never a row this port ever writes."""
+
+    def replace_exceptions(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        teacher_natural_id: str,
+        exceptions: tuple[TeacherAvailabilityExceptionFields, ...],
+        validate: Callable[[SchedulingProblem], None],
+    ) -> None:
+        """Reconciles the persisted `TeacherAvailability` rows for
+        `teacher_natural_id` to match `exceptions` exactly: existing
+        cells no longer desired are deleted, an existing cell whose
+        status changed is updated in place (preserving its `ordinal`),
+        and newly-desired cells are inserted with the next `ordinal`
+        (assigned across the whole `AcademicYear`, sorted by
+        `Day.index`/`Period.index` for deterministic insertion order --
+        never by request order). Raises `SchedulingProblemNotFoundError`
+        if the school/year itself does not resolve."""
         ...
