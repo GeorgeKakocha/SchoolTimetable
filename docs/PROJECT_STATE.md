@@ -1855,3 +1855,58 @@ integration, any frontend production feature. The broader Real-School
 Setup MVP is **not** complete -- this is Slice D only. Next
 implementation slice per the approved setup contract: **Slice E --
 School Setup frontend** (not started).
+
+**Real-School Setup MVP -- Slice E (School Setup frontend): IMPLEMENTED,
+REVIEWED, a local desktop browser sanity pass REVIEWED against the
+live pilot dataset, COMMITTED, and MERGED to `main` at commit
+`8532193` "feat: add school setup frontend" -- CLOSED. Not pushed.**
+One route, `/configuration/setup` -> `SchoolSetupPage`, with
+a third flat nav link ("School Setup", ordered before "Teaching
+Assignments", no "Configuration" dropdown/group) and three local tabs
+(Teachers/Classes/Subjects, WAI-ARIA tablist pattern, no nested tab
+routes, no count badges, exactly one panel mounted at a time). Each
+panel (`TeachersPanel`/`ClassesPanel`/`SubjectsPanel`) is fully
+self-contained against the already-CLOSED Slice B/C/D backend
+contracts, matching `TeachingAssignmentsPage`'s own architecture:
+GET-projection-as-sole-source-of-truth, refetch-after-write (never
+optimistic), identical `SCHEDULING_CONFIGURATION_LOCKED` lock-race
+handling, the existing `.lock-banner` reused verbatim. Create/edit/
+delete deliberately do NOT reuse `AssignmentDrawer` -- a compact
+"+ Add ..." button reveals a contained inline create panel, edit
+switches a row into place, and delete reuses the existing inline
+confirm/cancel pattern (no `window.confirm()`, no new modal). Neither
+the canonical WHOLE_CLASS `ParticipantGroup` (Owner Decision #33) nor
+`Activity.kind`/CLUB rows are ever exposed. `TEACHER_IN_USE`/
+`CLASS_IN_USE`/`SUBJECT_IN_USE` `referenced_by` codes get a
+human-readable mapping (Teaching assignments, Teacher availability,
+Reserved activities, Subgroups, Merged classes) with a safe raw-code
+fallback; `DUPLICATE_CLASS`/`DUPLICATE_SUBJECT` get a plain inline
+message; Teachers has no duplicate-name rule anywhere, client-side or
+otherwise (proven by a passing two-identical-names test). Zero
+backend production change, zero migration, zero
+`TeachingAssignmentsPage`/`AssignmentDrawer` change (its 55 tests
+reconfirmed unmodified), zero new Owner Decisions -- **Owner Decision
+#38 remains unused.** Test gate: frontend `npm test` 259 passed (185
+pre-existing + 74 new across API-client/panel/page tests), `npm run
+build` clean; backend core `tests -m "not slow"` 283 passed/5
+deselected (unchanged); canonical single-process `tests_web` 254
+passed (unchanged); Alembic unchanged at `cae76cba3c58`, single head,
+no drift. A local desktop browser sanity pass (not the full Slice F
+acceptance workflow) was run, twice, against the real dev server
+pointed at the canonical, locked `synthetic-school`/`ay-2026` pilot
+dataset -- read-only inspection only, no mutation attempted --
+confirming page hierarchy, tab bar, lock banner, all three tabs' real
+data (Subjects correctly ORDINARY-only, no Club rows), and live
+keyboard tab activation all render/behave correctly. The 640px
+narrow-width responsive CSS was code-reviewed but not confirmed via a
+live resized-browser screenshot in this slice -- a non-blocking
+limitation; full responsive browser confirmation remains available for
+Slice F if browser tooling permits. **Slice F (the full real-school
+browser create/edit/delete acceptance workflow) remains NOT
+executed.** Explicitly not part of Slice E: Clubs, Reserved Blocks,
+Teacher Availability, Subgroups, Merged Classes, rooms/resources,
+calendar/day-period editing, School/AcademicYear CRUD, users/auth,
+solver configuration. The broader Real-School Setup MVP is **not**
+complete -- this is Slice E only. Next slice per the approved setup
+contract: **Slice F -- real-school browser acceptance / setup smoke**
+(not started).

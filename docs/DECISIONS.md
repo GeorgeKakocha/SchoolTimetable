@@ -2233,3 +2233,94 @@ Activity-Kind tests 26/26, both reconfirmed unregressed; frontend
 status only -- **the broader Real-School Setup MVP remains NOT
 complete.** Next slice per the approved setup contract: **Slice E --
 School Setup frontend** (not started, not designed in detail here).
+
+---
+
+**Slice E (School Setup frontend) update: IMPLEMENTED, REVIEWED, a
+local desktop browser sanity pass REVIEWED against the live pilot
+dataset, COMMITTED, and MERGED to `main` at commit `8532193` "feat:
+add school setup frontend" -- CLOSED. Not pushed. Zero new Owner
+Decisions required; Owner Decision #38 remains unused.** The design
+gate for this slice (`docs/DECISIONS.md`'s own
+prior entry) approved two explicit deviations from its own sketched
+recommendations, both ordinary implementation choices, not Owner
+Decisions: (1) the existing flat top nav gains a third link, "School
+Setup", ordered before "Teaching Assignments" -- no "Configuration"
+dropdown/group container was introduced; the `/configuration/...` URL
+prefix stays conceptual only; (2) create/edit/delete do not reuse
+`AssignmentDrawer`'s slide-in dialog -- Teachers/Classes/Subjects use a
+compact "+ Add ..." button that reveals a contained inline create
+panel (Save/Cancel, collapsing on success), inline row-level edit
+(the row itself switches into editable fields), and the same inline
+confirm/cancel delete pattern `TeachingAssignmentsPage` already uses
+(no `window.confirm()`, no new modal component).
+
+One route, `/configuration/setup` -> `SchoolSetupPage`, with three
+local tabs (Teachers/Classes/Subjects, no nested tab routes, no count
+badges) implementing the WAI-ARIA "Tabs (Automatic Activation)"
+pattern (`role="tablist"/"tab"/"tabpanel"`, roving `tabIndex`,
+ArrowLeft/ArrowRight/Home/End both moving focus and activating).
+Exactly one panel is ever mounted at a time -- switching tabs
+unmounts the previous panel and mounts the next, which performs its
+own independent GET; no cross-tab cache, no global store, no
+requirement that all three resource projections load on initial page
+view. Each panel (`TeachersPanel`/`ClassesPanel`/`SubjectsPanel`) is
+fully self-contained, matching `TeachingAssignmentsPage`'s own
+architecture: its own load/create/edit/delete state; its own GET
+projection as sole source of truth, refetched (never hand-patched)
+after every successful write; `SCHEDULING_CONFIGURATION_LOCKED`
+lock-race handling identical to Teaching Assignments' own discipline
+(refetch into the now-locked, read-only state rather than leaving a
+stale form open). `configuration_locked` keeps every record visible
+and disables (never hides) Add/Edit/Delete, with the existing
+`.lock-banner` reused verbatim. `TEACHER_IN_USE`/`CLASS_IN_USE`/
+`SUBJECT_IN_USE` `referenced_by` codes are mapped to the same
+human-readable labels the design gate specified (Teaching assignments,
+Teacher availability, Reserved activities, Subgroups, Merged classes),
+with a safe raw-code fallback for forward compatibility;
+`DUPLICATE_CLASS`/`DUPLICATE_SUBJECT` get a plain inline message;
+Teachers intentionally has no duplicate-name rule, client-side or
+otherwise (Slice B's own locked contract), proven by a passing test
+that creates two identically-named teachers successfully. Neither the
+canonical WHOLE_CLASS `ParticipantGroup` (Owner Decision #33) nor
+`Activity.kind`/CLUB rows are exposed anywhere in the Classes/Subjects
+panels -- confirmed both by code review and by dedicated tests
+asserting the rendered page text never contains the internal id/role/
+`ORDINARY`/`CLUB` strings. No backend response body was redesigned;
+every request/response shape matches Slices B/C/D's already-CLOSED
+contracts exactly. Zero schema/migration impact, zero solver change,
+zero `TeachingAssignmentsPage`/`AssignmentDrawer` production change
+(its own 55 tests reconfirmed passing unmodified).
+
+Test gate: frontend `npm test` 259 passed (185 pre-existing + 74 new:
+2 route/nav + 7 `teachers.ts` + 8 `classes.ts` + 9 `subjects.ts` API-
+client tests + 14 `TeachersPanel` + 14 `ClassesPanel` + 14
+`SubjectsPanel` + 9 `SchoolSetupPage` tests), `npm run build` clean
+(`tsc --noEmit` + `vite build`); backend core `tests -m "not slow"`
+283 passed/5 deselected (unchanged -- zero backend production code
+touched); canonical single-process `tests_web` 254 passed (unchanged);
+Alembic unchanged at `cae76cba3c58`, single head, no drift. A local
+manual browser sanity pass was run (twice, once before closure and
+once again during closure) against the real, running dev server
+(`http://localhost:5173/configuration/setup`) pointed at the
+canonical, locked `synthetic-school`/`ay-2026` pilot dataset --
+read-only inspection only, no mutation attempted against it: page
+hierarchy, tab bar, lock banner, and all three tabs' real data
+(Teachers/Classes/Subjects, ORDINARY-only Subjects with no Club rows)
+rendered correctly, and live ArrowRight keyboard activation was
+confirmed to move focus and switch tabs correctly. The 640px
+narrow-width stacked-row CSS was reviewed by code only -- a live
+resized-browser screenshot was not reliably obtainable during this
+slice's review; this is a non-blocking limitation, and full responsive
+browser confirmation remains available to fold into Slice F if browser
+tooling permits. This was a Slice E visual **sanity** check only, not
+the Slice F real-school acceptance workflow -- Slice F (full
+create/edit/delete/referenced-delete acceptance across a real browser
+session) remains **NOT executed**. Explicitly not part of Slice E:
+Clubs, Reserved Blocks, Teacher Availability, Subgroups, Merged
+Classes, rooms/resources, calendar/day-period editing, School/
+AcademicYear CRUD, users/auth, solver configuration, any change to
+`TeachingAssignmentsPage`. The broader Real-School Setup MVP is
+**not** complete -- this is Slice E only. Next slice per the approved
+setup contract: **Slice F -- real-school browser acceptance / setup
+smoke** (not started).
