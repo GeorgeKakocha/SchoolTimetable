@@ -117,8 +117,25 @@ describe("App routing", () => {
 
     const links = await screen.findAllByRole("link");
     const labels = links.map((link) => link.textContent);
-    expect(labels).toEqual(["Timetable", "School Setup", "Teaching Assignments"]);
+    expect(labels).toEqual(["Timetable", "School Setup", "Teacher Availability", "Teaching Assignments"]);
     expect(screen.getAllByRole("link", { name: "School Setup" })).toHaveLength(1);
+  });
+
+  it("renders the Teacher Availability page at /configuration/teacher-availability", async () => {
+    window.history.pushState({}, "", "/configuration/teacher-availability");
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Teacher Availability", level: 1 });
+  });
+
+  it("shows exactly one Teacher Availability nav link", async () => {
+    window.history.pushState({}, "", "/timetable");
+
+    render(<App />);
+
+    await screen.findAllByRole("link");
+    expect(screen.getAllByRole("link", { name: "Teacher Availability" })).toHaveLength(1);
   });
 
   it("renders the Teaching Assignments page at /configuration/teaching-assignments", async () => {

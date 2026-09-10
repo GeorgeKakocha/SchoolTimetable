@@ -1072,3 +1072,251 @@ select:focus-visible {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
 }
+
+/* -- Screen-reader-only helper (Teacher Availability Slice B) ----------
+   Visually hidden but still reachable by assistive tech -- unlike
+   `display:none`, which removes an element from the accessibility
+   tree entirely. Used only for the one shared `aria-live` status
+   region; deliberately not used for the responsive desktop/mobile
+   matrix branches below, which are genuinely `display:none` (and
+   therefore correctly unreachable) at whichever width doesn't apply. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* -- Teacher Availability (Owner Decision #38, Slice B) -----------------
+   Reuses the existing table/button/banner/empty-state vocabulary
+   established by School Setup/Teaching Assignments rather than
+   introducing a second visual language or a CSS variable/token
+   system. */
+
+.availability-page .availability-teacher-selector {
+  margin-bottom: 1rem;
+}
+
+.availability-page .availability-teacher-selector label {
+  display: block;
+  margin: 0;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.availability-page .availability-teacher-selector select {
+  margin-left: 0.5rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.availability-dirty-hint {
+  margin: 0.5rem 0 0;
+  color: #5a4a1a;
+  font-size: 0.85em;
+  font-style: italic;
+}
+
+/* -- Legend: a low-emphasis informational surface, visually distinct
+   from the editable matrix below it (never tooltip-only). */
+.availability-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0 0 1.25rem;
+  padding: 0.6rem 0.85rem;
+  background-color: #f7f8fa;
+  border: 1px solid #dcdfe4;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.availability-legend-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.availability-legend-symbol {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.availability-legend-text {
+  color: #4a4a4a;
+}
+
+/* -- Cell state colors, shared by the legend and every grid cell --
+   symbol + text + background/border, never color alone. */
+.availability-cell-available {
+  color: #1a1a1a;
+}
+
+.availability-cell-prefer-not {
+  color: #5a4a1a;
+}
+
+.availability-cell-unavailable {
+  color: #8a3a3a;
+}
+
+/* -- Desktop matrix: Period rows x Day columns, matching the existing
+   TimetableGrid orientation exactly. */
+.availability-table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.availability-table th,
+.availability-table td {
+  border: 1px solid #e2e2e2;
+  padding: 0.35rem 0.4rem;
+  vertical-align: middle;
+  text-align: left;
+  overflow-wrap: break-word;
+}
+
+.availability-table thead th {
+  background-color: #f2f2f2;
+  border-bottom: 2px solid #b0b0b0;
+  font-size: 0.82em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.col-availability-period {
+  width: 14%;
+}
+
+.availability-cell {
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.3rem;
+  border: 1px solid #c2c2c2;
+  border-radius: 3px;
+  background-color: #ffffff;
+  font-size: 0.82em;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.availability-cell.availability-cell-available {
+  border-color: #c2c2c2;
+  background-color: #ffffff;
+}
+
+.availability-cell.availability-cell-prefer-not {
+  border-color: #e8d9a0;
+  background-color: #fdf6e3;
+}
+
+.availability-cell.availability-cell-unavailable {
+  border-color: #d9b8b8;
+  background-color: #fdf2f2;
+}
+
+.availability-cell:not(:disabled):hover {
+  filter: brightness(0.97);
+}
+
+.availability-cell:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.availability-cell:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.availability-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.availability-action-bar button[type="button"]:not(.btn-primary) {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #b0b0b0;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #333333;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.availability-action-bar button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.availability-save-error {
+  margin: 0;
+  color: #b00020;
+  font-size: 0.88em;
+}
+
+/* -- Responsive: desktop matrix visible by default; per-Day stacked
+   sections hidden by default, swapped at 640px. Both branches always
+   exist in the DOM (`AvailabilityGrid` renders them unconditionally)
+   -- a plain `display:none` toggle, no JavaScript viewport listener,
+   and a genuinely hidden branch is correctly removed from both the
+   keyboard tab order and the accessibility tree by `display:none`
+   itself. */
+.availability-mobile-days {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .availability-desktop-matrix {
+    display: none;
+  }
+
+  .availability-mobile-days {
+    display: block;
+  }
+
+  .availability-mobile-day {
+    margin-bottom: 1rem;
+    border: 1px solid #e2e2e2;
+    border-radius: 4px;
+    padding: 0.6rem 0.75rem;
+  }
+
+  .availability-mobile-day-heading {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+  }
+
+  .availability-mobile-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid #ececec;
+  }
+
+  .availability-mobile-row:last-child {
+    border-bottom: none;
+  }
+
+  .availability-mobile-period-name {
+    font-size: 0.88em;
+    color: #333333;
+    flex: 1;
+  }
+
+  .availability-mobile-row .availability-cell {
+    width: auto;
+    min-width: 8rem;
+  }
+}

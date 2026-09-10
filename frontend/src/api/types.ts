@@ -394,3 +394,80 @@ export interface SubjectWriteResponse {
 export interface SubjectDeleteResponse {
   deleted_id: string;
 }
+
+// -- GET /schools/{school_id}/years/{year_id}/teacher-availability -------
+// -- PUT .../teacher-availability/{teacher_id} ----------------------------
+//
+// Mirrors the Owner Decision #38 Teacher Availability backend contract
+// exactly (`docs/DECISIONS.md`, `api/schemas.py`'s
+// `TeacherAvailabilityProjectionResponse`/`TeacherAvailabilityTeacherResponse`/
+// `TeacherAvailabilityDayResponse`/`TeacherAvailabilityPeriodResponse`/
+// `TeacherAvailabilityExceptionResponse`/`TeacherAvailabilityReplaceRequest`/
+// `TeacherAvailabilityWriteResponse`). This is a dedicated *sparse
+// exception* projection -- `TeacherAvailabilityExceptionStatus` below is
+// deliberately narrower than the full three-state domain model: the
+// dedicated GET's `exceptions` array and every PUT request body can only
+// ever contain `PREFER_NOT`/`UNAVAILABLE` -- `AVAILABLE` is represented
+// purely by a cell's absence, never an explicit member of either wire
+// shape. `AvailabilityCellState` (the three-value union) exists
+// separately, for the frontend's own *synthesized* UI cell state only --
+// never sent over the wire.
+
+export type TeacherAvailabilityExceptionStatus = "PREFER_NOT" | "UNAVAILABLE";
+
+export type AvailabilityCellState = "AVAILABLE" | TeacherAvailabilityExceptionStatus;
+
+export interface TeacherAvailabilityTeacher {
+  id: string;
+  name: string;
+}
+
+export interface TeacherAvailabilityDay {
+  id: string;
+  name: string;
+  index: number;
+}
+
+export interface TeacherAvailabilityPeriod {
+  id: string;
+  name: string;
+  index: number;
+  block_id: string;
+  is_instructional: boolean;
+}
+
+export interface TeacherAvailabilityException {
+  teacher_id: string;
+  day_id: string;
+  period_id: string;
+  status: TeacherAvailabilityExceptionStatus;
+}
+
+export interface TeacherAvailabilityProjectionResponse {
+  configuration_locked: boolean;
+  teachers: TeacherAvailabilityTeacher[];
+  days: TeacherAvailabilityDay[];
+  periods: TeacherAvailabilityPeriod[];
+  exceptions: TeacherAvailabilityException[];
+}
+
+export interface TeacherAvailabilityExceptionRequestItem {
+  day_id: string;
+  period_id: string;
+  status: TeacherAvailabilityExceptionStatus;
+}
+
+export interface TeacherAvailabilityReplaceRequest {
+  exceptions: TeacherAvailabilityExceptionRequestItem[];
+}
+
+export interface TeacherAvailabilityWriteExceptionItem {
+  day_id: string;
+  period_id: string;
+  status: TeacherAvailabilityExceptionStatus;
+}
+
+export interface TeacherAvailabilityWriteResponse {
+  teacher_id: string;
+  exceptions: TeacherAvailabilityWriteExceptionItem[];
+}

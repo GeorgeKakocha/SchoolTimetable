@@ -18,6 +18,13 @@ import { loadAppConfig } from "../config/appConfig";
  * dropdown/group container; the `/configuration/...` URL prefix stays a
  * conceptual grouping only, not a new navigation construct.
  *
+ * Teacher Availability Slice B (Owner Decision #38) adds "Teacher
+ * Availability" as a fourth flat link, ordered between "School Setup"
+ * and "Teaching Assignments" -- it is a scheduling-constraint surface
+ * on top of School Setup's reference data, and should itself be known
+ * before workload (Teaching Assignments) is entered; same flat-nav
+ * discipline, no new navigation construct.
+ *
  * Owns the ONE visible "school · academic year" context line (never a
  * raw natural ID) -- `TimetablePage` deliberately no longer renders its
  * own copy of this text, so it appears exactly once regardless of which
@@ -93,6 +100,9 @@ function AppShell() {
           </NavLink>
           <NavLink to="/configuration/setup" className={navLinkClassName}>
             School Setup
+          </NavLink>
+          <NavLink to="/configuration/teacher-availability" className={navLinkClassName}>
+            Teacher Availability
           </NavLink>
           <NavLink to="/configuration/teaching-assignments" className={navLinkClassName}>
             Teaching Assignments

@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AppShell from "./components/AppShell";
 import TimetablePage from "./pages/TimetablePage";
 import SchoolSetupPage from "./pages/SchoolSetupPage";
+import TeacherAvailabilityPage from "./pages/TeacherAvailabilityPage";
 import TeachingAssignmentsPage from "./pages/TeachingAssignmentsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
@@ -22,6 +23,7 @@ function App() {
           <Route path="/" element={<Navigate to="/timetable" replace />} />
           <Route path="/timetable" element={<TimetablePage />} />
           <Route path="/configuration/setup" element={<SchoolSetupPage />} />
+          <Route path="/configuration/teacher-availability" element={<TeacherAvailabilityPage />} />
           <Route path="/configuration/teaching-assignments" element={<TeachingAssignmentsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
