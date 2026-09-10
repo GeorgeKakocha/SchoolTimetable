@@ -2636,10 +2636,42 @@ project dependency) driven directly via Chrome DevTools Protocol
 already-installed `websockets`/`requests`) against the same live app --
 confirmed `innerWidth: 375, clientWidth: 360`, mobile slot layout shown/
 desktop hidden, zero overflow within the Reserved Activities editor's
-own DOM. (A 93px overflow was found and traced exclusively to the
-shared `AppShell` top nav bar, reproduced identically on the
-pre-existing, unrelated Teacher Availability page -- confirmed
-pre-existing and out of this feature's scope, not fixed here.)
+own DOM. A 93px page-level overflow was found (`clientWidth 360` vs
+`scrollWidth 453`), traced exclusively to the shared `AppShell` top nav
+bar, reproduced identically on the pre-existing, unrelated Teacher
+Availability page.
+
+**Correction (post-closure technical review):** that overflow was
+originally classified "pre-existing/out-of-scope" and Reserved C was
+closed anyway (commit `072aea7`) -- **too permissive** a reading of
+Reserved C's own explicit "no material page-level horizontal overflow"
+criterion, which applies regardless of whether the responsible markup
+is Reserved-Activities-owned or shared shell chrome. It was therefore
+a real acceptance blocker, corrected in follow-up commit `865138d`
+("fix: wrap mobile app navigation" -- `865138dabbb7f1bec395aa64d624c530ea115880`):
+one `@media (max-width:640px) { .app-nav { flex-wrap: wrap; gap:
+0.6rem 1rem; } }` rule; `AppShell.tsx` unchanged; all five nav links
+remain directly visible, in order, wrapping cleanly with no hamburger/
+dropdown/JS viewport handling; desktop unaffected above 640px. One new
+regression test was added (`App.test.tsx`, confirming the `app-nav`
+CSS hook and all five links remain present). No Reserved Activities
+business logic was ever defective.
+
+**Re-run narrow acceptance after the fix** (zero tolerance for the
+previous overflow): Reserved Activities/Teacher Availability/School
+Setup all measured `375 / 360 / 360` (innerWidth/clientWidth/
+scrollWidth) -- `scrollWidth` exactly equals `clientWidth` on all
+three, zero overflow. All five nav links visible/ordered on every
+page, clean wrap, no clipping, no overlap with page content. Reserved
+Activities editor (opened against the already-existing unlocked
+`reserved-activity-review-school` dataset -- the locked
+`reserved-activity-c-acceptance-school` was correctly left untouched):
+zero whole-page overflow, mobile layout shown/desktop hidden, Save/
+Cancel reachable, Cancel exercised without saving. Desktop @1280px
+reconfirmed: nav one row, matrix visible, mobile hidden -- zero
+desktop regression. This is a corrective re-run of the one failed
+gate, not a Reserved C restart -- every other piece of Reserved C
+evidence below remained valid and was not repeated.
 
 A deliberate 3-teacher dataset construction (Teacher C, added solely to
 keep the acceptance dataset solver-feasible once Teacher A is both
@@ -2684,15 +2716,32 @@ eleven (including `reserved-activity-review-school`'s own `ReservedBlock`
 count of exactly 5, matching its already-closed A2 record); no write was
 ever directed at any of them; never claimed as byte-for-byte/row-by-row.
 
-Full regression reconfirmed: core 398 passed/5 deselected, `tests_web`
-396 passed/zero skips, frontend 402 passed/25 files/zero skips, build
-clean, Alembic `cae76cba3c58`/one head/no drift. Zero production/test/
-frontend file changed (the only local change, `frontend/.env.local`'s
-gitignored school/year override, was restored to `synthetic-school`/
-`ay-2026`).
+Full regression reconfirmed after the corrective mobile-nav fix
+(current baseline, superseding this session's pre-fix numbers): core
+398 passed/5 deselected, `tests_web` 396 passed/zero skips,
+**frontend 403 passed/25 files/zero skips** (402 + one new
+`App.test.tsx` nav-CSS-hook regression test -- not 403 "new tests"),
+build clean, Alembic `cae76cba3c58`/one head/no drift. Zero production/
+test/frontend file changed by the acceptance steps themselves (the
+only local change those steps made, `frontend/.env.local`'s gitignored
+school/year override, was restored to `synthetic-school`/`ay-2026`
+after each use); the two-file mobile-nav fix is tracked separately as
+its own commit, `865138d`, and is the one production change this
+closure required.
 
 **Owner Decision #39 remains NOT created** -- the 3-teacher dataset
 shape was a test-fixture engineering decision, never a product fork.
+
+**Closure history, corrected forward, not erased:** `072aea7`
+recorded the *first* phase closure; subsequent review found its
+narrow-acceptance evidence applied Reserved C's "no material
+page-level horizontal overflow" criterion too permissively (the 93px
+`AppShell` nav overflow was waved through as pre-existing/out-of-scope
+rather than treated as the blocker it was). Fix commit `865138d`
+closed that one remaining defect; no other Reserved C evidence was
+ever invalid or repeated. With the gap corrected and re-verified at a
+genuine <=640px viewport, **the `072aea7` phase closure is
+retroactively valid.**
 
 **RESERVED ACTIVITIES PHASE CLOSED.** A1, A2, B, and C are all closed/
 passed. Shipped: Special Activity catalog; fixed Reserved Activity

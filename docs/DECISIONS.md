@@ -3591,15 +3591,73 @@ and Time-slots fieldset (with a correctly-labelled
 editor's own DOM subtree found **zero elements overflowing the
 viewport**. Save/Cancel remained fully on-screen and reachable. Desktop
 width (1280px) was re-confirmed in the same session: matrix visible,
-mobile hidden. A **93px overflow was found, but traced exclusively to
-the shared `AppShell` top nav bar** (`.app-nav-link`), not to any
-Reserved Activities content -- confirmed by reproducing the identical
-overflow on the pre-existing, unrelated Teacher Availability page,
-proving it predates this feature and was never in scope for any
-Reserved Activities design gate (the top nav has never had narrow-width
-collapsing behavior, by original `AppShell` design). This is recorded
-transparently as a pre-existing, out-of-scope observation, not fixed
-here and not treated as a Reserved C blocker.
+mobile hidden. A **93px page-level overflow was found** (`clientWidth
+360` vs `scrollWidth 453`), traced exclusively to the shared `AppShell`
+top nav bar (`.app-nav-link`), not to any Reserved Activities content
+-- confirmed by reproducing the identical overflow on the pre-existing,
+unrelated Teacher Availability page, proving it predated this feature.
+
+**Correction (post-closure technical review):** the session that
+produced this evidence classified that 93px overflow as
+"pre-existing/out-of-scope" and closed Reserved C anyway. That
+classification was **too permissive** -- Reserved C's own explicit
+acceptance criterion required no material page-level horizontal
+overflow at a genuine <=640px viewport, full stop, regardless of
+whether the responsible markup happened to be Reserved-Activities-owned
+or shared `AppShell` chrome the feature merely renders underneath. The
+overflow was therefore a **real Reserved C acceptance blocker**, not an
+acceptable pre-existing condition, and required a corrective fix before
+Reserved C could be validly considered passed. No Reserved Activities
+business logic was ever defective -- the defect was entirely in shared
+`AppShell` responsive layout (`.app-nav` had no `flex-wrap`, so its
+five flat links stayed on one un-wrapping row wider than a narrow
+viewport). This was corrected in a dedicated follow-up commit,
+`865138d` (`865138dabbb7f1bec395aa64d624c530ea115880`, "fix: wrap
+mobile app navigation"): a single `@media (max-width:640px) { .app-nav
+{ flex-wrap: wrap; gap: 0.6rem 1rem; } }` rule -- all five links remain
+directly visible and in the same order, wrapping cleanly into multiple
+rows at narrow widths with no hidden items, no hamburger/dropdown, and
+no JS viewport handling; desktop layout, order, and appearance are
+completely unaffected above 640px. `AppShell.tsx` markup was unchanged
+-- purely a CSS fix. One new regression test was added
+(`App.test.tsx`, confirming the nav's `app-nav` CSS hook and all five
+links remain present) -- not a rewrite of the existing nav-order/
+active-state tests, which already covered link count/order/active
+state and needed no change.
+
+**Re-run narrow acceptance (after the fix, real CDP-driven Chrome,
+same mechanism as above), with zero tolerance for the previous
+overflow:**
+- Reserved Activities @375: `innerWidth 375 / clientWidth 360 /
+  scrollWidth 360`.
+- Teacher Availability @375: `innerWidth 375 / clientWidth 360 /
+  scrollWidth 360`.
+- School Setup @375: `innerWidth 375 / clientWidth 360 / scrollWidth
+  360`.
+- All three: `scrollWidth` exactly equals `clientWidth` -- **zero**
+  page-level horizontal overflow, not merely reduced.
+- All five flat-nav links present, correct order, on every page; the
+  nav wraps cleanly into multiple rows with no clipping and no overlap
+  with page content (nav bottom edge above the page content's own top
+  edge on every page checked).
+- Reserved Activities editor (opened against an unlocked, already-
+  existing local dataset, `reserved-activity-review-school` --
+  `reserved-activity-c-acceptance-school` was correctly left
+  untouched/still locked): a full-document scan (not merely the
+  editor's own subtree) found zero overflowing elements; mobile
+  per-Day slot layout shown, desktop matrix hidden; Save/Cancel both
+  reachable within the viewport; Cancel exercised without saving.
+- Desktop @1280px reconfirmed in the same corrective session: nav
+  stays in exactly one row, exact link order preserved, desktop matrix
+  visible, mobile layout hidden -- zero desktop regression.
+
+This is a genuine corrective re-run of the one failed acceptance gate,
+not a restart of Reserved C: every other piece of Reserved C evidence
+recorded above and below (CRUD/collision/validation proofs, solver
+generation, independent verifier, timetable placements, exact-full
+occupancy, `ScheduleEntry` persistence, UI/API lock, pre-existing
+dataset safety) remains valid as originally recorded and was
+deliberately not repeated.
 
 **Live acceptance evidence (this session, real browser + real API +
 direct PostgreSQL, `synthetic-school` and all other pre-existing
@@ -3685,19 +3743,44 @@ A2 acceptance record precisely. No write request was ever directed at
 any of these datasets during Reserved B or C. This was never claimed
 nor performed as a byte-for-byte or row-by-row comparison.
 
-Full regression reconfirmed unchanged after all of the above: core 398
-passed/5 deselected, `tests_web` 396 passed/zero skips, frontend 402
-passed/25 files/zero skips, build clean, Alembic `cae76cba3c58`/one
-head/no drift. Zero production/test/frontend file changed by Reserved C
-(the only local change made -- `frontend/.env.local`'s gitignored
-`VITE_SCHOOL_ID`/`VITE_ACADEMIC_YEAR_ID`, used solely to point the local
-dev frontend at the acceptance dataset -- was restored to its original
-`synthetic-school`/`ay-2026` values before this entry was written).
+Full regression reconfirmed after the corrective mobile-nav fix (current
+baseline, superseding the pre-fix numbers this session originally
+observed): core 398 passed/5 deselected, `tests_web` 396 passed/zero
+skips, **frontend 403 passed/25 files/zero skips** (402 + the one new
+`App.test.tsx` nav-CSS-hook regression test added by the fix commit --
+not 403 "new tests"), build clean, Alembic `cae76cba3c58`/one head/no
+drift. Zero production/test/frontend file changed by the acceptance
+*steps themselves* (browser interaction, generation, lock checks,
+snapshots -- the only local change those steps made was
+`frontend/.env.local`'s gitignored `VITE_SCHOOL_ID`/
+`VITE_ACADEMIC_YEAR_ID`, restored to `synthetic-school`/`ay-2026`
+after each use); the two-file mobile-nav fix itself is tracked
+separately as its own commit, `865138d`, exactly as recorded above --
+it is the one and only production change this closure required.
 
 **Owner Decision #39 remains NOT created** -- the 3-teacher dataset
 construction was a test-fixture engineering decision to keep the
 acceptance dataset genuinely solver-feasible, never a product-semantics
 question.
+
+**Closure history, corrected forward, not erased:** commit `072aea7`
+("docs: close reserved activities phase") recorded the *first* Reserved
+Activities phase closure. A subsequent technical review found that
+closure's own narrow-acceptance evidence had applied Reserved C's
+"no material page-level horizontal overflow" criterion too
+permissively -- the 93px `AppShell` nav overflow documented above was
+waved through as "pre-existing/out-of-scope" rather than treated as
+the acceptance blocker it actually was under that criterion. The
+mobile-nav fix commit `865138d` closed that one remaining defect; no
+other part of Reserved C's original evidence (CRUD/collision/
+validation proofs, solver generation, independent verifier, timetable
+placements, exact-full occupancy, persistence, UI/API lock,
+pre-existing dataset safety) was ever invalid, and none of it was
+repeated -- this was a targeted correction of one acceptance gap, not
+a restart of Reserved C. With that gap corrected and re-verified at a
+genuine, CDP-confirmed <=640px viewport, **Reserved C's acceptance
+criteria are now fully satisfied, and the phase closure `072aea7`
+already recorded is retroactively valid** as of this correction.
 
 **RESERVED ACTIVITIES PHASE CLOSED.** A1 (Special Activity backend),
 A2 (Reserved Activity backend), B (frontend), and C (real acceptance)
