@@ -3925,11 +3925,13 @@ implementation commit `0a61339`. The overall Resources phase remains
 NOT closed. **Next slice: Resources B2 -- Reserved Activity Resource
 integration using aggregate Resource capacity.**
 
-## Resources B2 -- Reserved Activity Resource integration (IMPLEMENTED, not yet closed)
+## RESOURCES B2 -- RESERVED ACTIVITY RESOURCE INTEGRATION CLOSED ON MAIN
 
-**Status: IMPLEMENTED on branch `feature/reserved-activity-resource-b2`.**
-Not a phase closure -- see `docs/PROJECT_STATE.md`'s matching entry for
-the full implementation record.
+**Status: CLOSED ON MAIN.** Implementation commit `e8a3aaf` -- fast-
+forward merged from `feature/reserved-activity-resource-b2` (base
+`4025376`) onto `main`, with a separate docs closure commit recording
+this status. Not pushed to any remote. See `docs/PROJECT_STATE.md`'s
+matching entry for the full implementation record.
 
 **Locked contract:** `ReservedBlock` gained one optional
 `resource_id: str | None`, exposed identically on the Reserved Activity
@@ -3983,3 +3985,20 @@ Availability remains deferred; no eligible-Resource sets, categories,
 or preferred-Resource concept exist; the solver never chooses among
 Resources. Owner Decision #39 remains absent -- no genuine unresolved
 product fork appeared.
+
+**Final verified baselines:** core 479 passed/5 deselected, `tests_web`
+486 passed/zero skips, frontend 428 passed/25 files/zero skips, build
+clean, Alembic `9fbec2126831`/one head/no drift on both databases.
+Confirmed live via a real-browser pass plus a real
+`POST .../schedule/generate` against the existing
+`teacher-crud-review-school` dataset: the aggregate cross-source
+capacity invariant held throughout a genuine 160-entry generated
+schedule, and this exact check is what surfaced the read-back mapper
+defect fixed in this same task.
+
+**RESOURCES B2 -- RESERVED ACTIVITY RESOURCE INTEGRATION CLOSED ON
+MAIN** -- implementation commit `e8a3aaf`. **Resources MVP scope
+(A + B1 + B2) is now functionally complete; formal closure of the
+overall Resources phase is deliberately left to the next product step**
+-- Resource Availability remains an explicitly deferred, not-yet-scoped
+future concern, never a completeness blocker.

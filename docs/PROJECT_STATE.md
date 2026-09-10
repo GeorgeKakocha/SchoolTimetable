@@ -3079,11 +3079,38 @@ confirmed only the expected Teaching-Assignment-related backend/
 frontend/test files changed -- zero domain/solver/verifier/migration/
 dependency/ReservedBlock/Resource-catalog-backend changes.
 
-## Resources B2 -- Reserved Activity Resource integration (IMPLEMENTED, not yet closed)
+## RESOURCES B2 -- RESERVED ACTIVITY RESOURCE INTEGRATION CLOSED ON MAIN
 
-**Status: IMPLEMENTED on branch `feature/reserved-activity-resource-b2`.**
-Not yet merged/closed as this entry is written; see the closure entry
-below for final status and commit hash once merged.
+**Status: CLOSED ON MAIN.** Implementation commit `e8a3aaf` ("feat: add
+resources to reserved activities") -- fast-forward merged from
+`feature/reserved-activity-resource-b2` (base `4025376`) onto `main`,
+with a separate docs closure commit recording this status. Nothing has
+been pushed to any remote. This closes Slice B2 only.
+
+**Final verified baselines (reconfirmed on `main` after the fast-forward
+merge):** core 479 passed/5 deselected, `tests_web` 486 passed/zero
+skips, frontend 428 passed/25 files/zero skips, build clean, Alembic
+`9fbec2126831`/one head/no drift on both the primary and
+`TEST_DATABASE_URL` databases. Post-merge minimal reconfirmation: 300
+focused backend tests (application/preflight/solver/verifier/
+repository/API, across Resources A/B1/B2) and 84 focused frontend tests
+passed on `main`, working tree clean, build clean.
+
+**Resources phase status: MVP scope (Resources A + B1 + B2) is now
+functionally complete** -- Resource catalog CRUD, ordinary Teaching
+Assignment fixed-resource assignment, and Reserved Activity
+fixed-resource assignment with a fully proven aggregate (never
+pairwise) cross-source capacity invariant are all shipped and closed on
+`main`. **Formal closure of the overall Resources phase is
+deliberately left to the next product step, not declared here** -- no
+prior record defines B2 as the final required slice, and Resource
+Availability remains an explicitly deferred, not-yet-scoped future
+concern (never treated as a completeness blocker, per its own repeated
+"still deferred" notes above).
+
+**Next slice (if the product proceeds further on Resources):** Resource
+Availability, if and when it is prioritized -- no Owner Decision or
+implementation groundwork for it exists yet.
 
 **Contract:** `ReservedBlock` gained one new optional field,
 `resource_id: str | None`, exposed on the Reserved Activity API as
