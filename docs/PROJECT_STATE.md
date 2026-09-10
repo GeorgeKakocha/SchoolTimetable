@@ -2910,11 +2910,43 @@ dependency/`uv.lock`/`dist` changes.
 **RESOURCES A -- RESOURCE CATALOG BACKEND CLOSED ON MAIN.** Implementation
 commit `6a90a28`. The overall Resources phase is **NOT** yet closed.
 
-## Resources B1 -- ordinary Teaching Assignment fixed-resource assignment (IMPLEMENTED, not yet closed)
+## RESOURCES B1 -- ORDINARY FIXED-RESOURCE ASSIGNMENT CLOSED ON MAIN
 
-**Status: IMPLEMENTED on branch `feature/resource-assignment-b1`.** Not
-yet merged/closed as this entry is written; see the closure entry below
-for final status and commit hash once merged.
+**Status: CLOSED ON MAIN.** Implementation commit `0a61339` ("feat: add
+resource assignment to teaching requirements") -- fast-forward merged
+from `feature/resource-assignment-b1` (base `830ce06`) onto `main`,
+with a separate docs closure commit recording this status. Nothing has
+been pushed to any remote. **The overall Resources phase remains NOT
+closed** -- this entry closes Slice B1 only.
+
+**Final verified baselines (reconfirmed on `main` after the fast-forward
+merge):** core 446 passed/5 deselected, `tests_web` 464 passed/zero
+skips, frontend 415 passed/25 files/zero skips (one unrelated
+pre-existing `TimetablePage.test.tsx` timing test flaked once under
+full-suite load and passed cleanly on immediate isolated rerun and a
+second full-suite run -- confirmed not a regression, nothing in this
+slice touches that page), build clean, Alembic `cae76cba3c58`/one
+head/no drift/zero migration. Post-merge minimal reconfirmation: 108
+focused backend Teaching Assignment tests and 96 focused frontend tests
+passed on `main`, working tree clean, build clean.
+
+**Real-browser functional check result:** confirmed live against the
+existing, unlocked `teacher-crud-review-school`/`ay-teacher-crud-2026`
+dataset (`.env.local` restored afterward) -- previously-stranded
+resource-bearing rows (`sport_*`/`dance_*`, using "Indoor Gym") now show
+"Standard" with active Edit/Delete instead of "Advanced"/"Read-only";
+assign/reopen-confirm/clear/reopen-confirm/reassign all worked correctly
+across four save cycles with no stale or error state.
+
+**Next slice: Resources B2 -- Reserved Activity Resource integration
+using aggregate Resource capacity** (never pairwise
+`RESERVED_BLOCK_RESOURCE_SLOT_COLLISION`-style two-block exclusivity,
+per the corrected forward guidance locked in the Resources A entry
+above).
+
+---
+
+**Implementation record (Option A contract, as shipped):**
 
 **Locked product contract (Option A, per the B1 recon's recommendation):**
 the existing Teaching Assignment `POST/PUT .../teaching-assignments[/{id}]`

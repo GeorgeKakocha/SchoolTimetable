@@ -3864,11 +3864,15 @@ implementation commit `6a90a28`. The overall Resources phase remains
 NOT closed. **Next slice: Resources B1 -- ordinary
 `TeachingRequirement` fixed-resource assignment contract.**
 
-## Resources B1 -- ordinary Teaching Assignment fixed-resource assignment (IMPLEMENTED, not yet closed)
+## RESOURCES B1 -- ORDINARY FIXED-RESOURCE ASSIGNMENT CLOSED ON MAIN
 
-**Status: IMPLEMENTED on branch `feature/resource-assignment-b1`.** Not
-a phase closure -- see `docs/PROJECT_STATE.md`'s matching entry for the
-full implementation record.
+**Status: CLOSED ON MAIN.** Implementation commit `0a61339` ("feat: add
+resource assignment to teaching requirements") -- fast-forward merged
+from `feature/resource-assignment-b1` (base `830ce06`) onto `main`,
+with a separate docs closure commit recording this status. Not pushed
+to any remote. This closes Slice B1 only -- **the overall Resources
+phase is NOT closed**; see `docs/PROJECT_STATE.md`'s matching entry for
+the full implementation record and next-slice pointer.
 
 **Locked product decision: Option A**, per the B1 recon's recommendation
 (the smallest coherent MVP with no second write surface, no second
@@ -3907,3 +3911,16 @@ Resource reference validation reuses `resource_rules.find_resource`
 deferred: Resource Availability; `ReservedBlock.resource_id` (Resources
 B2); Owner Decision #39 remains absent -- the B1 recon found no genuine
 unresolved product fork.
+
+**Final verified baselines:** core 446 passed/5 deselected, `tests_web`
+464 passed/zero skips, frontend 415 passed/25 files/zero skips, build
+clean, Alembic `cae76cba3c58`/one head/no drift/zero migration.
+Confirmed live via a real-browser pass against the existing
+`teacher-crud-review-school` dataset: previously-stranded
+resource-bearing rows became editable/deletable, and assign/clear/
+reassign all round-tripped correctly.
+
+**RESOURCES B1 -- ORDINARY FIXED-RESOURCE ASSIGNMENT CLOSED ON MAIN** --
+implementation commit `0a61339`. The overall Resources phase remains
+NOT closed. **Next slice: Resources B2 -- Reserved Activity Resource
+integration using aggregate Resource capacity.**
