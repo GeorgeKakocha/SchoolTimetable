@@ -2572,3 +2572,211 @@ Slice A only, and **Availability B (frontend page/grid) has not been
 implemented.** The overall Teacher Availability phase is **not**
 complete. Next planned slice: **Teacher Availability Slice B --
 frontend page/grid** (not started).
+
+**[Historical -- superseded by the closure entry below.] Teacher
+Availability Slice B (frontend page/3-state matrix) -- implemented
+and PENDING TECHNICAL/VISUAL REVIEW. Not committed, not merged, not
+pushed.** Working tree only, on `feature/teacher-availability-frontend`,
+left intentionally uncommitted for review per the owner's explicit
+process instruction. This entry records what exists on that branch;
+it does not close Availability B and does not mark the overall
+Teacher Availability phase complete. **Owner Decision #39 was NOT
+created in this slice** -- Owner Decision #38 (all three
+`AVAILABLE`/`PREFER_NOT`/`UNAVAILABLE` states exposed to the user)
+remains the only governing decision, unchanged.
+
+Consumes the Slice A backend contract exactly as merged, with zero
+backend/persistence/solver/migration change: `GET
+.../teacher-availability` (`configuration_locked`, `teachers`,
+`days`, `periods` with `is_instructional`, sparse `exceptions` that
+never contain `AVAILABLE`) and `PUT
+.../teacher-availability/{teacher_id}` (whole-Teacher sparse exception
+replacement, never per-cell CRUD), with the same `404`/`422
+UNKNOWN_REFERENCE`/`422 INVALID_TEACHER_AVAILABILITY`/`409
+SCHEDULING_CONFIGURATION_LOCKED` error contract. New frontend-only
+surface: hand-mirrored wire/UI types in `api/types.ts`; a thin
+`api/teacherAvailability.ts` client (`getTeacherAvailability`,
+`replaceTeacherAvailability`); a new `/configuration/teacher-
+availability` route and its fourth flat nav link (order: Timetable,
+School Setup, Teacher Availability, Teaching Assignments);
+`TeacherAvailabilityPage.tsx` owning all page/draft/dirty state; two
+narrowly-scoped presentational components, `AvailabilityGrid.tsx`
+(Period rows x Day columns on desktop, matching `TimetableGrid`'s own
+orientation, plus an unconditionally-rendered per-Day-stacked mobile
+markup toggled by a single 640px CSS media query, no JS viewport
+listener) and `AvailabilityLegend.tsx` (always-visible, never
+tooltip-only). Every cell is one real `<button>` cycling
+AVAILABLE -> PREFER_NOT -> UNAVAILABLE -> AVAILABLE; deliberately no
+`aria-pressed`/`aria-checked` (both are binary/mixed-only and cannot
+represent three independent states) -- a dynamic `aria-label` states
+the Day, Period, current status, and next status instead, plus a
+single shared `aria-live="polite"` region for redundant confirmation.
+Dirty state is derived (normalized draft-vs-server comparison), never
+a manually-toggled boolean; Save issues one whole-Teacher PUT
+followed by an authoritative GET refetch and draft rebuild (never
+optimistic), preserving the draft and showing an action-level error
+on failure; Reset is client-only (no API call); a `409
+SCHEDULING_CONFIGURATION_LOCKED` race during Save discards the stale
+draft, refetches, and leaves the page read-only. Bulk actions
+("Clear all", "Set all available", etc.) are explicitly out of scope
+for this slice, as directed.
+
+Frontend test gate: new/modified tests 40 (10 `App.test.tsx`,
+including the updated nav-order assertion and two new route/nav
+tests; 9 new `api/teacherAvailability.test.ts`; 29 new
+`pages/TeacherAvailabilityPage.test.tsx`), full suite 259 (prior
+baseline) + 40 = **299 passed**, zero skips, confirmed clean across
+six consecutive full 18-file-suite runs after a real test-file race
+was found and fixed (a "wait for the page heading" helper matched
+both the loading and the ready state, since both render an identical
+`<h1>`; replaced with ready-state-specific waits throughout); existing
+School Setup/Teaching Assignments/Timetable/App-routing suites (120
+tests) reconfirmed unregressed; `npm run build` clean, `dist/`
+removed. Backend regression reconfirmed unchanged though untouched by
+this slice: core `tests -m "not slow"` 309 passed/5 deselected;
+`tests_web` 288 passed, zero skips; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. Scope audit confirmed changes
+confined to `frontend/src/` plus this docs update -- zero backend,
+zero migration, zero `package.json`/`package-lock.json`/dependency
+change.
+
+Explicitly NOT part of this slice and NOT executed: Availability C
+(no schedule generation, no solver acceptance run against this
+surface), Owner Decision #39, any bulk-edit action, any Teacher CRUD
+change, any backend/persistence/solver/migration edit. The overall
+Teacher Availability phase is **still not complete** -- this entry
+records an implemented-but-unreviewed candidate, pending the owner's
+technical and visual review before any commit, merge, or further
+slice.
+
+**[Historical -- superseded by the closure entry below.] Teacher
+Availability Slice B -- review-blocking correctness defect found
+and corrected. STILL PENDING REVIEW; still not committed, merged, or
+pushed.** A stale-authority safety gap was found in
+`TeacherAvailabilityPage.tsx`: after a successful PUT, the mandatory
+authoritative GET refetch could itself fail, leaving `refreshState`
+`stale` -- but Save/Reset/the Teacher selector were gated only on
+`isDirty`/`isSaving`/`configuration_locked`, never on
+`refreshState.status`, so they could remain actionable (and Reset
+could restore the draft from the now-superseded pre-write projection)
+while the server had already diverged from the client. The same gap
+existed on the `409 SCHEDULING_CONFIGURATION_LOCKED` lock-race path
+when its own post-race refetch failed. Fixed by applying the page's
+existing `controlsDisabled` derivation (`refreshState.status !==
+"idle" || isSaving` -- the same name and shape as
+`TeachingAssignmentsPage`'s own precedent) uniformly to the grid,
+Save, and Reset, and to the Teacher selector (without the `locked`
+term, since a locked-but-authoritative, non-stale projection must
+still permit Teacher browsing -- "locked" and "stale" are distinct:
+locked is read-only-but-authoritative, stale is authority-unknown).
+`handleSave`/`handleReset`/`handleTeacherChange` also each gained a
+defensive `refreshState.status !== "idle"` guard in the handler body
+itself, not just the button's `disabled` attribute. Three new tests
+were added under a `describe` block reusing
+`TeachingAssignmentsPage.test.tsx`'s own exact stale-projection-safety
+naming: a successful-Save/failed-refresh round trip (old data stays
+visible, the PUT itself is never reported as failed, every mutation
+control disables, a click on a disabled control cannot cause a second
+PUT, Retry recovers and re-derives a clean dirty state), a lock-race
+whose own post-race refresh also fails (same full disabling, Retry
+then loads the authoritative locked projection with the Teacher
+selector re-enabled but Save/Reset/cells still disabled because of
+`locked`), and a 404-Teacher-not-found write whose refetch also fails
+(confirming the shared stale-handling path, with no bespoke second
+state machine needed). `TeachingAssignmentsPage.tsx`/`.test.tsx` were
+not touched; its own three stale-projection-safety tests were rerun
+unmodified and still pass, confirming Availability B now follows the
+identical principle without regressing the precedent it was copied
+from.
+
+Corrected, precise test accounting (the prior entry's "10 + 9 + 29 =
+40" phrasing added a modified file's post-change total to two new
+files' totals, which is not a valid net-new count): `App.test.tsx`
+carries 8 tests on `main` and 10 now, a net-new delta of **2**;
+`api/teacherAvailability.test.ts` is a new file with 9 tests, net-new
+**9**; `pages/TeacherAvailabilityPage.test.tsx` is a new file with
+**32** tests (29 from the original slice plus the 3 stale-authority
+tests added by this correction), net-new **32**. Actual net-new
+relative to the 259-test `main` baseline: 2 + 9 + 32 = **43**. Full
+suite: 259 + 43 = **302 passed**, zero skips, matching three
+consecutive full 18-file-suite runs exactly (`302`/`302`/`302`);
+`npm run build` clean, `dist/` removed. Existing School
+Setup/Teaching Assignments/Timetable/App-routing suites reconfirmed
+unregressed. Backend untouched: `git diff --name-only -- src/
+school_timetable tests tests_web alembic` empty; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. An incidental untracked
+repo-root `uv.lock`, a byproduct of running `uv run` in a prior
+session, was removed (`rm -f uv.lock`); it was never staged and no
+dependency changed. Scope confined to the existing Availability B
+frontend files plus this docs update -- zero
+`src/school_timetable`/`tests`/`tests_web`/`alembic`/`package.json`/
+`package-lock.json`/`uv.lock` change. Owner Decision #39 was **not**
+created; Availability C was **not** executed. The overall Teacher
+Availability phase remains **not complete** -- this correction does
+not close Availability B; it remains an implemented, now
+defect-corrected, still-uncommitted candidate on
+`feature/teacher-availability-frontend`, pending the owner's review.
+
+**Teacher Availability -- Availability B (frontend page / 3-state weekly
+matrix): IMPLEMENTED, REVIEWED, technical re-review PASSED, read-only
+visual review PASSED, COMMITTED, MERGED to `main`, CLOSED.**
+Implementation commit `ca464e26a7b365d040467176ecabd97716ee604d`
+("feat: add teacher availability frontend"), fast-forward merged to
+`main` from `feature/teacher-availability-frontend` (now deleted).
+This entry is the authoritative current-state record; the two
+preceding historical entries above capture the review process that
+led here (initial implementation, then the stale-authority defect
+found and corrected) and are superseded by it.
+
+Frontend surface: route `/configuration/teacher-availability`; nav
+order Timetable, School Setup, Teacher Availability, Teaching
+Assignments. Desktop editor: Period rows x Day columns, instructional
+Periods only, matching `TimetableGrid`'s own orientation. Mobile:
+per-Day stacked sections at <=640px, a single CSS media query, no
+viewport JS -- both render paths share the same draft/state
+callbacks, and the hidden branch is `display: none` (not reachable by
+keyboard/screen reader). State model: `Available` -> `Prefer not` ->
+`Unavailable` -> `Available`, one real `<button type="button">` per
+cell, no `aria-pressed`/`aria-checked`, a dynamic `aria-label`
+stating Day/Period/current status/next action, visible symbol + text
+(never color alone), one shared `aria-live="polite"` region. Draft is
+the sparse selected-Teacher exception set; `AVAILABLE` is represented
+by a cell's absence and never enters the wire request/response.
+Save: whole-Teacher PUT -> mandatory authoritative GET refetch ->
+draft rebuild, never optimistic. Reset: client-only, no API call. No
+bulk action. Dirty state is derived from a normalized draft-vs-
+authoritative comparison; the Teacher selector is disabled while
+dirty.
+
+Stale-authority safety (the corrected defect, now covered by
+dedicated regression tests): after a successful Save whose
+authoritative GET refetch fails, old/stale data may remain visible,
+but every mutation entry point -- cells, Save, Reset, and the Teacher
+selector -- disables, with Retry as the only recovery path; the same
+applies after a `409 SCHEDULING_CONFIGURATION_LOCKED` race whose own
+post-race refetch fails; and after a `404` Teacher-not-found write
+whose refetch fails, via the same shared handling (no separate state
+machine). Once an authoritative (non-stale) locked projection loads,
+the distinction holds: the Teacher selector re-enables and data stays
+readable, while cells/Save/Reset remain disabled because the
+configuration itself is locked.
+
+Precise frontend test accounting: `main`-before-slice baseline 259;
+net-new 43 (`App.test.tsx` +2, `api/teacherAvailability.test.ts` +9
+new file, `pages/TeacherAvailabilityPage.test.tsx` +32 new file);
+final total **302**, 18 test files, zero skips, confirmed identical
+across three consecutive full-suite runs (302/302/302) both before
+this merge and reconfirmed after it on `main`. Build clean. Backend:
+zero diff under `src/school_timetable`/`tests`/`tests_web`/`alembic`;
+Alembic unchanged at `cae76cba3c58`, single head, no drift; zero
+migration; zero dependency change; no `uv.lock` present or tracked.
+
+Owner Decision #38 remains **LOCKED**. Owner Decision #39 **does not
+exist** -- none of this slice's stale-authority/locked/disabled-
+control behavior required a new owner decision; it is an
+implementation-level safety property of the already-locked #38
+contract. **Availability C (real-browser write/persistence + solver
+acceptance against this surface) was NOT executed** and remains the
+next planned slice. **The overall Teacher Availability phase is NOT
+complete** -- Availability B's closure is scoped to the frontend page
+only. Nothing was pushed to any remote.
