@@ -41,6 +41,14 @@ from school_timetable.api.schemas import (
     LessonBlockPolicyResponse,
     ParticipantGroupResponse,
     PeriodResponse,
+    ReservedActivitiesProjectionResponse,
+    ReservedActivityClassSectionOptionResponse,
+    ReservedActivityDayOptionResponse,
+    ReservedActivityItemResponse,
+    ReservedActivityPeriodOptionResponse,
+    ReservedActivitySlotResponse,
+    ReservedActivitySpecialActivityOptionResponse,
+    ReservedActivityTeacherOptionResponse,
     ReservedBlockResponse,
     ResourceRequirementResponse,
     ResourceResponse,
@@ -81,6 +89,7 @@ from school_timetable.api.schemas import (
 from school_timetable.application.class_section_projection_models import ClassSectionsProjectionView
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.reserved_activity_projection_models import ReservedActivitiesProjectionView
 from school_timetable.application.special_activity_projection_models import SpecialActivitiesProjectionView
 from school_timetable.application.subject_projection_models import SubjectsProjectionView
 from school_timetable.application.teacher_availability_models import TeacherAvailabilityWriteResult
@@ -470,6 +479,45 @@ def special_activities_projection_response_from_view(
         configuration_locked=view.configuration_locked,
         special_activities=tuple(
             SpecialActivityProjectionItemResponse(id=s.id, name=s.name) for s in view.special_activities
+        ),
+    )
+
+
+# -- Reserved Activity CRUD API (Reserved Activities Slice A2). -----------
+
+
+def reserved_activities_projection_response_from_view(
+    view: ReservedActivitiesProjectionView,
+) -> ReservedActivitiesProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- every
+    order already resolved in `ReservedActivityProjectionService`
+    (persistence ordinal/index order); this function never re-sorts
+    anything."""
+    return ReservedActivitiesProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        special_activities=tuple(
+            ReservedActivitySpecialActivityOptionResponse(id=a.id, name=a.name) for a in view.special_activities
+        ),
+        teachers=tuple(ReservedActivityTeacherOptionResponse(id=t.id, name=t.name) for t in view.teachers),
+        class_sections=tuple(
+            ReservedActivityClassSectionOptionResponse(id=c.id, name=c.name) for c in view.class_sections
+        ),
+        days=tuple(ReservedActivityDayOptionResponse(id=d.id, name=d.name, index=d.index) for d in view.days),
+        periods=tuple(
+            ReservedActivityPeriodOptionResponse(
+                id=p.id, name=p.name, index=p.index, is_instructional=p.is_instructional,
+            )
+            for p in view.periods
+        ),
+        reserved_activities=tuple(
+            ReservedActivityItemResponse(
+                id=r.id,
+                special_activity_id=r.special_activity_id,
+                class_section_ids=r.class_section_ids,
+                teacher_id=r.teacher_id,
+                slots=tuple(ReservedActivitySlotResponse(day_id=s.day_id, period_id=s.period_id) for s in r.slots),
+            )
+            for r in view.reserved_activities
         ),
     )
 

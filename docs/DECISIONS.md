@@ -3144,3 +3144,233 @@ validation/preflight) is NOT implemented. Reserved B (frontend) is NOT
 implemented. Reserved C (browser/solver/timetable acceptance) is NOT
 executed.** Nothing was pushed to any remote. **Next planned slice:
 Reserved A2 -- `ReservedBlock` backend CRUD + validation/preflight.**
+
+**Reserved Activities -- Reserved A2 (Reserved Activity /
+`ReservedBlock` backend): IMPLEMENTED on
+`feature/reserved-activity-backend`, pending technical review. NOT
+committed, NOT merged, NOT pushed.** "Reserved Activity" is not a new
+domain entity -- it is the user-facing name for `ReservedBlock` (see
+`domain/blocks.py`), exactly mirroring "Special Activity"'s own
+relationship to `Activity(kind=CLUB)`. Reuses the existing `ReservedBlock`
+domain object and `reserved_block`/`reserved_block_class_section`/
+`reserved_block_slot` ORM tables verbatim -- **zero schema change, zero
+migration, no new domain entity, no new enum.**
+
+CRUD contract: POST/PUT accept the complete mutable aggregate
+(`special_activity_id`, `class_section_ids`, `teacher_id`, `slots`) as
+one whole-aggregate replacement -- never a partial patch, and
+`teacher_id` is required-but-nullable so POST/PUT share one identical
+request shape. `ReservedBlock.name` is always server-derived from the
+referenced Special Activity's current `name`, never accepted as
+input. Natural ID: server-generated `reserved_block_<uuid4().hex>`
+(named after the persisted entity, mirroring `activity_`/`teacher_`/
+`class_` convention, not the presentation label). Ordinal: `ReservedBlock`'s
+own `AcademicYear`-scoped sequence (never shared with any other
+table). Canonical child ordering, proven load-bearing for Owner
+Decision #36: `class_section_ids` sorted by the referenced
+`ClassSection`'s own authoritative persisted ordinal; `slots` sorted
+by `Day.index` then `Period.index` -- always recomputed at write
+time regardless of request order, so two semantically-identical
+writes persist and reload as byte-identical `SchedulingProblem.
+reserved_blocks` tuples (frozen-dataclass equality is positional).
+Update replaces `ReservedBlockClassSection`/`ReservedBlockSlot`
+children wholesale (delete-and-reinsert in canonical order, one
+transaction) -- there is no independent child identity to diff
+against.
+
+Five semantic invariants, each enforced at both application write-time
+and independent preflight defense-in-depth, closing the asymmetric
+validation gap the recon phase identified: (1) `special_activity_id`
+must resolve to `Activity(kind=CLUB)` -- preflight
+`RESERVED_BLOCK_NON_CLUB_ACTIVITY` (mirrors
+`NON_ORDINARY_TEACHING_REQUIREMENT_ACTIVITY`'s own established
+naming convention exactly, verified against it directly rather than
+assumed), application-facing `NonSpecialActivityTargetError` ->
+422 `NON_SPECIAL_ACTIVITY_TARGET`, deliberately never leaking raw
+`ActivityKind`/`CLUB`/`ORDINARY` vocabulary in its own response and
+never reusing Teaching Assignments' unrelated, unaltered
+`NON_ORDINARY_ACTIVITY_TARGET` contract; (2) every slot must be
+instructional -- `RESERVED_BLOCK_NON_INSTRUCTIONAL_SLOT`; (3) a
+teacher-attached block may never use a slot where that Teacher is
+`UNAVAILABLE` -- `RESERVED_BLOCK_TEACHER_UNAVAILABLE` (`PREFER_NOT`
+and `AVAILABLE`/absent are both allowed, with zero solver penalty --
+`ReservedBlock` remains fixed occupancy with zero CP-SAT variables,
+confirmed unchanged); (4) two different `ReservedBlock`s may never
+claim the same `(ClassSection, Day, Period)` --
+`RESERVED_BLOCK_CLASS_SLOT_COLLISION`; (5) two different
+teacher-attached `ReservedBlock`s may never claim the same `(Teacher,
+Day, Period)` -- `RESERVED_BLOCK_TEACHER_SLOT_COLLISION`. Plus two
+same-block structural defense-in-depth diagnostics mirroring
+`DUPLICATE_TEACHER_AVAILABILITY_CELL`'s own precedent exactly:
+`DUPLICATE_RESERVED_BLOCK_CLASS_SECTION`/`DUPLICATE_RESERVED_BLOCK_SLOT`.
+All five semantic checks are implemented ONCE, in `validation/
+preflight.py`, and reused by the application layer via a candidate-
+diff pattern (`reserved_activity_rules.py` constructs an in-memory
+candidate `ReservedBlock`, replaces it into a copy of the freshly-
+loaded `SchedulingProblem`, and treats any newly-appearing preflight
+code as blocking) -- mirroring `teaching_assignment_rules.
+new_validation_errors`'s own established architecture exactly, so the
+write-time check and the independent verifier can never silently
+diverge. The collision scan is a direct, deterministic traversal
+(`ReservedBlock` problem order, then authoritative `ClassSection`
+order / `Day.index`-`Period.index` order within each block) --
+deliberately never `ProblemIndex.reserved_class_slots`/
+`reserved_teacher_slots`, which are plain last-writer-wins solver
+lookups, never a validator; each collision emits exactly one
+directional diagnostic (later block -> earlier first-owner block),
+never a mirrored pair, and a block can never collide with its own
+prior self because the write-time candidate always *replaces* the
+target block rather than duplicating it.
+
+Discovered, unrelated regression during preflight work, fixed:
+`tests/test_reoptimize.py::test_new_reserved_block_conflicting_with_
+reference_is_repaired` constructed its own hand-built `Activity(
+"club_chess", "Chess")` without `kind=ActivityKind.CLUB` (a
+pre-existing Phase-2C test fixture bug, invisible before this slice
+since nothing validated `ReservedBlock.activity_id`'s kind) -- the new
+`RESERVED_BLOCK_NON_CLUB_ACTIVITY` preflight check correctly caught
+it; the test's own fixture was corrected (`kind=ActivityKind.CLUB`
+added), not the new check weakened.
+
+Repository/service naming: a new, separate `ReservedActivityRepository`
+port and `SqlAlchemyReservedActivityRepository` adapter -- application
+naming uses the user-facing "Reserved Activity" term throughout;
+domain/ORM naming (`ReservedBlock`, `reserved_block`) is unchanged.
+Unlike every prior write port, `create`/`update` return the written
+aggregate's own canonically-ordered fields directly (never `None`) --
+the persisted child order depends on canonicalization only the
+repository performs, so returning it avoids duplicating that ordering
+logic in the caller. ORM defense-in-depth mirrors
+`SqlAlchemySpecialActivityRepository`'s own pattern: every reference
+(Special Activity, Teacher, ClassSection, Day, Period) is independently
+re-resolved scoped to the *same* `academic_year_id`, and the Special
+Activity's `kind` is independently re-verified regardless of what
+`validate` already confirmed -- proven by dedicated repository tests
+using a deliberately permissive fake `validate` callback. Delete is a
+leaf-aggregate operation: `ReservedBlockClassSection`/
+`ReservedBlockSlot` children cascade at the DB level; the referenced
+Special Activity/Teacher/ClassSection/Day/Period rows, and
+`schedule_entry`'s own `RESTRICT` FK to `reserved_block.id`, are never
+reached (the latter is structurally unreachable here since the
+configuration lock already forbids this delete outright once any
+`Schedule` exists) -- proven directly from schema.
+
+New routes: `GET/POST /schools/{school_id}/years/{year_id}/
+reserved-activities`, `PUT/DELETE .../reserved-activities/
+{reserved_activity_id}` -- deliberately never `/reserved-blocks` in
+the dedicated API (raw `/config` keeps its own unrenamed
+`reserved_blocks` field, completely unchanged and unretrofitted). GET
+projection (`ReservedActivityProjectionService`) loads exactly ONE
+`SchedulingProblem` snapshot and derives every list from that same
+object -- deliberately never composes `SpecialActivityProjectionService`
+or any other nested projection service, avoiding an internally
+incoherent page. Every `reserved_activities` item is normalized (bare
+`special_activity_id`/`class_section_ids`/`teacher_id` references
+only, resolved by the consumer against the same response's own
+top-level `special_activities`/`teachers`/`class_sections` catalogs) --
+never denormalized display names, `ReservedBlock.name`, `kind`, or
+`ordinal`. `periods` returns every period with `is_instructional`
+(matching Teacher Availability's own precedent); writes accept
+instructional periods only, server-authoritative regardless of what a
+future frontend offers.
+
+Test gate: 46 new pure `tests/test_reserved_activity_service.py`
+(covering both `ReservedActivityService` and
+`ReservedActivityProjectionService`) + 16 new preflight tests in
+`tests/test_preflight.py` (core suite 397 passed/5 deselected, 335
+pre-existing + 62 new); 25 new
+`tests_web/test_reserved_activity_repository.py` + 38 new
+`tests_web/test_reserved_activity_api.py` (canonical single-process
+`tests_web` 391 passed, 328 pre-existing + 63 new), zero
+DB-reachability skips; existing Special Activity/Subject/Teacher/
+Class/Teaching Assignment/Teacher Availability repository and API
+tests all reconfirmed unregressed by the same full-suite runs;
+frontend 302 passed (fully unchanged -- zero frontend files touched),
+build clean; Alembic unchanged at `cae76cba3c58`, single head, no
+drift.
+
+A new local-only, unlocked review dataset,
+`reserved-activity-review-school`/`ay-reserved-activity-review-2026`
+(3 days, 4 instructional periods + 1 non-instructional period, 3
+Teachers, 3 ClassSections, 2 CLUB Special Activities + 1 ORDINARY
+Subject, Teacher A carrying one `UNAVAILABLE` and one `PREFER_NOT`
+row, one pre-existing non-conflicting `ReservedBlock`, zero
+`Schedule`, deliberately zero `TeachingRequirement`s since Reserved
+Activity acceptance needs no full class occupancy and this write
+surface's own validation already treats `CLASS_OCCUPANCY_MISMATCH` as
+non-blocking, mirroring Teaching Assignments' identical save-time
+validation boundary), was created and is retained as durable local
+acceptance evidence: live-validated against the real, running dev
+server's actual HTTP API across all 19 required proof points -- exact
+GET projection shape; a valid teacherless and a valid teacher-attached
+create; class-request-order and slot-request-order both reversed on
+input, both persisted/returned in canonical order; in-request
+duplicate class and duplicate slot both rejected; an ORDINARY
+`special_activity_id` target rejected 422 `NON_SPECIAL_ACTIVITY_TARGET`
+with zero raw `CLUB`/`ORDINARY`/`actual_kind` leak; a non-instructional
+slot rejected; a Teacher-`UNAVAILABLE` slot rejected (bundled
+correctly alongside a simultaneously-true class-slot collision in the
+same response, proving multi-diagnostic bundling); a Teacher-
+`PREFER_NOT` slot accepted; clean class-slot and teacher-slot
+cross-block collisions each rejected with the exact expected
+`conflicting_reserved_block_id`; a `PUT` whole-aggregate replacement
+that also changes the referenced Special Activity, immediately
+reflected in `/config` with the recomputed `ReservedBlock.name`; a
+`DELETE` immediately reflected as absent in `/config`; zero `Schedule`
+throughout.
+
+**Seeded initial state** (as built by the TEST-ONLY writer, before any
+HTTP review activity): exactly one `ReservedBlock`,
+`club_debate_block` (Debate Club, class `c1`, no teacher, slot
+`(tue, p1)`). **Final retained state** (re-confirmed read-only,
+directly from PostgreSQL, at pre-closure audit -- never inferred):
+`club_debate_block` was renamed via the PUT-whole-aggregate-
+replacement proof step (its Special Activity changed to `club_art`,
+recomputing its name to "Art Club") and was then removed by the
+`DELETE` proof step -- zero rows with that original natural ID remain.
+Five other blocks were created and retained across the review
+sequence (the teacherless create, the teacher-attached create, the
+reversed-class-order create, the reversed-slot-order create, and the
+Teacher-`PREFER_NOT`-allowed create): `reserved_block_e0556f53...`
+(Art Club, class `c2`, no teacher, `(mon, p3)`),
+`reserved_block_1de0ed17...` (Art Club, class `c3`, teacher `t_c`,
+`(wed, p4)`), `reserved_block_74aedba8...` (Debate Club, classes
+`c1`/`c2`/`c3`, no teacher, `(wed, p1)`), `reserved_block_60a0304d...`
+(Debate Club, class `c1`, no teacher, `(mon, p1)` and `(wed, p4)`),
+and `reserved_block_52cab4de...` (Art Club, class `c1`, teacher
+`t_a`, `(mon, p2)`). **Final `ReservedBlock` count: exactly 5.
+Final `Schedule` count: 0.** (A prior informal summary of this
+session miscounted the retained total as four newly-created blocks;
+the actual, PostgreSQL-confirmed total is five -- this entry is the
+authoritative correction.)
+
+All ten pre-existing datasets -- the seven earlier
+canonical/review datasets, the two Availability C acceptance datasets,
+and Reserved A1's own `special-activity-review-school` (itself now a
+pre-existing dataset relative to this slice) -- were snapshotted
+before and after this entire run (including `ReservedBlock` counts)
+and confirmed unchanged -- the same recorded snapshot/count fields
+held identical for all ten; this was never claimed nor performed as a
+byte-for-byte or row-by-row comparison, and the new
+`reserved-activity-review-school` dataset is deliberately excluded
+from that equality claim since it was intentionally created for this
+acceptance.
+
+Explicitly NOT part of this slice: the Reserved Activities frontend
+page, any frontend change of any kind, Resource support,
+`ParticipantGroup` support, multiple Teachers per block, any
+recurrence/flexible-placement capability, any timetable-projection
+production change (Class/Teacher Timetable already displayed
+`ReservedBlock` entries correctly before this slice and remain
+untouched), any solver production change (`ProblemIndex`/
+`model_builder`/`result_builder`/`verifier` are all byte-for-byte
+unchanged -- the five new invariants are pure preflight/application
+validation that prevents an invalid `ReservedBlock` from ever reaching
+the solver, never a change to how the solver itself treats one).
+**Owner Decision #39 was NOT created** -- every open question this
+slice resolved (naming, ordering, response shape, error-type
+granularity, repository boundary) was settled by direct, load-bearing
+precedent already present in the codebase, never a genuine
+code-unresolvable product-semantics fork. Reserved A2 is **not**
+marked closed; the frontend (Reserved B) and browser/solver/timetable
+acceptance (Reserved C) remain entirely unimplemented.

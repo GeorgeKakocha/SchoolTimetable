@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from school_timetable.domain.activities import Activity
+from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
 from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
 from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
@@ -293,7 +293,9 @@ def test_new_reserved_block_conflicting_with_reference_is_repaired():
         )
         for i in range(1, 7)
     )
-    activities = tuple(Activity(f"subj{i}", f"Subj{i}") for i in range(1, 7)) + (Activity("club_chess", "Chess"),)
+    activities = tuple(Activity(f"subj{i}", f"Subj{i}") for i in range(1, 7)) + (
+        Activity("club_chess", "Chess", kind=ActivityKind.CLUB),
+    )
     requirements = tuple(
         TeachingRequirement(f"r{i}", f"t{i}", f"subj{i}", f"pg{i}", 1, FLEXIBLE) for i in range(1, 7)
     )

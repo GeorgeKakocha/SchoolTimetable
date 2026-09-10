@@ -26,6 +26,11 @@ def run_preflight(problem: SchedulingProblem) -> list[ValidationError]:
 
     errors.extend(_check_participant_group_roles(problem))
     errors.extend(_check_teaching_requirement_activity_kind(problem, index))
+    errors.extend(_check_reserved_block_duplicates(problem))
+    errors.extend(_check_reserved_block_activity_kind(problem, index))
+    errors.extend(_check_reserved_block_instructional_slots(problem, index))
+    errors.extend(_check_reserved_block_teacher_availability(problem, index))
+    errors.extend(_check_reserved_block_collisions(problem, index))
     errors.extend(_check_block_patterns(problem, index))
     errors.extend(_check_split_group_consistency(problem, index))
     errors.extend(_check_fixed_placement_availability(problem, index))
@@ -261,6 +266,215 @@ def _check_teaching_requirement_activity_kind(
                 f"{activity.kind.value!r}, expected ORDINARY",
                 {"requirement_id": req.id, "activity_id": req.activity_id, "actual_kind": activity.kind.value},
             ))
+
+    return errors
+
+
+def _check_reserved_block_duplicates(problem: SchedulingProblem) -> list[ValidationError]:
+    """Defense-in-depth (Reserved Activities Slice A2), mirroring
+    `_check_duplicate_teacher_availability_cells` exactly: an in-memory
+    `ReservedBlock` could in principle repeat the identical
+    `ClassSection` or the identical `(day_id, period_id)` slot within
+    its own `class_sections`/`slots` tuples -- persistence itself
+    cannot produce this (`uq_rbcs_block_class`/`uq_rbs_block_day_period`
+    forbid it), but nothing upstream of preflight guarantees it for an
+    arbitrary in-memory/imported problem. These are purely
+    within-one-block structural checks -- never confused with a
+    cross-block collision (`_check_reserved_block_collisions`)."""
+    errors: list[ValidationError] = []
+    for block in problem.reserved_blocks:
+        seen_classes: set[str] = set()
+        dup_classes: set[str] = set()
+        for class_id in block.class_sections:
+            if class_id in seen_classes:
+                dup_classes.add(class_id)
+            seen_classes.add(class_id)
+        for class_id in sorted(dup_classes):
+            errors.append(ValidationError(
+                "DUPLICATE_RESERVED_BLOCK_CLASS_SECTION",
+                f"Reserved block {block.id!r} references class {class_id!r} more than once",
+                {"reserved_block_id": block.id, "class_id": class_id},
+            ))
+
+        seen_slots: set[tuple[str, str]] = set()
+        dup_slots: set[tuple[str, str]] = set()
+        for slot in block.slots:
+            key = (slot.day_id, slot.period_id)
+            if key in seen_slots:
+                dup_slots.add(key)
+            seen_slots.add(key)
+        for day_id, period_id in sorted(dup_slots):
+            errors.append(ValidationError(
+                "DUPLICATE_RESERVED_BLOCK_SLOT",
+                f"Reserved block {block.id!r} has more than one entry for slot "
+                f"({day_id!r}, {period_id!r})",
+                {"reserved_block_id": block.id, "day_id": day_id, "period_id": period_id},
+            ))
+    return errors
+
+
+def _check_reserved_block_activity_kind(problem: SchedulingProblem, index: ProblemIndex) -> list[ValidationError]:
+    """Reserved Activities Slice A2 -- the symmetric mirror of
+    `_check_teaching_requirement_activity_kind`: every
+    `ReservedBlock.activity_id` must reference an `ActivityKind.CLUB`
+    activity -- `ORDINARY` activities are scheduled via a
+    `TeachingRequirement`, never a `ReservedBlock` (see
+    `domain/activities.py`). The application write service's own
+    `NonSpecialActivityTargetError` already rejects this at save time;
+    this check exists only to catch an already-malformed
+    `SchedulingProblem` reaching preflight by some other path (legacy
+    data, direct construction, future import/admin tooling). Assumes
+    `_check_references` has already run with no errors, so every
+    `activity_id` is a known-good key in `index.activities_by_id` --
+    `UNKNOWN_ACTIVITY` and this check therefore never both fire for the
+    same reference. The diagnostic message deliberately avoids raw
+    enum vocabulary; the raw `kind` value is still recorded in
+    `context` for the independent verifier's own internal use, never
+    surfaced through the dedicated Reserved Activity write API."""
+    errors: list[ValidationError] = []
+    for block in problem.reserved_blocks:
+        activity = index.activities_by_id[block.activity_id]
+        if activity.kind != ActivityKind.CLUB:
+            errors.append(ValidationError(
+                "RESERVED_BLOCK_NON_CLUB_ACTIVITY",
+                f"Reserved block {block.id!r} references an activity that is not valid as a "
+                "Special Activity",
+                {"reserved_block_id": block.id, "activity_id": block.activity_id, "actual_kind": activity.kind.value},
+            ))
+    return errors
+
+
+def _check_reserved_block_instructional_slots(
+    problem: SchedulingProblem, index: ProblemIndex,
+) -> list[ValidationError]:
+    """Reserved Activities Slice A2: every `ReservedBlock` slot must be
+    an instructional `Period` -- the solver never places an ordinary
+    lesson on a non-instructional period regardless of any reservation
+    (`domain/indexing.py`'s `instructional_periods_sorted` is the only
+    period set the model builder ever iterates), so a reservation there
+    would be silently invisible in both Class and Teacher Timetable
+    projections (both filter to `is_instructional` periods) even though
+    it round-trips through persistence. Assumes `_check_references` has
+    already run with no errors, so every slot's `day_id`/`period_id`
+    is already known-good -- `UNKNOWN_SLOT` and this check never both
+    fire for the same slot."""
+    errors: list[ValidationError] = []
+    for block in problem.reserved_blocks:
+        for slot in block.slots:
+            period = index.periods_by_id[slot.period_id]
+            if not period.is_instructional:
+                errors.append(ValidationError(
+                    "RESERVED_BLOCK_NON_INSTRUCTIONAL_SLOT",
+                    f"Reserved block {block.id!r} references non-instructional period "
+                    f"{slot.period_id!r} on day {slot.day_id!r}",
+                    {"reserved_block_id": block.id, "day_id": slot.day_id, "period_id": slot.period_id},
+                ))
+    return errors
+
+
+def _check_reserved_block_teacher_availability(
+    problem: SchedulingProblem, index: ProblemIndex,
+) -> list[ValidationError]:
+    """Reserved Activities Slice A2: a teacher-attached `ReservedBlock`
+    is an administrative fixed commitment with no solver choice to
+    optimize, so `PREFER_NOT` never blocks it and never adds a soft
+    penalty -- but `UNAVAILABLE` is a contradictory hard configuration
+    (the school is fixing this Teacher into a slot the Teacher has
+    explicitly marked as genuinely unavailable) and must be rejected.
+    Only evaluated for blocks with a non-null `teacher_id`; assumes
+    `_check_references` has already run with no errors, so
+    `block.teacher_id` (when set) is already known-good --
+    `UNKNOWN_TEACHER` and this check never both fire for the same
+    reference."""
+    errors: list[ValidationError] = []
+    for block in problem.reserved_blocks:
+        if block.teacher_id is None:
+            continue
+        for slot in block.slots:
+            status = index.get_availability(block.teacher_id, slot.day_id, slot.period_id)
+            if status == AvailabilityStatus.UNAVAILABLE:
+                errors.append(ValidationError(
+                    "RESERVED_BLOCK_TEACHER_UNAVAILABLE",
+                    f"Reserved block {block.id!r} assigns teacher {block.teacher_id!r} to slot "
+                    f"({slot.day_id!r}, {slot.period_id!r}) where the teacher is UNAVAILABLE",
+                    {
+                        "reserved_block_id": block.id, "teacher_id": block.teacher_id,
+                        "day_id": slot.day_id, "period_id": slot.period_id,
+                    },
+                ))
+    return errors
+
+
+def _check_reserved_block_collisions(problem: SchedulingProblem, index: ProblemIndex) -> list[ValidationError]:
+    """Reserved Activities Slice A2: two DIFFERENT `ReservedBlock`s may
+    never claim the same `(ClassSection, Day, Period)`, nor may two
+    DIFFERENT teacher-attached `ReservedBlock`s claim the same
+    `(Teacher, Day, Period)` -- deliberately NOT detected via
+    `ProblemIndex.reserved_class_slots`/`reserved_teacher_slots`, which
+    are plain last-writer-wins dicts built for the solver's own
+    exclusion lookups, never a validator. A direct deterministic scan
+    instead: traverses `problem.reserved_blocks` in their own
+    (already-ordinal-ordered) list order; within each block, its own
+    `class_sections`/`slots` are re-sorted here by the authoritative
+    `ClassSection` problem order and `Day.index`/`Period.index` (never
+    trusted to already be canonical -- preflight is callable against
+    any in-memory/imported problem, not only ones this phase's own
+    write service produced), remembers the first block to claim each
+    key, and emits one directional diagnostic naming the later
+    conflicting block and the earlier first-owner block for every
+    subsequent claim -- never a mirrored pair. Two entries sharing one
+    `id` never occur here in practice: the write service always
+    replaces (never duplicates) a target block when constructing an
+    update candidate, so a block can never collide with itself through
+    the normal write path; the `owner != block.id` guard is still kept
+    as an explicit, cheap defensive check."""
+    errors: list[ValidationError] = []
+    class_position = {c.id: i for i, c in enumerate(problem.class_sections)}
+
+    def slot_sort_key(slot):
+        return (index.days_by_id[slot.day_id].index, index.periods_by_id[slot.period_id].index)
+
+    class_owner: dict[tuple[str, str, str], str] = {}
+    for block in problem.reserved_blocks:
+        ordered_classes = sorted(block.class_sections, key=lambda c: class_position.get(c, len(class_position)))
+        ordered_slots = sorted(block.slots, key=slot_sort_key)
+        for class_id in ordered_classes:
+            for slot in ordered_slots:
+                key = (class_id, slot.day_id, slot.period_id)
+                owner = class_owner.get(key)
+                if owner is None:
+                    class_owner[key] = block.id
+                elif owner != block.id:
+                    errors.append(ValidationError(
+                        "RESERVED_BLOCK_CLASS_SLOT_COLLISION",
+                        f"Reserved block {block.id!r} conflicts with reserved block {owner!r}: both "
+                        f"claim class {class_id!r} at slot ({slot.day_id!r}, {slot.period_id!r})",
+                        {
+                            "reserved_block_id": block.id, "conflicting_reserved_block_id": owner,
+                            "class_section_id": class_id, "day_id": slot.day_id, "period_id": slot.period_id,
+                        },
+                    ))
+
+    teacher_owner: dict[tuple[str, str, str], str] = {}
+    for block in problem.reserved_blocks:
+        if block.teacher_id is None:
+            continue
+        ordered_slots = sorted(block.slots, key=slot_sort_key)
+        for slot in ordered_slots:
+            key = (block.teacher_id, slot.day_id, slot.period_id)
+            owner = teacher_owner.get(key)
+            if owner is None:
+                teacher_owner[key] = block.id
+            elif owner != block.id:
+                errors.append(ValidationError(
+                    "RESERVED_BLOCK_TEACHER_SLOT_COLLISION",
+                    f"Reserved block {block.id!r} conflicts with reserved block {owner!r}: both "
+                    f"assign teacher {block.teacher_id!r} at slot ({slot.day_id!r}, {slot.period_id!r})",
+                    {
+                        "reserved_block_id": block.id, "conflicting_reserved_block_id": owner,
+                        "teacher_id": block.teacher_id, "day_id": slot.day_id, "period_id": slot.period_id,
+                    },
+                ))
 
     return errors
 

@@ -37,6 +37,8 @@ from school_timetable.application.class_section_service import ClassSectionServi
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.reserved_activity_projection_service import ReservedActivityProjectionService
+from school_timetable.application.reserved_activity_service import ReservedActivityService
 from school_timetable.application.special_activity_projection_service import SpecialActivityProjectionService
 from school_timetable.application.special_activity_service import SpecialActivityService
 from school_timetable.application.subject_projection_service import SubjectProjectionService
@@ -59,6 +61,7 @@ from school_timetable.persistence.problem_repository import (
     SessionFactorySchedulingProblemRepository,
     SqlAlchemySchedulingProblemRepository,
 )
+from school_timetable.persistence.reserved_activity_repository import SqlAlchemyReservedActivityRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.persistence.special_activity_repository import SqlAlchemySpecialActivityRepository
 from school_timetable.persistence.teacher_availability_repository import (
@@ -230,6 +233,29 @@ def get_special_activity_service() -> SpecialActivityService:
     return SpecialActivityService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemySpecialActivityRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_reserved_activities_projection_service() -> ReservedActivityProjectionService:
+    """Composes the same two session-factory-backed adapters
+    `SpecialActivityProjectionService` uses -- never a request-scoped
+    `Session` (Reserved Activities Slice A2)."""
+    return ReservedActivityProjectionService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_reserved_activity_service() -> ReservedActivityService:
+    """Composes `ReservedActivityService`'s three session-factory-backed
+    dependencies -- never a request-scoped `Session`, so
+    `SqlAlchemyReservedActivityRepository`'s own short lock/reload/
+    validate transactions (Decision #36) stay entirely its own
+    (Reserved Activities Slice A2)."""
+    return ReservedActivityService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyReservedActivityRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 

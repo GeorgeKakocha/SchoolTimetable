@@ -682,3 +682,75 @@ class SpecialActivityInUseError(Exception):
             f"special activity {special_activity_id!r} is still referenced by {list(referenced_by)!r} "
             f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
         )
+
+
+class InvalidReservedActivityError(Exception):
+    """A `ReservedActivityService` create/update request fails
+    structural or semantic validation (Reserved Activities Slice A2) --
+    an empty `class_section_ids`/`slots` collection, an in-request
+    duplicate class or slot, a non-instructional slot, or a slot where
+    the attached Teacher is `UNAVAILABLE`, or a cross-block class/
+    teacher slot collision. Carries the validator's own safe,
+    structured diagnostics as an immutable tuple, exactly like
+    `InvalidSubjectError`/`InvalidTeacherAvailabilityError`. Never
+    carries `UNKNOWN_REFERENCE`-shaped or wrong-Special-Activity-kind
+    diagnostics -- those are always the dedicated `UnknownReferenceError`/
+    `NonSpecialActivityTargetError` instead."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid reserved activity for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class ReservedActivityNotFoundError(Exception):
+    """No `ReservedBlock` with this natural ID exists in this
+    school/academic-year's persisted configuration (Reserved
+    Activities Slice A2). Distinct from a nested reference not
+    resolving (`UnknownReferenceError`) -- this is about the top-level
+    PUT/DELETE *target* itself not existing. Carries only the natural
+    identifiers already supplied -- no persistence surrogate ID."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, reserved_activity_id: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.reserved_activity_id = reserved_activity_id
+        super().__init__(
+            f"no reserved activity {reserved_activity_id!r} for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class NonSpecialActivityTargetError(Exception):
+    """A `ReservedActivityService` create/update request's nested
+    `special_activity_id` resolves to an `Activity` whose `kind` is not
+    `CLUB` (Reserved Activities Slice A2) -- the mirror image of
+    `NonOrdinaryActivityTargetError`, but deliberately a SEPARATE error
+    class: the dedicated Reserved Activity API must never leak raw
+    `ActivityKind`/`CLUB`/`ORDINARY` vocabulary in its own responses
+    (unlike Teaching Assignments' existing, unrelated
+    `NON_ORDINARY_ACTIVITY_TARGET` contract, which this does not reuse
+    or alter). Carries only the natural `activity_id` -- never the
+    actual kind, never a persistence surrogate ID."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, activity_id: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.activity_id = activity_id
+        super().__init__(
+            f"activity {activity_id!r} is not a special activity, "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )

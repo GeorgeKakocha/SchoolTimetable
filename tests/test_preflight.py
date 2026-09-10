@@ -1,6 +1,6 @@
 from school_timetable.domain.activities import Activity, ActivityKind
-from school_timetable.domain.blocks import FixedPlacement
-from school_timetable.domain.calendar import TimeSlot, AcademicYear
+from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
+from school_timetable.domain.calendar import Period, TimeSlot, AcademicYear
 from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
@@ -418,3 +418,225 @@ def test_one_whole_class_group_per_class_section_passes_role_checks():
     codes = {e.code for e in run_preflight(problem)}
     assert "PARTICIPANT_GROUP_ROLE_CARDINALITY_MISMATCH" not in codes
     assert "CLASS_SECTION_WHOLE_CLASS_GROUP_COUNT_MISMATCH" not in codes
+
+
+# == RESERVED ACTIVITIES SLICE A2 ============================================
+
+_TWO_CLASSES = (ClassSection(id="c1", name="C1"), ClassSection(id="c2", name="C2"))
+_TWO_TEACHERS = (
+    Teacher(id="t1", first_name="T1", last_name=""),
+    Teacher(id="t2", first_name="T2", last_name=""),
+)
+_CLUB_ACTIVITY = Activity(id="club1", name="Club1", kind=ActivityKind.CLUB)
+_ORDINARY_ACTIVITY = Activity(id="a1", name="A1", kind=ActivityKind.ORDINARY)
+_TWO_CLASS_GROUPS = (
+    ParticipantGroup(id="pg1", name="PG1", class_sections=("c1",), role=ParticipantGroupRole.WHOLE_CLASS),
+    ParticipantGroup(id="pg2", name="PG2", class_sections=("c2",), role=ParticipantGroupRole.WHOLE_CLASS),
+)
+
+
+def _reserved_block(**overrides):
+    defaults = dict(
+        id="rb1", name="RB1", activity_id="club1", class_sections=("c1",),
+        slots=(TimeSlot("mon", "p1"),), teacher_id=None,
+    )
+    defaults.update(overrides)
+    return ReservedBlock(**defaults)
+
+
+def _reserved_problem(**overrides):
+    defaults = dict(
+        class_sections=_TWO_CLASSES,
+        participant_groups=_TWO_CLASS_GROUPS,
+        teachers=_TWO_TEACHERS,
+        activities=(_CLUB_ACTIVITY, _ORDINARY_ACTIVITY),
+    )
+    defaults.update(overrides)
+    return _base_problem(**defaults)
+
+
+def test_reserved_block_valid_produces_no_new_diagnostics():
+    problem = _reserved_problem(reserved_blocks=(_reserved_block(),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert not (codes & {
+        "DUPLICATE_RESERVED_BLOCK_CLASS_SECTION", "DUPLICATE_RESERVED_BLOCK_SLOT",
+        "RESERVED_BLOCK_NON_CLUB_ACTIVITY", "RESERVED_BLOCK_NON_INSTRUCTIONAL_SLOT",
+        "RESERVED_BLOCK_TEACHER_UNAVAILABLE", "RESERVED_BLOCK_CLASS_SLOT_COLLISION",
+        "RESERVED_BLOCK_TEACHER_SLOT_COLLISION",
+    })
+
+
+def test_duplicate_class_within_one_reserved_block_detected():
+    problem = _reserved_problem(
+        reserved_blocks=(_reserved_block(class_sections=("c1", "c1")),),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "DUPLICATE_RESERVED_BLOCK_CLASS_SECTION" in codes
+    # A same-block duplicate is never mistaken for a cross-block collision.
+    assert "RESERVED_BLOCK_CLASS_SLOT_COLLISION" not in codes
+
+
+def test_duplicate_slot_within_one_reserved_block_detected():
+    problem = _reserved_problem(
+        reserved_blocks=(_reserved_block(slots=(TimeSlot("mon", "p1"), TimeSlot("mon", "p1"))),),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "DUPLICATE_RESERVED_BLOCK_SLOT" in codes
+
+
+def test_reserved_block_unknown_activity_does_not_double_with_non_club():
+    problem = _reserved_problem(reserved_blocks=(_reserved_block(activity_id="no-such-activity"),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNKNOWN_ACTIVITY" in codes
+    assert "RESERVED_BLOCK_NON_CLUB_ACTIVITY" not in codes
+
+
+def test_reserved_block_ordinary_activity_rejected():
+    problem = _reserved_problem(reserved_blocks=(_reserved_block(activity_id="a1"),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_BLOCK_NON_CLUB_ACTIVITY" in codes
+
+
+def test_reserved_block_club_activity_produces_no_kind_diagnostic():
+    problem = _reserved_problem(reserved_blocks=(_reserved_block(activity_id="club1"),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_BLOCK_NON_CLUB_ACTIVITY" not in codes
+
+
+def test_reserved_block_unknown_slot_does_not_double_with_non_instructional():
+    problem = _reserved_problem(reserved_blocks=(_reserved_block(slots=(TimeSlot("mon", "no-such-period"),)),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNKNOWN_SLOT" in codes
+    assert "RESERVED_BLOCK_NON_INSTRUCTIONAL_SLOT" not in codes
+
+
+def test_reserved_block_non_instructional_slot_rejected():
+    non_instructional_periods = build_periods() + (
+        Period(id="break", name="Break", index=8, block_id="midday", is_instructional=False),
+    )
+    problem = _reserved_problem(
+        periods=non_instructional_periods,
+        reserved_blocks=(_reserved_block(slots=(TimeSlot("mon", "break"),)),),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_BLOCK_NON_INSTRUCTIONAL_SLOT" in codes
+
+
+def test_reserved_block_unknown_teacher_does_not_double_with_availability():
+    problem = _reserved_problem(reserved_blocks=(_reserved_block(teacher_id="no-such-teacher"),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNKNOWN_TEACHER" in codes
+    assert "RESERVED_BLOCK_TEACHER_UNAVAILABLE" not in codes
+
+
+def test_reserved_block_teacher_unavailable_rejected():
+    problem = _reserved_problem(
+        teacher_availabilities=(TeacherAvailability("t1", "mon", "p1", AvailabilityStatus.UNAVAILABLE),),
+        reserved_blocks=(_reserved_block(teacher_id="t1"),),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_BLOCK_TEACHER_UNAVAILABLE" in codes
+
+
+def test_reserved_block_teacher_prefer_not_produces_no_availability_diagnostic():
+    problem = _reserved_problem(
+        teacher_availabilities=(TeacherAvailability("t1", "mon", "p1", AvailabilityStatus.PREFER_NOT),),
+        reserved_blocks=(_reserved_block(teacher_id="t1"),),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_BLOCK_TEACHER_UNAVAILABLE" not in codes
+
+
+def test_reserved_block_class_slot_collision_names_two_different_blocks():
+    problem = _reserved_problem(
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),)),
+            _reserved_block(id="rb2", activity_id="club1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),)),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_BLOCK_CLASS_SLOT_COLLISION"]
+    assert len(errors) == 1
+    assert errors[0].context["reserved_block_id"] == "rb2"
+    assert errors[0].context["conflicting_reserved_block_id"] == "rb1"
+
+
+def test_reserved_block_teacher_slot_collision_names_two_different_blocks():
+    problem = _reserved_problem(
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), teacher_id="t1"),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),), teacher_id="t1"),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_BLOCK_TEACHER_SLOT_COLLISION"]
+    assert len(errors) == 1
+    assert errors[0].context["reserved_block_id"] == "rb2"
+    assert errors[0].context["conflicting_reserved_block_id"] == "rb1"
+
+
+def test_reserved_block_no_mirrored_duplicate_collision_diagnostics():
+    problem = _reserved_problem(
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),)),
+            _reserved_block(id="rb2", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),)),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_BLOCK_CLASS_SLOT_COLLISION"]
+    # Exactly one directional diagnostic, never a mirrored pair.
+    assert len(errors) == 1
+
+
+def test_reserved_block_different_class_or_different_slot_never_collides():
+    problem = _reserved_problem(
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),)),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),)),
+            _reserved_block(id="rb3", class_sections=("c1",), slots=(TimeSlot("mon", "p2"),)),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_BLOCK_CLASS_SLOT_COLLISION" not in codes
+
+
+def test_reserved_block_class_collision_deterministic_order_independent_of_request_order():
+    # rb2's own class_sections/slots are supplied out of canonical
+    # order; the collision scan must still find the true first owner
+    # (rb1, problem/list order) deterministically.
+    problem = _reserved_problem(
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1", "c2"), slots=(TimeSlot("mon", "p1"), TimeSlot("mon", "p2"))),
+            _reserved_block(
+                id="rb2", class_sections=("c2", "c1"), slots=(TimeSlot("mon", "p2"), TimeSlot("mon", "p1")),
+            ),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_BLOCK_CLASS_SLOT_COLLISION"]
+    assert all(e.context["conflicting_reserved_block_id"] == "rb1" for e in errors)
+    # Each block spans every (class x slot) combination -- (c1,p1),
+    # (c1,p2), (c2,p1), (c2,p2) -- all four collide, regardless of the
+    # request-order permutation rb2 supplied its own classes/slots in.
+    assert len(errors) == 4
+
+
+def test_reserved_block_teacher_collision_deterministic_order_independent_of_request_order():
+    # The teacher-side mirror of the class-side proof above: rb2's own
+    # slots are supplied reversed relative to Day.index/Period.index;
+    # the collision scan must still find the true first owner (rb1,
+    # problem/list order) deterministically, regardless of that
+    # request-order permutation.
+    problem = _reserved_problem(
+        reserved_blocks=(
+            _reserved_block(
+                id="rb1", class_sections=("c1",), teacher_id="t1",
+                slots=(TimeSlot("mon", "p1"), TimeSlot("mon", "p2")),
+            ),
+            _reserved_block(
+                id="rb2", activity_id="club1", class_sections=("c2",), teacher_id="t1",
+                slots=(TimeSlot("mon", "p2"), TimeSlot("mon", "p1")),
+            ),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_BLOCK_TEACHER_SLOT_COLLISION"]
+    assert all(e.context["conflicting_reserved_block_id"] == "rb1" for e in errors)
+    # Both requested slots (mon/p1, mon/p2) collide regardless of the
+    # order rb2 supplied them in.
+    assert len(errors) == 2

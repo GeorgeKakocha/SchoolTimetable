@@ -2415,3 +2415,120 @@ created**. **Reserved A2: NOT implemented. Reserved B: NOT
 implemented. Reserved C: NOT executed.** Nothing pushed. **Next
 planned slice: Reserved A2 -- `ReservedBlock` backend CRUD +
 validation/preflight.**
+
+**Reserved Activities -- Reserved A2 (Reserved Activity /
+`ReservedBlock` backend): IMPLEMENTED on
+`feature/reserved-activity-backend`, pending technical review. NOT
+committed, NOT merged, NOT pushed.** "Reserved Activity" = the
+user-facing name for `ReservedBlock`, mirroring "Special Activity" =
+`Activity(kind=CLUB)`. Reuses the existing `ReservedBlock` domain
+object and `reserved_block`/`reserved_block_class_section`/
+`reserved_block_slot` ORM tables verbatim -- zero schema change, zero
+migration.
+
+CRUD: POST/PUT accept the complete aggregate (`special_activity_id`,
+`class_section_ids`, `teacher_id` required-but-nullable, `slots`) as
+one whole-aggregate replacement, never partial. `ReservedBlock.name`
+always server-derived from the Special Activity's current name.
+Natural ID `reserved_block_<uuid4().hex>`; ordinal is `ReservedBlock`'s
+own sequence. Canonical child ordering (authoritative `ClassSection`
+order; `Day.index`/`Period.index` order), always recomputed at write
+time regardless of request order -- required for Owner Decision #36's
+frozen-dataclass generation-race equality to hold. Update replaces
+children wholesale (delete-and-reinsert, one transaction).
+
+Five semantic invariants, each enforced at write-time and independent
+preflight: (1) activity must be a Special Activity -- preflight
+`RESERVED_BLOCK_NON_CLUB_ACTIVITY` (matches the established
+`NON_ORDINARY_TEACHING_REQUIREMENT_ACTIVITY` naming convention),
+application `NonSpecialActivityTargetError` -> 422
+`NON_SPECIAL_ACTIVITY_TARGET` with zero raw `CLUB`/`ORDINARY`/
+`actual_kind` leak; (2) instructional slots only; (3) a
+teacher-attached block may never use a Teacher-`UNAVAILABLE` slot
+(`PREFER_NOT`/`AVAILABLE` both allowed, zero solver penalty --
+`ReservedBlock` remains fixed occupancy, zero CP-SAT variables,
+confirmed unchanged); (4) no two different blocks may claim the same
+class+slot; (5) no two different teacher-attached blocks may claim the
+same teacher+slot. Plus two same-block structural defense-in-depth
+diagnostics mirroring `DUPLICATE_TEACHER_AVAILABILITY_CELL`'s own
+precedent. All five checks live once in `validation/preflight.py`;
+the application layer reuses them via a candidate-diff pattern
+mirroring `teaching_assignment_rules.new_validation_errors` exactly,
+so write-time and independent-verifier checks can never diverge. The
+collision scan is a direct deterministic traversal (never
+`ProblemIndex`'s last-writer-wins solver lookups), emitting exactly
+one directional diagnostic per collision; a block can never collide
+with its own prior self since an update's candidate always replaces
+the target rather than duplicating it.
+
+Fixed, unrelated pre-existing bug found along the way:
+`tests/test_reoptimize.py` had a hand-built `Activity("club_chess",
+"Chess")` missing `kind=ActivityKind.CLUB` (invisible before this
+slice); corrected the test fixture, not the new validation.
+
+New routes: `GET/POST .../reserved-activities`, `PUT/DELETE
+.../reserved-activities/{id}` -- never `/reserved-blocks`; raw
+`/config` unchanged. `ReservedActivityProjectionService` loads exactly
+ONE `SchedulingProblem` snapshot for the whole page (never composes
+`SpecialActivityProjectionService`). Every `reserved_activities` item
+is normalized (bare ID references only, resolved against the same
+response's top-level catalogs) -- never denormalized names, `kind`,
+or `ordinal`. `periods` returns every period with `is_instructional`;
+writes accept instructional periods only.
+
+Repository (`SqlAlchemyReservedActivityRepository`) independently
+re-resolves every reference scoped to the same `academic_year_id` and
+re-verifies the Special Activity's kind regardless of `validate`
+(proven via a deliberately permissive fake). Delete is a leaf
+operation: children cascade at the DB level; `schedule_entry`'s
+`RESTRICT` FK to `reserved_block.id` is structurally unreachable since
+the configuration lock already forbids the delete once any Schedule
+exists.
+
+Test gate: 46 new pure + 16 new preflight tests (core 397 passed/5
+deselected); 25 new repository + 38 new API tests (`tests_web` 391
+passed, zero skips); frontend 302 passed (fully unchanged), build
+clean; Alembic unchanged at `cae76cba3c58`, single head, no drift.
+
+A new local-only review dataset,
+`reserved-activity-review-school`/`ay-reserved-activity-review-2026`
+(3 days, 4 instructional + 1 non-instructional period, 3 Teachers, 3
+ClassSections, 2 CLUB + 1 ORDINARY Activity, Teacher A with one
+UNAVAILABLE + one PREFER_NOT row, one pre-existing ReservedBlock, zero
+Schedule), was created and validated end-to-end against the real
+running backend across all 19 required proof points (projection
+shape; teacherless and teacher-attached create; canonical class/slot
+reordering; duplicate class/slot rejection; wrong-kind rejection with
+zero leak; non-instructional rejection; UNAVAILABLE rejection
+bundling correctly with a simultaneous collision; PREFER_NOT
+acceptance; both collision kinds; PUT replacement recomputing the
+derived name, reflected in `/config`; DELETE reflected in `/config`;
+zero Schedule throughout) and is retained.
+
+**Seeded initial state:** one `ReservedBlock`, `club_debate_block`.
+**Final retained state** (re-confirmed read-only from PostgreSQL at
+pre-closure audit): `club_debate_block` was renamed (via the PUT
+proof step, Special Activity changed, name recomputed to "Art Club")
+then deleted (via the DELETE proof step) -- zero rows remain under
+that original ID. Five other blocks, created across the review
+sequence (teacherless create, teacher-attached create,
+reversed-class-order create, reversed-slot-order create,
+PREFER_NOT-allowed create), remain retained. **Final `ReservedBlock`
+count: 5. Final `Schedule` count: 0.** (Corrects a prior informal
+miscount of four retained blocks -- five is the PostgreSQL-confirmed
+total.)
+
+All ten pre-existing datasets (seven earlier canonical/review + two
+Availability C + Reserved A1's own `special-activity-review-school`)
+snapshotted before and after this run across the same recorded fields
+-- unchanged for all ten; the new review dataset is excluded from
+that claim.
+
+Explicitly NOT part of this slice: the Reserved Activities frontend
+page, any frontend change, Resource/ParticipantGroup support, multiple
+Teachers per block, recurrence/flexible placement, any timetable or
+solver production change (both fully unchanged -- the five invariants
+are pure preflight/application validation, never a solver behavior
+change). **Owner Decision #39 was NOT created** -- every open question
+was settled by direct existing precedent. Reserved A2 is **not**
+closed; Reserved B/C remain unimplemented.

@@ -743,6 +743,110 @@ class SpecialActivityInUseErrorResponse(BaseModel):
     referenced_by: tuple[str, ...]
 
 
+# -- Reserved Activity CRUD API (Reserved Activities Slice A2). ------------
+
+
+class ReservedActivitySpecialActivityOptionResponse(BaseModel):
+    id: str
+    name: str
+
+
+class ReservedActivityTeacherOptionResponse(BaseModel):
+    id: str
+    name: str
+
+
+class ReservedActivityClassSectionOptionResponse(BaseModel):
+    id: str
+    name: str
+
+
+class ReservedActivityDayOptionResponse(BaseModel):
+    id: str
+    name: str
+    index: int
+
+
+class ReservedActivityPeriodOptionResponse(BaseModel):
+    id: str
+    name: str
+    index: int
+    is_instructional: bool
+
+
+class ReservedActivitySlotResponse(BaseModel):
+    day_id: str
+    period_id: str
+
+
+class ReservedActivityItemResponse(BaseModel):
+    """No `name`/`special_activity_name`/`teacher_name`/class-section
+    names -- every reference here is a bare natural ID, resolved by
+    the consumer against this same response's own top-level catalogs."""
+
+    id: str
+    special_activity_id: str
+    class_section_ids: tuple[str, ...]
+    teacher_id: str | None
+    slots: tuple[ReservedActivitySlotResponse, ...]
+
+
+class ReservedActivitiesProjectionResponse(BaseModel):
+    configuration_locked: bool
+    special_activities: tuple[ReservedActivitySpecialActivityOptionResponse, ...]
+    teachers: tuple[ReservedActivityTeacherOptionResponse, ...]
+    class_sections: tuple[ReservedActivityClassSectionOptionResponse, ...]
+    days: tuple[ReservedActivityDayOptionResponse, ...]
+    periods: tuple[ReservedActivityPeriodOptionResponse, ...]
+    reserved_activities: tuple[ReservedActivityItemResponse, ...]
+
+
+class ReservedActivityWriteRequest(BaseModel):
+    """POST/PUT request body -- the COMPLETE desired aggregate, never a
+    partial patch. `teacher_id` is required but nullable -- an omitted
+    `teacher_id` field is a normal request-validation failure, never
+    silently defaulted. Never accepts `id`/`name`/`kind`/`ordinal`/
+    `resource`/`participant_group`/`duration`/`recurrence`."""
+
+    special_activity_id: str
+    class_section_ids: tuple[str, ...]
+    teacher_id: str | None
+    slots: tuple[ReservedActivitySlotResponse, ...]
+
+
+class ReservedActivityWriteResponse(BaseModel):
+    """POST/PUT success body -- the written `ReservedBlock`'s own
+    resolved fields, already in canonical persisted order. No `name`
+    -- server-derived, internal, never exposed on this surface."""
+
+    id: str
+    special_activity_id: str
+    class_section_ids: tuple[str, ...]
+    teacher_id: str | None
+    slots: tuple[ReservedActivitySlotResponse, ...]
+
+
+class ReservedActivityDeleteResponse(BaseModel):
+    deleted_id: str
+
+
+class InvalidReservedActivityErrorResponse(BaseModel):
+    code: Literal["INVALID_RESERVED_ACTIVITY"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class NonSpecialActivityTargetErrorResponse(BaseModel):
+    """Deliberately carries only `activity_id` -- never `actual_kind`/
+    `kind`, and never the raw `CLUB`/`ORDINARY` vocabulary, unlike
+    Teaching Assignments' unrelated `NON_ORDINARY_ACTIVITY_TARGET`
+    contract."""
+
+    code: Literal["NON_SPECIAL_ACTIVITY_TARGET"]
+    detail: str
+    activity_id: str
+
+
 # -- Teacher Availability API (Owner Decision #38). ------------------------
 
 
