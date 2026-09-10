@@ -270,6 +270,7 @@ def reserved_block_to_domain(
             for r in ordered_slots
         ),
         teacher_id=None if row.teacher_id is None else lookup.teacher(row.teacher_id),
+        resource_id=None if row.resource_id is None else lookup.resource(row.resource_id),
     )
 
 
@@ -334,6 +335,7 @@ def schedule_entry_to_domain(
         class_sections=block.class_sections,
         teacher_id=block.teacher_id,
         participant_group_id=None,
+        resource_id=block.resource_id,
         reserved_block_id=block.id,
     )
 

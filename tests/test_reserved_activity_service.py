@@ -29,6 +29,7 @@ from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
 from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
+from school_timetable.domain.resources import Resource
 from school_timetable.domain.school import School
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 
@@ -42,12 +43,14 @@ def _slot(day_id: str, period_id: str) -> ReservedActivitySlotFields:
 
 def _fields(
     special_activity_id="club_robotics", class_section_ids=("8a",), teacher_id=None, slots=(("mon", "p1"),),
+    resource_id=None,
 ) -> ReservedActivityFields:
     return ReservedActivityFields(
         special_activity_id=special_activity_id,
         class_section_ids=class_section_ids,
         teacher_id=teacher_id,
         slots=tuple(_slot(d, p) for d, p in slots),
+        resource_id=resource_id,
     )
 
 
@@ -105,6 +108,7 @@ def _fake_result(reserved_activity_id, fields):
         class_section_ids=fields.class_section_ids,
         teacher_id=fields.teacher_id,
         slots=fields.slots,
+        resource_id=fields.resource_id,
     )
 
 
@@ -534,3 +538,215 @@ def test_delete_rejected_once_schedule_exists():
     service, _ = _service(active_schedule="anything-non-none")
     with pytest.raises(ConfigurationLockedError):
         service.delete(_SCHOOL, _YEAR, "club_chess")
+
+
+# == RESOURCES B2 (fixed Resource on a Reserved Activity) ===================
+
+def _problem_with_second_resource(problem, resource_id="lab", name="Science Lab", capacity=1):
+    return replace(problem, resources=problem.resources + (Resource(id=resource_id, name=name, capacity=capacity),))
+
+
+def test_create_omitted_resource_id_defaults_to_none():
+    service, write_port = _service()
+    result = service.create(_SCHOOL, _YEAR, _fields())
+    assert result.resource_id is None
+    assert write_port.create_calls[0][1].resource_id is None
+
+
+def test_create_with_valid_resource_succeeds():
+    service, write_port = _service()
+    result = service.create(_SCHOOL, _YEAR, _fields(resource_id="gym"))
+    assert result.resource_id == "gym"
+    assert write_port.create_calls[0][1].resource_id == "gym"
+
+
+def test_create_unknown_resource_rejected():
+    service, _ = _service()
+    with pytest.raises(UnknownReferenceError) as exc_info:
+        service.create(_SCHOOL, _YEAR, _fields(resource_id="no-such-resource"))
+    assert exc_info.value.reference_kind == "resource"
+    assert exc_info.value.reference_id == "no-such-resource"
+
+
+def test_create_resource_from_a_different_problem_snapshot_is_unknown():
+    # Cross-AY defense-in-depth: a Resource that exists in some OTHER
+    # problem/AY's own snapshot is indistinguishable from a genuinely
+    # unknown one when validated against THIS problem.
+    other_problem = _problem_with_second_resource(build_valid_fixture())
+    service, _ = _service()  # plain build_valid_fixture(), without "lab"
+    with pytest.raises(UnknownReferenceError) as exc_info:
+        service.create(_SCHOOL, _YEAR, _fields(resource_id="lab"))
+    assert exc_info.value.reference_kind == "resource"
+    assert other_problem.resources[-1].id == "lab"  # sanity: "lab" is real, just not in THIS problem
+
+
+def test_create_single_block_using_full_capacity_succeeds():
+    # gym has capacity=1 in the fixture, and is not otherwise reserved
+    # at (fri, p1) -- a single new ReservedBlock there is valid.
+    service, write_port = _service()
+    result = service.create(_SCHOOL, _YEAR, _fields(resource_id="gym", slots=(("fri", "p1"),)))
+    assert result.resource_id == "gym"
+    assert write_port.create_calls
+
+
+def test_create_exceeding_aggregate_capacity_rejected():
+    # Two DIFFERENT existing ReservedBlocks already claim the identical
+    # (resource, slot); this fixture doesn't have that pre-existing
+    # collision, so first inject one directly-conflicting block, then
+    # attempt to create a second one at the identical Resource/slot with
+    # capacity=1 -- must be rejected as a HARD aggregate-capacity
+    # violation, never silently allowed.
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=problem.reserved_blocks + (
+            ReservedBlock(
+                id="rb_gym_1", name="Assembly", activity_id="club_chess",
+                class_sections=("8a",), slots=(TimeSlot("fri", "p1"),), teacher_id=None, resource_id="gym",
+            ),
+        ),
+    )
+    service, _ = _service(problem=problem)
+    with pytest.raises(InvalidReservedActivityError) as exc_info:
+        service.create(
+            _SCHOOL, _YEAR,
+            _fields(class_section_ids=("8b",), resource_id="gym", slots=(("fri", "p1"),)),
+        )
+    assert any(e.code == "RESERVED_RESOURCE_CAPACITY_EXCEEDED" for e in exc_info.value.validation_errors)
+
+
+def test_create_within_capacity_two_succeeds():
+    # capacity=2 on a second Resource allows two DIFFERENT ReservedBlocks
+    # to share the identical slot.
+    problem = _problem_with_second_resource(build_valid_fixture(), resource_id="hall", capacity=2)
+    problem = replace(
+        problem,
+        reserved_blocks=problem.reserved_blocks + (
+            ReservedBlock(
+                id="rb_hall_1", name="Assembly", activity_id="club_chess",
+                class_sections=("8a",), slots=(TimeSlot("fri", "p1"),), teacher_id=None, resource_id="hall",
+            ),
+        ),
+    )
+    service, write_port = _service(problem=problem)
+    result = service.create(
+        _SCHOOL, _YEAR, _fields(class_section_ids=("8b",), resource_id="hall", slots=(("fri", "p1"),)),
+    )
+    assert result.resource_id == "hall"
+    assert write_port.create_calls
+
+
+def test_create_multi_class_block_consumes_only_one_unit():
+    # A single new ReservedBlock spanning two classes at gym's already-
+    # occupied slot would still be only ONE additional unit -- but gym
+    # is capacity=1 and unused at (fri, p1), so this must succeed even
+    # though it covers two classes at once.
+    service, write_port = _service()
+    result = service.create(
+        _SCHOOL, _YEAR, _fields(class_section_ids=("8a", "8b"), resource_id="gym", slots=(("fri", "p1"),)),
+    )
+    assert result.resource_id == "gym"
+    assert write_port.create_calls
+
+
+def test_update_assigns_resource_to_previously_unassigned_block():
+    service, write_port = _service()
+    result = service.update(
+        _SCHOOL, _YEAR, "club_chess",
+        _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym"),
+    )
+    assert result.resource_id == "gym"
+
+
+def test_update_omitted_resource_id_clears_existing_resource():
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=tuple(
+            replace(b, resource_id="gym") if b.id == "club_chess" else b for b in problem.reserved_blocks
+        ),
+    )
+    service, write_port = _service(problem=problem)
+    result = service.update(
+        _SCHOOL, _YEAR, "club_chess",
+        _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),)),
+    )
+    assert result.resource_id is None
+
+
+def test_update_replaces_resource_a_with_resource_b():
+    problem = _problem_with_second_resource(build_valid_fixture())
+    problem = replace(
+        problem,
+        reserved_blocks=tuple(
+            replace(b, resource_id="gym") if b.id == "club_chess" else b for b in problem.reserved_blocks
+        ),
+    )
+    service, write_port = _service(problem=problem)
+    result = service.update(
+        _SCHOOL, _YEAR, "club_chess",
+        _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="lab"),
+    )
+    assert result.resource_id == "lab"
+
+
+def test_update_unknown_resource_rejected():
+    service, _ = _service()
+    with pytest.raises(UnknownReferenceError) as exc_info:
+        service.update(
+            _SCHOOL, _YEAR, "club_chess",
+            _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="no-such-resource"),
+        )
+    assert exc_info.value.reference_kind == "resource"
+
+
+def test_update_changing_slots_removes_old_slot_usage_and_applies_new():
+    # club_chess starts fixed at (gym, wed, p8) -- moving it to (fri, p1)
+    # must free (wed, p8) and re-evaluate capacity only at the NEW slot,
+    # never treat the block's own prior slot as still occupied.
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=tuple(
+            replace(b, resource_id="gym") if b.id == "club_chess" else b for b in problem.reserved_blocks
+        ),
+    )
+    service, write_port = _service(problem=problem)
+    result = service.update(
+        _SCHOOL, _YEAR, "club_chess",
+        _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("fri", "p1"),), resource_id="gym"),
+    )
+    assert set((s.day_id, s.period_id) for s in result.slots) == {("fri", "p1")}
+
+
+def test_update_exceeding_aggregate_capacity_rejected():
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=problem.reserved_blocks + (
+            ReservedBlock(
+                id="rb_gym_1", name="Assembly", activity_id="club_chess",
+                class_sections=("9a",), slots=(TimeSlot("fri", "p1"),), teacher_id=None, resource_id="gym",
+            ),
+        ),
+    )
+    service, _ = _service(problem=problem)
+    with pytest.raises(InvalidReservedActivityError) as exc_info:
+        service.update(
+            _SCHOOL, _YEAR, "club_chess",
+            _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("fri", "p1"),), resource_id="gym"),
+        )
+    assert any(e.code == "RESERVED_RESOURCE_CAPACITY_EXCEEDED" for e in exc_info.value.validation_errors)
+
+
+def test_delete_reserved_block_with_resource_succeeds():
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=tuple(
+            replace(b, resource_id="gym") if b.id == "club_chess" else b for b in problem.reserved_blocks
+        ),
+    )
+    service, write_port = _service(problem=problem)
+    service.delete(_SCHOOL, _YEAR, "club_chess")
+    assert write_port.delete_calls == ["club_chess"]

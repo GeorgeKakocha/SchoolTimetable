@@ -6,6 +6,7 @@ import type {
   ReservedActivityDay,
   ReservedActivityItem,
   ReservedActivityPeriod,
+  ReservedActivityResourceOption,
   ReservedActivitySpecialActivityOption,
   ReservedActivityTeacherOption,
 } from "../api/reservedActivities";
@@ -16,6 +17,7 @@ const CLASS_SECTIONS: ReservedActivityClassSectionOption[] = [
   { id: "class_8b", name: "8B" },
 ];
 const TEACHERS: ReservedActivityTeacherOption[] = [{ id: "teacher_a", name: "Maia Beridze" }];
+const RESOURCES: ReservedActivityResourceOption[] = [{ id: "gym", name: "Gym", capacity: 1 }];
 const DAYS: ReservedActivityDay[] = [
   { id: "mon", name: "Monday", index: 0 },
   { id: "wed", name: "Wednesday", index: 2 },
@@ -36,6 +38,7 @@ const BASE_ITEM: ReservedActivityItem = {
     { day_id: "mon", period_id: "p2" },
     { day_id: "wed", period_id: "p4" },
   ],
+  resource_id: null,
 };
 
 function renderCard(overrides: Partial<React.ComponentProps<typeof ReservedActivityCard>> = {}) {
@@ -44,6 +47,7 @@ function renderCard(overrides: Partial<React.ComponentProps<typeof ReservedActiv
     specialActivities: SPECIAL_ACTIVITIES,
     classSections: CLASS_SECTIONS,
     teachers: TEACHERS,
+    resources: RESOURCES,
     days: DAYS,
     periods: PERIODS,
     locked: false,
@@ -99,6 +103,22 @@ describe("ReservedActivityCard", () => {
     expect(screen.getByText("Unknown time slot")).toBeInTheDocument();
   });
 
+  it("shows 'No resource' when resource_id is null", () => {
+    renderCard({ item: { ...BASE_ITEM, resource_id: null } });
+    expect(screen.getByText("No resource")).toBeInTheDocument();
+  });
+
+  it("shows the Resource name when resource_id resolves", () => {
+    renderCard({ item: { ...BASE_ITEM, resource_id: "gym" } });
+    expect(screen.getByText("Gym")).toBeInTheDocument();
+  });
+
+  it("falls back to 'Unknown resource' for an unresolvable resource reference, without exposing the raw ID", () => {
+    renderCard({ item: { ...BASE_ITEM, resource_id: "resource_missing" } });
+    expect(screen.getByText("Unknown resource")).toBeInTheDocument();
+    expect(screen.queryByText("resource_missing")).not.toBeInTheDocument();
+  });
+
   it("clicking Edit on a fully resolvable record calls onEditClick with the item", () => {
     const onEditClick = vi.fn();
     renderCard({ onEditClick });
@@ -125,6 +145,29 @@ describe("ReservedActivityCard", () => {
   it("Delete remains available on a malformed record", () => {
     const onDeleteClick = vi.fn();
     renderCard({ onDeleteClick, item: { ...BASE_ITEM, special_activity_id: "club_missing" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(onDeleteClick).toHaveBeenCalledWith("reserved_block_1");
+  });
+
+  it("clicking Edit is blocked when resource_id cannot resolve, mirroring other unresolvable references", () => {
+    const onEditClick = vi.fn();
+    renderCard({ onEditClick, item: { ...BASE_ITEM, resource_id: "resource_missing" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(onEditClick).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        "This Reserved Activity cannot be edited because some referenced configuration data is unavailable.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("Delete remains available when resource_id cannot resolve", () => {
+    const onDeleteClick = vi.fn();
+    renderCard({ onDeleteClick, item: { ...BASE_ITEM, resource_id: "resource_missing" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 

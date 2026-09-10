@@ -76,6 +76,12 @@ _RESERVED_ACTIVITY_BLOCKING_CODES = frozenset({
     "RESERVED_BLOCK_TEACHER_UNAVAILABLE",
     "RESERVED_BLOCK_CLASS_SLOT_COLLISION",
     "RESERVED_BLOCK_TEACHER_SLOT_COLLISION",
+    # Resources B2 -- the aggregate reserved-vs-reserved Resource
+    # capacity structural rule (`preflight._check_reserved_block_
+    # resource_capacity`), surfaced through this exact same
+    # candidate-diff mechanism as every other ReservedBlock structural
+    # check above; never a pairwise collision code.
+    "RESERVED_RESOURCE_CAPACITY_EXCEEDED",
 })
 
 
@@ -153,12 +159,19 @@ def _validate_references(
     class_section_ids: tuple[str, ...],
     teacher_id: str | None,
     slots: tuple[tuple[str, str], ...],
+    resource_id: str | None,
 ) -> None:
     """The first missing reference (in the fixed order: special
     activity, class sections in request order, teacher, slots in
-    request order) raises `UnknownReferenceError` immediately -- never
-    bundled, matching `teaching_assignment_rules.validate_create`'s
-    own single-error-per-missing-reference discipline."""
+    request order, resource) raises `UnknownReferenceError`
+    immediately -- never bundled, matching
+    `teaching_assignment_rules.validate_create`'s own
+    single-error-per-missing-reference discipline. `resource_id`
+    resolution is scoped to this already-loaded, year-specific
+    `problem.resources` -- a cross-AY Resource natural ID is therefore
+    indistinguishable from a genuinely unknown one (Resources B2's
+    cross-AY defense-in-depth), mirroring Resources B1's identical
+    treatment for ordinary Teaching Assignments."""
     if find_special_activity(problem, special_activity_id) is None:
         raise UnknownReferenceError(
             school_natural_id, academic_year_natural_id, "special_activity", special_activity_id,
@@ -176,6 +189,8 @@ def _validate_references(
             raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "day", day_id)
         if period_id not in known_period_ids:
             raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "period", period_id)
+    if resource_id is not None and not any(r.id == resource_id for r in problem.resources):
+        raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "resource", resource_id)
 
 
 def _require_special_activity_kind(
@@ -218,6 +233,7 @@ def validate_create(
     class_section_ids: tuple[str, ...],
     teacher_id: str | None,
     slots: tuple[tuple[str, str], ...],
+    resource_id: str | None = None,
 ) -> None:
     _validate_structural(
         school_natural_id, academic_year_natural_id, class_section_ids=class_section_ids, slots=slots,
@@ -225,7 +241,7 @@ def validate_create(
     _validate_references(
         problem, school_natural_id, academic_year_natural_id,
         special_activity_id=special_activity_id, class_section_ids=class_section_ids,
-        teacher_id=teacher_id, slots=slots,
+        teacher_id=teacher_id, slots=slots, resource_id=resource_id,
     )
     _require_special_activity_kind(problem, school_natural_id, academic_year_natural_id, special_activity_id)
 
@@ -236,6 +252,7 @@ def validate_create(
         class_sections=class_section_ids,
         slots=tuple(TimeSlot(day_id, period_id) for day_id, period_id in slots),
         teacher_id=teacher_id,
+        resource_id=resource_id,
     )
     candidate = replace(problem, reserved_blocks=problem.reserved_blocks + (candidate_block,))
     new_errors = _candidate_diff_errors(problem, candidate)
@@ -253,6 +270,7 @@ def validate_update(
     class_section_ids: tuple[str, ...],
     teacher_id: str | None,
     slots: tuple[tuple[str, str], ...],
+    resource_id: str | None = None,
 ) -> None:
     existing = find_reserved_block(problem, reserved_activity_id)
     if existing is None:
@@ -264,7 +282,7 @@ def validate_update(
     _validate_references(
         problem, school_natural_id, academic_year_natural_id,
         special_activity_id=special_activity_id, class_section_ids=class_section_ids,
-        teacher_id=teacher_id, slots=slots,
+        teacher_id=teacher_id, slots=slots, resource_id=resource_id,
     )
     _require_special_activity_kind(problem, school_natural_id, academic_year_natural_id, special_activity_id)
 
@@ -275,6 +293,7 @@ def validate_update(
         class_sections=class_section_ids,
         slots=tuple(TimeSlot(day_id, period_id) for day_id, period_id in slots),
         teacher_id=teacher_id,
+        resource_id=resource_id,
     )
     # The target block is REPLACED, never duplicated -- `candidate`
     # never contains two entries sharing `reserved_activity_id`, so the

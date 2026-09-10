@@ -53,6 +53,7 @@ const BASE_PROJECTION: ReservedActivitiesProjectionResponse = {
     { id: "break", name: "Break", index: 1, is_instructional: false },
   ],
   reserved_activities: [],
+  resources: [{ id: "gym", name: "Gym", capacity: 1 }],
 };
 
 const ONE_RESERVED_ACTIVITY: ReservedActivitiesProjectionResponse = {
@@ -64,6 +65,7 @@ const ONE_RESERVED_ACTIVITY: ReservedActivitiesProjectionResponse = {
       class_section_ids: ["class_8a"],
       teacher_id: null,
       slots: [{ day_id: "mon", period_id: "p1" }],
+      resource_id: null,
     },
   ],
 };
@@ -81,6 +83,7 @@ const TWO_RESERVED_ACTIVITIES: ReservedActivitiesProjectionResponse = {
       class_section_ids: ["class_8a"],
       teacher_id: null,
       slots: [{ day_id: "mon", period_id: "p1" }],
+      resource_id: null,
     },
     {
       id: "reserved_block_2",
@@ -88,6 +91,7 @@ const TWO_RESERVED_ACTIVITIES: ReservedActivitiesProjectionResponse = {
       class_section_ids: ["class_8b"],
       teacher_id: null,
       slots: [{ day_id: "mon", period_id: "p1" }],
+      resource_id: null,
     },
   ],
 };
@@ -206,6 +210,7 @@ describe("ReservedActivitiesPage", () => {
         class_section_ids: ["class_8a"],
         teacher_id: null,
         slots: [{ day_id: "mon", period_id: "p1" }],
+        resource_id: null,
       });
       mockedGetReservedActivities.mockResolvedValueOnce(ONE_RESERVED_ACTIVITY);
 
@@ -224,6 +229,7 @@ describe("ReservedActivitiesPage", () => {
           class_section_ids: ["class_8a"],
           teacher_id: null,
           slots: [{ day_id: "mon", period_id: "p1" }],
+          resource_id: null,
         });
       });
       await screen.findByText("Debate Club");
@@ -249,6 +255,7 @@ describe("ReservedActivitiesPage", () => {
         class_section_ids: ["class_8a", "class_8b"],
         teacher_id: null,
         slots: [{ day_id: "mon", period_id: "p1" }],
+        resource_id: null,
       });
       mockedGetReservedActivities.mockResolvedValueOnce({
         ...ONE_RESERVED_ACTIVITY,
@@ -274,6 +281,7 @@ describe("ReservedActivitiesPage", () => {
           class_section_ids: ["class_8a", "class_8b"],
           teacher_id: null,
           slots: [{ day_id: "mon", period_id: "p1" }],
+          resource_id: null,
         });
       });
     });
@@ -365,6 +373,7 @@ describe("ReservedActivitiesPage", () => {
             class_section_ids: ["class_8a"],
             teacher_id: null,
             slots: [{ day_id: "mon", period_id: "p1" }],
+            resource_id: null,
           },
         ],
       };
@@ -428,6 +437,32 @@ describe("ReservedActivitiesPage", () => {
       expect(document.body.textContent ?? "").not.toContain("reserved_block_gone");
     });
 
+    it("resolves a RESERVED_RESOURCE_CAPACITY_EXCEEDED diagnostic to a friendly, resource-named message", async () => {
+      mockedGetReservedActivities.mockResolvedValue(BASE_PROJECTION);
+      mockedCreateReservedActivity.mockRejectedValue(
+        new ApiError(422, "invalid", "INVALID_RESERVED_ACTIVITY", {
+          errors: [
+            {
+              code: "RESERVED_RESOURCE_CAPACITY_EXCEEDED",
+              message: "capacity exceeded",
+              context: { resource_id: "gym", day_id: "mon", period_id: "p1", capacity: 1, reserved_usage: 2 },
+            },
+          ],
+        }),
+      );
+
+      renderPage();
+      await screen.findByRole("button", { name: "+ Add reserved activity" });
+      fireEvent.click(screen.getByRole("button", { name: "+ Add reserved activity" }));
+      fireEvent.change(screen.getByRole("combobox", { name: "Special Activity" }), { target: { value: "club_debate" } });
+      fireEvent.click(screen.getByRole("checkbox", { name: "8A" }));
+      fireEvent.click(document.getElementById("reserved-slot-desktop-mon-p1")!);
+      fireEvent.change(screen.getByRole("combobox", { name: "Resource" }), { target: { value: "gym" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await screen.findByText("Gym is already fully booked at Monday P1 (capacity 1).");
+    });
+
     it("on UNKNOWN_REFERENCE, closes the editor, discards the draft, refetches, and shows a transient message", async () => {
       mockedGetReservedActivities.mockResolvedValueOnce(BASE_PROJECTION);
       mockedCreateReservedActivity.mockRejectedValue(
@@ -482,6 +517,7 @@ describe("ReservedActivitiesPage", () => {
       class_section_ids: ["class_8a"],
       teacher_id: null,
       slots: [{ day_id: "mon", period_id: "p1" }],
+      resource_id: null,
     });
     mockedGetReservedActivities.mockRejectedValueOnce(new ApiError(500, "Request failed."));
     mockedGetReservedActivities.mockResolvedValueOnce(ONE_RESERVED_ACTIVITY);

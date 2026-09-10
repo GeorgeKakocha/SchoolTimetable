@@ -83,7 +83,7 @@ class ReservedActivityService:
             rules.validate_create(
                 current_problem, school_natural_id, academic_year_natural_id, reserved_activity_id,
                 special_activity_id=fields.special_activity_id, class_section_ids=fields.class_section_ids,
-                teacher_id=fields.teacher_id, slots=slot_pairs,
+                teacher_id=fields.teacher_id, slots=slot_pairs, resource_id=fields.resource_id,
             )
 
         # Fast precheck against the just-loaded snapshot -- the
@@ -113,7 +113,7 @@ class ReservedActivityService:
             rules.validate_update(
                 current_problem, school_natural_id, academic_year_natural_id, reserved_activity_id,
                 special_activity_id=fields.special_activity_id, class_section_ids=fields.class_section_ids,
-                teacher_id=fields.teacher_id, slots=slot_pairs,
+                teacher_id=fields.teacher_id, slots=slot_pairs, resource_id=fields.resource_id,
             )
 
         validate(problem)

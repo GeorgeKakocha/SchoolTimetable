@@ -97,6 +97,9 @@ class SqlAlchemyReservedActivityRepository:
             teacher_row = _resolve_teacher(
                 session, year_id, fields.teacher_id, school_natural_id, academic_year_natural_id,
             )
+            resource_row = _resolve_resource(
+                session, year_id, fields.resource_id, school_natural_id, academic_year_natural_id,
+            )
             class_rows = _resolve_class_sections(
                 session, year_id, fields.class_section_ids, school_natural_id, academic_year_natural_id,
             )
@@ -106,6 +109,7 @@ class SqlAlchemyReservedActivityRepository:
                 academic_year_id=year_id, natural_id=reserved_activity_natural_id,
                 name=activity_row.name, activity_id=activity_row.id,
                 teacher_id=teacher_row.id if teacher_row is not None else None,
+                resource_id=resource_row.id if resource_row is not None else None,
                 ordinal=_next_reserved_block_ordinal(session, year_id),
             )
             session.add(block_row)
@@ -114,7 +118,9 @@ class SqlAlchemyReservedActivityRepository:
             _insert_children(session, year_id, block_row.id, class_rows, slot_rows)
             session.commit()
 
-            return _write_result(reserved_activity_natural_id, activity_row, teacher_row, class_rows, slot_rows)
+            return _write_result(
+                reserved_activity_natural_id, activity_row, teacher_row, resource_row, class_rows, slot_rows,
+            )
         except BaseException:
             session.rollback()
             raise
@@ -162,6 +168,9 @@ class SqlAlchemyReservedActivityRepository:
             teacher_row = _resolve_teacher(
                 session, year_id, fields.teacher_id, school_natural_id, academic_year_natural_id,
             )
+            resource_row = _resolve_resource(
+                session, year_id, fields.resource_id, school_natural_id, academic_year_natural_id,
+            )
             class_rows = _resolve_class_sections(
                 session, year_id, fields.class_section_ids, school_natural_id, academic_year_natural_id,
             )
@@ -179,12 +188,17 @@ class SqlAlchemyReservedActivityRepository:
             block_row.activity_id = activity_row.id
             block_row.name = activity_row.name
             block_row.teacher_id = teacher_row.id if teacher_row is not None else None
+            # Full-replacement, matching every other field on this row
+            # (Resources B2) -- `resource_id=None` always clears it.
+            block_row.resource_id = resource_row.id if resource_row is not None else None
             # natural_id and ordinal are never touched.
 
             _insert_children(session, year_id, block_row.id, class_rows, slot_rows)
             session.commit()
 
-            return _write_result(reserved_activity_natural_id, activity_row, teacher_row, class_rows, slot_rows)
+            return _write_result(
+                reserved_activity_natural_id, activity_row, teacher_row, resource_row, class_rows, slot_rows,
+            )
         except BaseException:
             session.rollback()
             raise
@@ -270,6 +284,23 @@ def _resolve_teacher(
     return row
 
 
+def _resolve_resource(
+    session: Session, year_id: int, resource_natural_id: str | None,
+    school_natural_id: str, academic_year_natural_id: str,
+) -> orm.Resource | None:
+    if resource_natural_id is None:
+        return None
+    row = session.execute(
+        select(orm.Resource).where(
+            orm.Resource.academic_year_id == year_id,
+            orm.Resource.natural_id == resource_natural_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "resource", resource_natural_id)
+    return row
+
+
 def _resolve_class_sections(
     session: Session, year_id: int, class_section_ids: tuple[str, ...],
     school_natural_id: str, academic_year_natural_id: str,
@@ -334,6 +365,7 @@ def _write_result(
     reserved_activity_natural_id: str,
     activity_row: orm.Activity,
     teacher_row: orm.Teacher | None,
+    resource_row: orm.Resource | None,
     class_rows: list[orm.ClassSection],
     slot_rows: list[tuple[orm.Day, orm.Period]],
 ) -> ReservedActivityWriteResult:
@@ -346,6 +378,7 @@ def _write_result(
             ReservedActivitySlotFields(day_id=day_row.natural_id, period_id=period_row.natural_id)
             for day_row, period_row in slot_rows
         ),
+        resource_id=resource_row.natural_id if resource_row is not None else None,
     )
 
 

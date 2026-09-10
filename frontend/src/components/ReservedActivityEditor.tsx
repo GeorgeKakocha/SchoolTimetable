@@ -3,6 +3,7 @@ import type {
   ReservedActivityClassSectionOption,
   ReservedActivityDay,
   ReservedActivityPeriod,
+  ReservedActivityResourceOption,
   ReservedActivitySlot,
   ReservedActivitySpecialActivityOption,
   ReservedActivityTeacherOption,
@@ -42,6 +43,7 @@ export interface ReservedActivityDraftValues {
   classSectionIds: string[];
   teacherId: string | null;
   slots: ReservedActivitySlot[];
+  resourceId: string | null;
 }
 
 interface ReservedActivityEditorProps {
@@ -49,6 +51,7 @@ interface ReservedActivityEditorProps {
   specialActivities: ReservedActivitySpecialActivityOption[];
   classSections: ReservedActivityClassSectionOption[];
   teachers: ReservedActivityTeacherOption[];
+  resources: ReservedActivityResourceOption[];
   days: ReservedActivityDay[];
   instructionalPeriods: ReservedActivityPeriod[];
   initialValues?: ReservedActivityDraftValues | undefined;
@@ -61,6 +64,7 @@ interface ReservedActivityEditorProps {
 
 const UNSELECTED = "";
 const NO_TEACHER = "";
+const NO_RESOURCE = "";
 
 function slotKey(dayId: string, periodId: string): string {
   return JSON.stringify([dayId, periodId]);
@@ -89,10 +93,13 @@ function canonicalSlots(
   return slots;
 }
 
-function serializeDraft(specialActivityId: string, teacherId: string | null, classIds: string[], slots: ReservedActivitySlot[]): string {
+function serializeDraft(
+  specialActivityId: string, teacherId: string | null, resourceId: string | null,
+  classIds: string[], slots: ReservedActivitySlot[],
+): string {
   const classPart = classIds.join(",");
   const slotPart = slots.map((slot) => `${slot.day_id}|${slot.period_id}`).join(",");
-  return `${specialActivityId}::${teacherId ?? ""}::${classPart}::${slotPart}`;
+  return `${specialActivityId}::${teacherId ?? ""}::${resourceId ?? ""}::${classPart}::${slotPart}`;
 }
 
 function ReservedActivityEditor({
@@ -100,6 +107,7 @@ function ReservedActivityEditor({
   specialActivities,
   classSections,
   teachers,
+  resources,
   days,
   instructionalPeriods,
   initialValues,
@@ -111,6 +119,7 @@ function ReservedActivityEditor({
 }: ReservedActivityEditorProps) {
   const [specialActivityId, setSpecialActivityId] = useState(initialValues?.specialActivityId ?? UNSELECTED);
   const [teacherId, setTeacherId] = useState<string | null>(initialValues?.teacherId ?? null);
+  const [resourceId, setResourceId] = useState<string | null>(initialValues?.resourceId ?? null);
   const [selectedClassIds, setSelectedClassIds] = useState<Set<string>>(
     () => new Set(initialValues?.classSectionIds ?? []),
   );
@@ -158,15 +167,16 @@ function ReservedActivityEditor({
     if (initialValues === undefined) {
       return true;
     }
-    const current = serializeDraft(specialActivityId, teacherId, orderedClassIds, orderedSlots);
+    const current = serializeDraft(specialActivityId, teacherId, resourceId, orderedClassIds, orderedSlots);
     const initial = serializeDraft(
       initialValues.specialActivityId,
       initialValues.teacherId,
+      initialValues.resourceId,
       canonicalClassIds(classSections, new Set(initialValues.classSectionIds)),
       canonicalSlots(days, instructionalPeriods, new Set(initialValues.slots.map((slot) => slotKey(slot.day_id, slot.period_id)))),
     );
     return current !== initial;
-  }, [initialValues, specialActivityId, teacherId, orderedClassIds, orderedSlots, classSections, days, instructionalPeriods]);
+  }, [initialValues, specialActivityId, teacherId, resourceId, orderedClassIds, orderedSlots, classSections, days, instructionalPeriods]);
 
   const canSubmit = isStructurallyValid && isDirty && !submitting;
 
@@ -180,6 +190,7 @@ function ReservedActivityEditor({
       classSectionIds: orderedClassIds,
       teacherId,
       slots: orderedSlots,
+      resourceId,
     });
   }
 
@@ -245,6 +256,22 @@ function ReservedActivityEditor({
             {teachers.map((teacher) => (
               <option key={teacher.id} value={teacher.id}>
                 {teacher.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          Resource
+          <select
+            value={resourceId ?? NO_RESOURCE}
+            onChange={(event) => setResourceId(event.target.value === NO_RESOURCE ? null : event.target.value)}
+            disabled={submitting}
+          >
+            <option value={NO_RESOURCE}>No resource</option>
+            {resources.map((resource) => (
+              <option key={resource.id} value={resource.id}>
+                {resource.name}
               </option>
             ))}
           </select>

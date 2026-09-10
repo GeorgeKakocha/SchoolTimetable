@@ -41,6 +41,17 @@ class ProblemIndex:
     reserved_teacher_slots: dict[tuple[str, str, str], str] = field(default_factory=dict)
     """(teacher_id, day_id, period_id) -> reserved_block_id"""
 
+    reserved_resource_usage: dict[tuple[str, str, str], int] = field(default_factory=dict)
+    """(resource_id, day_id, period_id) -> count of DISTINCT ReservedBlocks
+    using that Resource in that slot (Resources B2). Each ReservedBlock
+    contributes exactly 1 regardless of how many `class_sections` it
+    has -- one block occupying one Resource once per slot, never once
+    per participating class. Shared by preflight (reserved-vs-reserved
+    structural validity), the CP-SAT model builder (fixed usage that
+    pre-consumes capacity before ordinary lessons), and the independent
+    verifier (via final `ScheduleEntry.resource_id`) so the aggregate
+    capacity invariant is defined exactly once."""
+
     split_groups: dict[str, list[str]] = field(default_factory=dict)
     """split_group_id -> requirement ids, sorted deterministically"""
 
@@ -75,6 +86,9 @@ class ProblemIndex:
                     self.reserved_class_slots[(class_id, slot.day_id, slot.period_id)] = block.id
                 if block.teacher_id:
                     self.reserved_teacher_slots[(block.teacher_id, slot.day_id, slot.period_id)] = block.id
+                if block.resource_id:
+                    usage_key = (block.resource_id, slot.day_id, slot.period_id)
+                    self.reserved_resource_usage[usage_key] = self.reserved_resource_usage.get(usage_key, 0) + 1
 
         groups: dict[str, list[str]] = defaultdict(list)
         for req in p.teaching_requirements:
@@ -94,6 +108,9 @@ class ProblemIndex:
 
     def is_reserved_for_teacher(self, teacher_id: str, day_id: str, period_id: str) -> bool:
         return (teacher_id, day_id, period_id) in self.reserved_teacher_slots
+
+    def reserved_resource_usage_at(self, resource_id: str, day_id: str, period_id: str) -> int:
+        return self.reserved_resource_usage.get((resource_id, day_id, period_id), 0)
 
     def split_group_representative(self, split_group_id: str) -> str:
         """The requirement whose slot-variables count toward class occupancy

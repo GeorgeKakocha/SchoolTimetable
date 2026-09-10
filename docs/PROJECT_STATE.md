@@ -3078,3 +3078,187 @@ Alembic `cae76cba3c58`/one head/no drift/zero migration. Scope audit
 confirmed only the expected Teaching-Assignment-related backend/
 frontend/test files changed -- zero domain/solver/verifier/migration/
 dependency/ReservedBlock/Resource-catalog-backend changes.
+
+## Resources B2 -- Reserved Activity Resource integration (IMPLEMENTED, not yet closed)
+
+**Status: IMPLEMENTED on branch `feature/reserved-activity-resource-b2`.**
+Not yet merged/closed as this entry is written; see the closure entry
+below for final status and commit hash once merged.
+
+**Contract:** `ReservedBlock` gained one new optional field,
+`resource_id: str | None`, exposed on the Reserved Activity API as
+`resource_id` (POST/PUT/GET, full-replacement like every other field --
+omitted/null clears; a non-null value assigns/replaces). At most one
+fixed Resource per `ReservedBlock`, never solver-selected. **One
+occupation unit per block per slot, regardless of participant-class
+count:** a `ReservedBlock` spanning N classes still consumes exactly
+ONE capacity unit of its Resource in each of its own `slots` -- never
+N units. This is encoded once, centrally, in a new
+`ProblemIndex.reserved_resource_usage: dict[(resource_id, day_id,
+period_id), int]` index (one entry per distinct `ReservedBlock`,
+counted once regardless of `class_sections` length), reused by
+preflight, the solver, and (implicitly, via `ScheduleEntry.resource_id`)
+the independent verifier -- so the "one block, one unit" rule can never
+silently diverge between layers.
+
+**Aggregate capacity, never pairwise collision -- proven at three
+independent layers:**
+1. **Preflight** (`_check_reserved_block_resource_capacity`, new): a
+   purely structural, reserved-vs-reserved-only check -- for each
+   Resource and slot, the count of distinct `ReservedBlock`s fixed
+   there must not exceed `Resource.capacity`. Emits
+   `INVALID_RESOURCE_CAPACITY`... `RESERVED_RESOURCE_CAPACITY_EXCEEDED`
+   (context: `resource_id`, `day_id`, `period_id`, `capacity`,
+   `reserved_usage`), one diagnostic per over-capacity slot, in
+   `problem.resources` order then `(Day.index, Period.index)` order.
+   Reused by `reserved_activity_rules`'s existing candidate-diff
+   mechanism (added to `_RESERVED_ACTIVITY_BLOCKING_CODES`) for both
+   the service's fast precheck and the repository's authoritative,
+   lock-protected recheck -- zero new validation architecture. A new
+   `UNKNOWN_RESOURCE` check for `ReservedBlock.resource_id` was added
+   alongside it (mirroring the existing `TeachingRequirement` one).
+2. **Solver** (`model_builder._add_resource_capacity`, extended): fixed
+   `ReservedBlock` usage now pre-consumes capacity before ordinary
+   lesson variables are constrained --
+   `available = max(0, capacity - reserved_fixed_usage)`, then
+   `ordinary_scheduled_usage <= available` per slot. `ReservedBlock`s
+   remain fixed input, never CP-SAT decision variables. Proven with
+   three focused solver tests
+   (`tests/test_reserved_block_resource_solver.py`): Case A (capacity
+   exhausted by a Reserved Activity forces an ordinary lesson to a
+   different slot), Case B (remaining capacity, `capacity=2`, is
+   genuinely still usable -- proving this is NOT a pairwise "any use
+   blocks the slot" rule), Case C (two conflicting fixed Reserved
+   Activities are caught by preflight, confirmed the solver is never
+   the only layer able to catch this, since `ReservedBlock`s are never
+   modeled as decision variables at all).
+3. **Independent verifier**: `verifier._check_resource_capacity`
+   already counted every final `ScheduleEntry` by `resource_id`
+   regardless of `source` -- **zero verifier production change was
+   needed**, only `ScheduleEntry.resource_id` needed to be populated
+   correctly for `RESERVED_BLOCK`-sourced entries (see the correctness
+   fix below). Proven with two new verifier tests covering a forged
+   cross-source (one `RESERVED_BLOCK` + one ordinary) capacity
+   violation, and a legal mixed-use case within capacity.
+
+**A real correctness defect was found and fixed in this same task**
+(per the task's own instruction to fix such issues here rather than
+opening a new gate cycle): `scheduling/result_builder.py`'s freshly-
+solved `ScheduleEntry` construction was updated to carry
+`resource_id=block.resource_id` for `RESERVED_BLOCK` entries, but the
+**separate** read-back mapper, `persistence/mappers.py::schedule_entry_to_domain`
+(reconstructs a domain `ScheduleEntry` from an already-*persisted*
+`schedule_entry` row by joining back to `reserved_block`/
+`teaching_requirement` -- used by `get_active_schedule` and every
+timetable projection that reads a stored schedule) -- was missed on
+the first pass. This was caught by a live, real-browser-driven
+`POST .../schedule/generate` check on the resource-assigned dataset:
+the freshly-solved schedule's own cross-source capacity was already
+correct (the solver used the live, correctly-mapped `SchedulingProblem`),
+but the *persisted-then-reloaded* schedule showed `resource_id: None`
+on the `RESERVED_BLOCK` entry. Fixed with a one-line addition
+(`resource_id=block.resource_id`) to that mapper's `RESERVED_BLOCK`
+branch. Regression-proven at two levels: a new
+`tests_web/test_schedule_repository.py` round-trip test
+(`test_persist_then_read_back_preserves_reserved_block_resource_id` --
+`build_valid_fixture()`'s own two `ReservedBlock`s never carry a
+Resource by default, so the pre-existing broader round-trip test could
+not have caught this) and two new real-solver, real-persistence
+timetable API tests proving the Resource is visible end-to-end in both
+the Class and Teacher timetable projections
+(`test_real_reserved_block_resource_visible_in_class_timetable`,
+`test_real_reserved_block_resource_visible_alongside_teacher`) --
+`ClassTimetableService`/`TeacherTimetableService` needed zero changes,
+since both already read the generic `ScheduleEntry.resource_id` field.
+
+**Persistence:** one narrow Alembic migration, `9fbec2126831` ("add
+reserved_block resource_id"), adding a nullable
+`reserved_block.resource_id` `BigInteger` column plus a composite FK
+`(academic_year_id, resource_id) -> resource(academic_year_id, id)`
+`ON DELETE RESTRICT`, mirroring `teaching_requirement.resource_id`'s
+existing pattern exactly. Applied to both the primary and the
+`TEST_DATABASE_URL` PostgreSQL databases. All 22 existing
+`reserved_block` rows survived the migration with `resource_id = NULL`
+(confirmed by direct query before regression). Alembic
+`9fbec2126831`/one head/no drift on both databases.
+
+**Resource delete-in-use blocker extended:**
+`resource_rules.find_resource_references` gained a `RESERVED_BLOCK`
+branch (after the existing `TEACHING_REQUIREMENT` one, deterministic
+order preserved) -- a Resource referenced by either kind now blocks
+delete with `RESOURCE_IN_USE`,
+`referenced_by: ["TEACHING_REQUIREMENT", "RESERVED_BLOCK"]` (both, in
+that order, when both apply). No cascade-delete, no silent clearing.
+
+**Frontend:** `ReservedActivityEditor` gained one new "Resource"
+`<select>` (mirroring the existing "Teacher" select's exact optional-
+field pattern -- "No resource" as a first-class option, never a
+placeholder), threaded through `ReservedActivityDraftValues.resourceId`
+and included in the dirty-check/`isStructurallyValid` logic exactly
+like every other field. `ReservedActivityCard` now displays the
+assigned Resource's name (or "No resource", or a safe "Unknown
+resource" fallback that also blocks Edit but never Delete, mirroring
+the existing unresolvable-teacher/class-section precedent exactly).
+`ReservedActivitiesPage` gained a `RESERVED_RESOURCE_CAPACITY_EXCEEDED`
+diagnostic-to-friendly-message mapping (resolves the Resource name and
+slot, e.g. "Gym is already fully booked at Monday P1 (capacity 1).").
+Resources catalog is never a prerequisite for creating a Reserved
+Activity -- an empty catalog simply offers only "No resource".
+
+**Real-browser functional check:** confirmed live against the existing,
+unlocked `teacher-crud-review-school`/`ay-teacher-crud-2026` dataset
+(`.env.local` restored afterward) -- assigned "Indoor Gym" to "Chess
+Club" via the editor, confirmed the card updated; reopened Edit,
+confirmed "Indoor Gym" preselected; cleared to "No resource", confirmed
+the card updated; reassigned it. All four save cycles reflected
+correctly with no stale/error state. A real `POST .../schedule/generate`
+against this same resource-assigned dataset (25 ordinary
+`TeachingRequirement`s, 8 of them gym-using Sport/Dance rows, plus the
+newly gym-fixed Chess Club reserved block) confirmed OPTIMAL status
+with the aggregate constraint holding throughout: zero ordinary gym
+usage was placed at the reserved block's own (Wednesday, Period 8)
+slot, and gym usage never exceeded its capacity=1 anywhere in the
+final 160-entry schedule -- this generation run is what surfaced the
+mapper defect above. The generated `Schedule` was deleted afterward to
+restore the shared review dataset's unlocked state, matching this
+session's established practice for reusable review fixtures (the
+`.env.local` restoration and the Resource assignment left on the
+dataset both mirror Resources B1's identical precedent).
+
+**Explicitly deferred/out of scope for B2:** Resource Availability
+(unchanged, still deferred); eligible-Resource sets, Resource
+categories/capabilities, preferred Resource (none of these exist,
+matching the locked B2 contract); student-seat/headcount semantics
+(never introduced); the solver never chooses among Resources. Owner
+Decision #39 remains absent -- no genuine unresolved product fork
+appeared during this task.
+
+**Tests added:** 11 preflight (`tests/test_preflight.py`), 3 solver
+(new `tests/test_reserved_block_resource_solver.py`), 2 verifier
+(`tests/test_verifier.py`), 2 Resources-A delete-blocker
+(`tests/test_resource_service.py`), 17 pure-application
+(`tests/test_reserved_activity_service.py`), 11 repository/integration
+(`tests_web/test_reserved_activity_repository.py`, including the
+aggregate-capacity-exceeded-leaves-no-partial-mutation and
+generation-race proofs), 1 Resources-A repository delete-blocker
+(`tests_web/test_resource_repository.py`), API tests in
+`tests_web/test_reserved_activity_api.py` (3 pre-existing exact-shape
+assertions corrected for the new fields, plus new resource-option/
+create/clear/reassign/unknown/aggregate-capacity/config-visibility
+tests), 1 schedule-repository round-trip regression
+(`tests_web/test_schedule_repository.py`), 1 Class Timetable and 1
+Teacher Timetable real-solver API test -- plus 13 new frontend tests
+across `ReservedActivityCard.test.tsx` (5), `ReservedActivityEditor.test.tsx`
+(7), and `ReservedActivitiesPage.test.tsx` (1), with existing fixtures/
+assertions across five frontend test files updated for the new
+`resource_id`/`resources` fields.
+
+**Full regression:** core 479 passed/5 deselected (446 + 33 new),
+`tests_web` 486 passed/zero skips (464 + 22 new), frontend 428
+passed/25 files/zero skips (415 + 13 new), build clean, Alembic
+`9fbec2126831`/one head/no drift on both the primary and test
+databases. Scope audit confirmed only the expected Reserved-Activity-
+/Resource-integration-related domain/persistence/application/api/
+scheduling/validation/frontend/test files changed, plus the one new
+migration file -- zero unrelated Resources-A/Teaching-Assignment/
+dependency changes.

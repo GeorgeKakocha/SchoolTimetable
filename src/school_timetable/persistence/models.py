@@ -444,6 +444,7 @@ class ReservedBlock(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     activity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     teacher_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    resource_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
@@ -465,6 +466,12 @@ class ReservedBlock(Base):
             ["teacher.academic_year_id", "teacher.id"],
             ondelete="RESTRICT",
             name="fk_reserved_block_teacher",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "resource_id"],
+            ["resource.academic_year_id", "resource.id"],
+            ondelete="RESTRICT",
+            name="fk_reserved_block_resource",
         ),
     )
 

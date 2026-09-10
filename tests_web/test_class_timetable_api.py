@@ -14,6 +14,8 @@ these tests remain valid against any equally-correct solver placement
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -189,6 +191,44 @@ def test_real_reserved_block_projection_in_every_configured_class(client, db):
         assert chess["teacher_name"] is None
         assert chess["participant_group_id"] is None
         assert chess["participant_group_name"] is None
+
+
+def test_real_reserved_block_resource_visible_in_class_timetable(client, db):
+    """Resources B2: a `ReservedBlock` carrying a fixed Resource must
+    expose it through the exact same `resource_id` field an ordinary
+    lesson entry already uses -- resolvable identically, never a
+    separate mechanism. `build_valid_fixture()`'s own reserved blocks
+    never carry a Resource by default, so this test injects one onto
+    `club_chess` before solving."""
+    session, session_factory = db
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=tuple(
+            replace(b, resource_id="gym") if b.id == "club_chess" else b for b in problem.reserved_blocks
+        ),
+    )
+    write_scheduling_problem(session, problem)
+    session.flush()
+
+    generate_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/generate"
+    )
+    assert generate_response.status_code == 201
+
+    active = SqlAlchemyScheduleVersionRepository(session_factory).get_active_schedule(
+        problem.school.id, problem.academic_year.id
+    )
+    chess_entries = [e for e in active.entries if e.reserved_block_id == "club_chess"]
+    assert chess_entries
+    assert chess_entries[0].resource_id == "gym"
+    day_id, period_id = chess_entries[0].day_id, chess_entries[0].period_id
+
+    response = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/classes/8a")
+    assert response.status_code == 200
+    cell = _cell(response.json(), day_id, period_id)
+    chess = next(e for e in cell["entries"] if e["reserved_block_id"] == "club_chess")
+    assert chess["resource_id"] == "gym"
 
 
 def test_real_projection_response_shape_and_order(client, db):

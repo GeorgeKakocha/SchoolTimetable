@@ -244,6 +244,39 @@ def test_real_zero_load_teacher_returns_valid_all_empty_grid(client, db):
     assert len(body["rows"]) > 0
 
 
+def test_real_reserved_block_resource_visible_alongside_teacher(client, db):
+    """Resources B2: a `ReservedBlock` with BOTH a Teacher and a fixed
+    Resource must expose the Resource in the Teacher timetable exactly
+    like an ordinary lesson entry -- the same `resource_id` field,
+    never a separate mechanism. `build_valid_fixture()`'s own reserved
+    blocks are teacherless by default, so this test attaches both a
+    teacher and a Resource to `club_chess` before solving."""
+    session, session_factory = db
+    problem = build_valid_fixture()
+    problem = dataclasses.replace(
+        problem,
+        reserved_blocks=tuple(
+            dataclasses.replace(b, teacher_id="t_art", resource_id="gym") if b.id == "club_chess" else b
+            for b in problem.reserved_blocks
+        ),
+    )
+    problem, active = _seed_and_generate(client, session, session_factory, problem=problem)
+
+    chess_entries = [e for e in active.entries if e.reserved_block_id == "club_chess"]
+    assert chess_entries
+    assert chess_entries[0].teacher_id == "t_art"
+    assert chess_entries[0].resource_id == "gym"
+    day_id, period_id = chess_entries[0].day_id, chess_entries[0].period_id
+
+    response = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/teachers/t_art"
+    )
+    assert response.status_code == 200
+    cell = _cell(response.json(), day_id, period_id)
+    chess = next(e for e in cell["entries"] if e["reserved_block_id"] == "club_chess")
+    assert chess["resource_id"] == "gym"
+
+
 def test_real_projection_response_shape_and_order(client, db):
     session, session_factory = db
     problem, active = _seed_and_generate(client, session, session_factory)

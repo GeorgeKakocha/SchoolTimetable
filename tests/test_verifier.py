@@ -116,6 +116,73 @@ def test_verifier_detects_resource_capacity_violation():
     assert any("capacity is 1" in v for v in report.violations)
 
 
+def _reserved_entry(day_id, period_id, class_sections=("c1",), resource_id=None):
+    """Resources B2: a RESERVED_BLOCK-sourced entry -- no
+    `requirement_id`/`participant_group_id`, matching
+    `result_builder.build_schedule_entries`'s own construction for a
+    `ReservedBlock` exactly."""
+    return ScheduleEntry(
+        source=EntrySource.RESERVED_BLOCK,
+        activity_id="club1",
+        day_id=day_id,
+        period_id=period_id,
+        class_sections=class_sections,
+        teacher_id=None,
+        participant_group_id=None,
+        resource_id=resource_id,
+        reserved_block_id="rb1",
+    )
+
+
+def test_verifier_detects_cross_source_resource_capacity_violation():
+    """Resources B2: the SAME generic `_check_resource_capacity` check
+    (proven above for two ordinary entries) must also reject a forged
+    result mixing ONE RESERVED_BLOCK entry and ONE ordinary entry that
+    together exceed capacity -- zero production verifier change was
+    needed for this, since it already counts every entry by
+    `resource_id` regardless of `source`."""
+    gym = ResourceRequirement(resource_id="gym")
+    problem = _tiny_problem(
+        teaching_requirements=(
+            TeachingRequirement(
+                id="r1", teacher_id="t1", activity_id="a1", participant_group_id="pg1",
+                weekly_periods=1, block_policy=FLEXIBLE, resource_requirement=gym,
+            ),
+        ),
+    )
+    r1 = problem.teaching_requirements[0]
+    entries = (
+        _entry(r1, "mon", "p1", "t1", "pg1", resource_id="gym"),
+        _reserved_entry("mon", "p1", resource_id="gym"),
+    )
+    report = verify(problem, entries)
+    assert not report.passed
+    assert any("capacity is 1" in v for v in report.violations)
+
+
+def test_verifier_passes_mixed_reserved_and_ordinary_usage_within_capacity():
+    """capacity=2: one RESERVED_BLOCK entry + one ordinary entry sharing
+    the identical slot/Resource is legal -- the cross-source combined
+    usage (2) never exceeds capacity (2)."""
+    gym = ResourceRequirement(resource_id="gym")
+    problem = _tiny_problem(
+        resources=(Resource(id="gym", name="Gym", capacity=2),),
+        teaching_requirements=(
+            TeachingRequirement(
+                id="r1", teacher_id="t1", activity_id="a1", participant_group_id="pg1",
+                weekly_periods=1, block_policy=FLEXIBLE, resource_requirement=gym,
+            ),
+        ),
+    )
+    r1 = problem.teaching_requirements[0]
+    entries = (
+        _entry(r1, "mon", "p1", "t1", "pg1", resource_id="gym"),
+        _reserved_entry("mon", "p1", resource_id="gym"),
+    )
+    report = verify(problem, entries)
+    assert not any("Resource" in v and "capacity" in v for v in report.violations)
+
+
 def test_verifier_passes_a_genuinely_correct_schedule():
     problem = _tiny_problem()
     r1, r2 = problem.teaching_requirements

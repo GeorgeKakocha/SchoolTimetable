@@ -286,6 +286,62 @@ def test_teaching_requirement_reference_detection(seeded_db):
     assert exc_info.value.referenced_by == ("TEACHING_REQUIREMENT",)
 
 
+def test_reserved_block_reference_detection(seeded_db, live_db_engine):
+    """Resources B2: a Resource referenced only by a `ReservedBlock`
+    (never any `TeachingRequirement`) must also block delete, reported
+    as `RESERVED_BLOCK` -- proven end-to-end against the real
+    `SqlAlchemyReservedActivityRepository`-written schema shape (a
+    directly-inserted `Resource` + `ReservedBlock` row here, since this
+    file's own `seeded_db` only writes the base `valid_fixture`)."""
+    problem, session_factory = seeded_db
+    year_id = _year_id(session_factory, problem.school.id, problem.academic_year.id)
+
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    session.add(m.Resource(academic_year_id=year_id, natural_id="hall", name="Assembly Hall", capacity=1, ordinal=999))
+    session.flush()
+    activity_row = session.execute(
+        select(m.Activity).where(m.Activity.academic_year_id == year_id, m.Activity.natural_id == "club_chess")
+    ).scalar_one()
+    class_row = session.execute(
+        select(m.ClassSection).where(m.ClassSection.academic_year_id == year_id, m.ClassSection.natural_id == "8a")
+    ).scalar_one()
+    day_row = session.execute(
+        select(m.Day).where(m.Day.academic_year_id == year_id, m.Day.natural_id == "fri")
+    ).scalar_one()
+    period_row = session.execute(
+        select(m.Period).where(m.Period.academic_year_id == year_id, m.Period.natural_id == "p1")
+    ).scalar_one()
+    resource_row = session.execute(
+        select(m.Resource).where(m.Resource.academic_year_id == year_id, m.Resource.natural_id == "hall")
+    ).scalar_one()
+    block_row = m.ReservedBlock(
+        academic_year_id=year_id, natural_id="rb_assembly", name="Assembly", activity_id=activity_row.id,
+        teacher_id=None, resource_id=resource_row.id, ordinal=999,
+    )
+    session.add(block_row)
+    session.flush()
+    session.add(m.ReservedBlockClassSection(
+        academic_year_id=year_id, reserved_block_id=block_row.id, class_section_id=class_row.id, ordinal=0,
+    ))
+    session.add(m.ReservedBlockSlot(
+        academic_year_id=year_id, reserved_block_id=block_row.id, day_id=day_row.id, period_id=period_row.id,
+        ordinal=0,
+    ))
+    session.commit()
+    session.close()
+    connection.close()
+
+    repo = SqlAlchemyResourceRepository(session_factory)
+
+    def validate(current_problem):
+        validate_delete(current_problem, problem.school.id, problem.academic_year.id, "hall")
+
+    with pytest.raises(ResourceInUseError) as exc_info:
+        repo.delete(problem.school.id, problem.academic_year.id, "hall", validate=validate)
+    assert exc_info.value.referenced_by == ("RESERVED_BLOCK",)
+
+
 # -- B. cross-AY defense-in-depth ------------------------------------------
 
 def test_same_natural_id_isolation_across_academic_years(seeded_db, live_db_engine):

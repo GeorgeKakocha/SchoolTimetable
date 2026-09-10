@@ -125,12 +125,16 @@ def _by_id(items: list[dict], item_id: str) -> dict:
     return next(i for i in items if i["id"] == item_id)
 
 
-def _body(special_activity_id="club_robotics", class_section_ids=("8a",), teacher_id=None, slots=(("mon", "p1"),)):
+def _body(
+    special_activity_id="club_robotics", class_section_ids=("8a",), teacher_id=None, slots=(("mon", "p1"),),
+    resource_id=None,
+):
     return {
         "special_activity_id": special_activity_id,
         "class_section_ids": list(class_section_ids),
         "teacher_id": teacher_id,
         "slots": [{"day_id": d, "period_id": p} for d, p in slots],
+        "resource_id": resource_id,
     }
 
 
@@ -169,7 +173,7 @@ def test_get_exact_top_level_shape(client, db):
     body = response.json()
     assert set(body.keys()) == {
         "configuration_locked", "special_activities", "teachers", "class_sections", "days", "periods",
-        "reserved_activities",
+        "reserved_activities", "resources",
     }
 
 
@@ -218,11 +222,12 @@ def test_get_reserved_activity_exact_normalized_item(client, db):
     problem = _seed(session)
     body = client.get(_url(problem)).json()
     item = _by_id(body["reserved_activities"], "club_chess")
-    assert set(item.keys()) == {"id", "special_activity_id", "class_section_ids", "teacher_id", "slots"}
+    assert set(item.keys()) == {"id", "special_activity_id", "class_section_ids", "teacher_id", "slots", "resource_id"}
     assert item["special_activity_id"] == "club_chess"
     assert item["class_section_ids"] == ["8a", "8b"]
     assert item["teacher_id"] is None
     assert item["slots"] == [{"day_id": "wed", "period_id": "p8"}]
+    assert item["resource_id"] is None
 
 
 def test_get_reserved_activity_item_never_leaks_names_kind_ordinal(client, db):
@@ -253,12 +258,13 @@ def test_post_create_201_exact_normalized_response(client, db):
     response = client.post(_url(problem), json=_body())
     assert response.status_code == 201
     body = response.json()
-    assert set(body.keys()) == {"id", "special_activity_id", "class_section_ids", "teacher_id", "slots"}
+    assert set(body.keys()) == {"id", "special_activity_id", "class_section_ids", "teacher_id", "slots", "resource_id"}
     assert body["id"].startswith("reserved_block_")
     assert body["special_activity_id"] == "club_robotics"
     assert body["class_section_ids"] == ["8a"]
     assert body["teacher_id"] is None
     assert body["slots"] == [{"day_id": "mon", "period_id": "p1"}]
+    assert body["resource_id"] is None
 
 
 def test_post_canonical_class_order(client, db):
@@ -580,3 +586,126 @@ def test_get_configuration_locked_true_after_generate_and_data_still_readable(cl
     body = response.json()
     assert body["configuration_locked"] is True
     assert len(body["reserved_activities"]) == 2
+
+
+# -- RESOURCES B2 (fixed Resource on a Reserved Activity) -------------------
+
+def test_get_resource_options_included_and_ordered(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    body = client.get(_url(problem)).json()
+    assert [r["id"] for r in body["resources"]] == [r.id for r in problem.resources]
+    gym = _by_id(body["resources"], "gym")
+    assert gym["name"] == "Indoor Gym"
+    assert gym["capacity"] == 1
+
+
+def test_post_without_resource_id_creates_with_no_resource(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json=_body(slots=(("fri", "p1"),)))
+    assert response.status_code == 201
+    assert response.json()["resource_id"] is None
+
+
+def test_post_with_resource_id_creates_with_that_resource(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json=_body(slots=(("fri", "p1"),), resource_id="gym"))
+    assert response.status_code == 201
+    assert response.json()["resource_id"] == "gym"
+
+
+def test_post_unknown_resource_id_returns_422(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json=_body(slots=(("fri", "p1"),), resource_id="no-such-resource"))
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "UNKNOWN_REFERENCE"
+    assert body["reference_kind"] == "resource"
+
+
+def test_post_aggregate_capacity_exceeded_returns_422(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    first = client.post(
+        _url(problem), json=_body(class_section_ids=("8a",), slots=(("fri", "p1"),), resource_id="gym"),
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        _url(problem), json=_body(class_section_ids=("8b",), slots=(("fri", "p1"),), resource_id="gym"),
+    )
+    assert second.status_code == 422
+    body = second.json()
+    assert body["code"] == "INVALID_RESERVED_ACTIVITY"
+    assert any(e["code"] == "RESERVED_RESOURCE_CAPACITY_EXCEEDED" for e in body["errors"])
+
+
+def test_put_assigns_resource_to_previously_unassigned_block(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(
+        _url(problem, "club_chess"), json=_body(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym"),
+    )
+    assert response.status_code == 200
+    assert response.json()["resource_id"] == "gym"
+
+
+def test_put_omitted_resource_id_clears_existing_resource(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    assign = client.put(
+        _url(problem, "club_chess"), json=_body(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym"),
+    )
+    assert assign.status_code == 200
+    assert assign.json()["resource_id"] == "gym"
+
+    clear = client.put(
+        _url(problem, "club_chess"), json=_body(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),)),
+    )
+    assert clear.status_code == 200
+    assert clear.json()["resource_id"] is None
+
+
+def test_put_unknown_resource_id_returns_422(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(
+        _url(problem, "club_chess"),
+        json=_body(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="no-such-resource"),
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "UNKNOWN_REFERENCE"
+
+
+def test_resource_assignment_visible_in_config(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(
+        _url(problem, "club_chess"), json=_body(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym"),
+    )
+    assert response.status_code == 200
+
+    config_body = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/config").json()
+    reserved = _by_id(config_body["reserved_blocks"], "club_chess")
+    assert reserved["resource_id"] == "gym"
+
+
+# Resource delete-in-use blocking is proven end-to-end (real Resource
+# repository, real ReservedBlock reference) in
+# `tests_web/test_resource_repository.py` -- not here, since this
+# file's `client` fixture never wires up the Resource routers'
+# dependencies (`get_resource_service` composes its own `SessionLocal`-
+# backed adapters, entirely bypassing this file's savepoint-scoped
+# test transaction).

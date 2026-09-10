@@ -32,6 +32,7 @@ def run_preflight(problem: SchedulingProblem) -> list[ValidationError]:
     errors.extend(_check_reserved_block_instructional_slots(problem, index))
     errors.extend(_check_reserved_block_teacher_availability(problem, index))
     errors.extend(_check_reserved_block_collisions(problem, index))
+    errors.extend(_check_reserved_block_resource_capacity(problem, index))
     errors.extend(_check_block_patterns(problem, index))
     errors.extend(_check_split_group_consistency(problem, index))
     errors.extend(_check_fixed_placement_availability(problem, index))
@@ -114,6 +115,12 @@ def _check_references(problem: SchedulingProblem, index: ProblemIndex) -> list[V
                 "UNKNOWN_TEACHER",
                 f"Reserved block {block.id!r} references unknown teacher {block.teacher_id!r}",
                 {"reserved_block_id": block.id, "teacher_id": block.teacher_id},
+            ))
+        if block.resource_id is not None and block.resource_id not in index.resources_by_id:
+            errors.append(ValidationError(
+                "UNKNOWN_RESOURCE",
+                f"Reserved block {block.id!r} references unknown resource {block.resource_id!r}",
+                {"reserved_block_id": block.id, "resource_id": block.resource_id},
             ))
         for class_id in block.class_sections:
             if class_id not in index.class_sections_by_id:
@@ -503,6 +510,55 @@ def _check_reserved_block_collisions(problem: SchedulingProblem, index: ProblemI
                     },
                 ))
 
+    return errors
+
+
+def _check_reserved_block_resource_capacity(problem: SchedulingProblem, index: ProblemIndex) -> list[ValidationError]:
+    """Resources B2: an independent STRUCTURAL rule over `ReservedBlock`s
+    only -- for each `Resource` and each slot, the number of DISTINCT
+    `ReservedBlock`s that fix that Resource there must never exceed
+    `Resource.capacity`. Each block contributes exactly 1, regardless of
+    how many `class_sections` it has (`index.reserved_resource_usage`
+    already encodes this "one block, one unit" rule).
+
+    This is deliberately reserved-vs-reserved only, never reserved-vs-
+    ordinary: an ordinary `TeachingRequirement`'s resource usage is not
+    fixed to a slot until the solver places it, so preflight (which
+    only reasons about already-fixed input) cannot evaluate it here --
+    the solver enforces the combined cross-source invariant instead
+    (`model_builder._add_resource_capacity`), and the independent
+    verifier re-checks the final combined result
+    (`verifier._check_resource_capacity`). Assumes `_check_references`
+    has already run with no errors, so every `block.resource_id` (when
+    set) is already known-good in `index.resources_by_id`.
+
+    Never a pairwise "two blocks can't share a slot" rule -- that would
+    be wrong whenever `capacity > 1`. Iterates `problem.resources` in
+    their own authoritative order, then by `(Day.index, Period.index)`,
+    so multiple violations are always reported in the same
+    deterministic order regardless of `ReservedBlock` request/ordinal
+    order."""
+    errors: list[ValidationError] = []
+    for resource in problem.resources:
+        usage_by_slot: dict[tuple[str, str], int] = {
+            (day_id, period_id): count
+            for (resource_id, day_id, period_id), count in index.reserved_resource_usage.items()
+            if resource_id == resource.id
+        }
+        for day_id, period_id in sorted(
+            usage_by_slot, key=lambda dp: (index.days_by_id[dp[0]].index, index.periods_by_id[dp[1]].index),
+        ):
+            usage = usage_by_slot[(day_id, period_id)]
+            if usage > resource.capacity:
+                errors.append(ValidationError(
+                    "RESERVED_RESOURCE_CAPACITY_EXCEEDED",
+                    f"Resource {resource.id!r} is fixed-reserved by {usage} reserved blocks at slot "
+                    f"({day_id!r}, {period_id!r}), exceeding capacity {resource.capacity}",
+                    {
+                        "resource_id": resource.id, "day_id": day_id, "period_id": period_id,
+                        "capacity": resource.capacity, "reserved_usage": usage,
+                    },
+                ))
     return errors
 
 

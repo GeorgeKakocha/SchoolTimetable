@@ -53,12 +53,23 @@ export interface ReservedActivitySlot {
   period_id: string;
 }
 
+// Resources B2's "fixed Resource" option list -- `Resource` is the
+// existing `domain.resources.Resource(id, name, capacity)` (Resources
+// Slice A); `capacity` means "maximum simultaneous resource
+// occupations," never seat/headcount capacity.
+export interface ReservedActivityResourceOption {
+  id: string;
+  name: string;
+  capacity: number;
+}
+
 export interface ReservedActivityItem {
   id: string;
   special_activity_id: string;
   class_section_ids: string[];
   teacher_id: string | null;
   slots: ReservedActivitySlot[];
+  resource_id: string | null;
 }
 
 export interface ReservedActivitiesProjectionResponse {
@@ -69,6 +80,7 @@ export interface ReservedActivitiesProjectionResponse {
   days: ReservedActivityDay[];
   periods: ReservedActivityPeriod[];
   reserved_activities: ReservedActivityItem[];
+  resources: ReservedActivityResourceOption[];
 }
 
 export interface ReservedActivityWriteRequest {
@@ -76,6 +88,11 @@ export interface ReservedActivityWriteRequest {
   class_section_ids: string[];
   teacher_id: string | null;
   slots: ReservedActivitySlot[];
+  // Full-replacement, never PATCH (Resources B2): `null` (explicit,
+  // never omitted by this frontend) means "no fixed Resource" -- on a
+  // PUT this always clears any Resource currently assigned. A
+  // non-null value assigns/replaces that exact Resource.
+  resource_id: string | null;
 }
 
 export interface ReservedActivityWriteResponse {
@@ -84,6 +101,7 @@ export interface ReservedActivityWriteResponse {
   class_section_ids: string[];
   teacher_id: string | null;
   slots: ReservedActivitySlot[];
+  resource_id: string | null;
 }
 
 export interface ReservedActivityDeleteResponse {

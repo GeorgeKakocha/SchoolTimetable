@@ -26,6 +26,11 @@ class ReservedBlock:
     class_sections: tuple[str, ...]
     slots: tuple[TimeSlot, ...]
     teacher_id: str | None = None
+    resource_id: str | None = None
+    """Resources B2: at most one fixed Resource per block (never
+    solver-chosen). This block consumes exactly ONE capacity unit of
+    this Resource in each of its own `slots`, regardless of how many
+    `class_sections` participate -- never one unit per class."""
 
 
 @dataclass(frozen=True)

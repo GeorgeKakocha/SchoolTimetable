@@ -714,3 +714,144 @@ def test_reserved_block_teacher_collision_deterministic_order_independent_of_req
     # Both requested slots (mon/p1, mon/p2) collide regardless of the
     # order rb2 supplied them in.
     assert len(errors) == 2
+
+
+# == RESOURCES B2 (Reserved Activity Resource integration) ==================
+
+_ONE_RESOURCE_CAPACITY_1 = (Resource(id="gym", name="Gym", capacity=1),)
+_ONE_RESOURCE_CAPACITY_2 = (Resource(id="gym", name="Gym", capacity=2),)
+
+
+def test_reserved_block_unknown_resource_reference_detected():
+    problem = _reserved_problem(reserved_blocks=(_reserved_block(resource_id="no-such-resource"),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNKNOWN_RESOURCE" in codes
+    assert "RESERVED_RESOURCE_CAPACITY_EXCEEDED" not in codes
+
+
+def test_reserved_block_known_resource_produces_no_unknown_resource_diagnostic():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_1, reserved_blocks=(_reserved_block(resource_id="gym"),),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNKNOWN_RESOURCE" not in codes
+
+
+def test_capacity_one_single_reserved_block_is_valid():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_1,
+        reserved_blocks=(_reserved_block(id="rb1", class_sections=("c1",), resource_id="gym"),),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_RESOURCE_CAPACITY_EXCEEDED" not in codes
+
+
+def test_capacity_one_two_reserved_blocks_same_slot_rejected():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_1,
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_RESOURCE_CAPACITY_EXCEEDED"]
+    assert len(errors) == 1
+    assert errors[0].context == {
+        "resource_id": "gym", "day_id": "mon", "period_id": "p1", "capacity": 1, "reserved_usage": 2,
+    }
+
+
+def test_capacity_two_two_reserved_blocks_same_slot_is_valid():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_2,
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_RESOURCE_CAPACITY_EXCEEDED" not in codes
+
+
+def test_capacity_two_three_reserved_blocks_same_slot_rejected():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_2,
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+            _reserved_block(
+                id="rb3", activity_id="club1", class_sections=("c1", "c2"),
+                slots=(TimeSlot("mon", "p1"),), resource_id="gym",
+            ),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_RESOURCE_CAPACITY_EXCEEDED"]
+    assert len(errors) == 1
+    assert errors[0].context["reserved_usage"] == 3
+    assert errors[0].context["capacity"] == 2
+
+
+def test_multi_class_reserved_block_consumes_only_one_capacity_unit():
+    # One ReservedBlock spanning c1+c2 is ONE occupation of "gym" at
+    # this slot, never two (once per class) -- capacity=1 must remain
+    # satisfied by a single multi-class block alone.
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_1,
+        reserved_blocks=(
+            _reserved_block(
+                id="rb1", class_sections=("c1", "c2"), slots=(TimeSlot("mon", "p1"),), resource_id="gym",
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_RESOURCE_CAPACITY_EXCEEDED" not in codes
+
+
+def test_different_slots_have_independent_capacity_counts():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_1,
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p2"),), resource_id="gym"),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_RESOURCE_CAPACITY_EXCEEDED" not in codes
+
+
+def test_different_resources_have_independent_capacity_counts():
+    problem = _reserved_problem(
+        resources=(Resource(id="gym", name="Gym", capacity=1), Resource(id="lab", name="Lab", capacity=1)),
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),), resource_id="lab"),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_RESOURCE_CAPACITY_EXCEEDED" not in codes
+
+
+def test_reserved_block_without_resource_contributes_zero_usage():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_1,
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), resource_id=None),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),), resource_id=None),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "RESERVED_RESOURCE_CAPACITY_EXCEEDED" not in codes
+
+
+def test_capacity_exceeded_multiple_slots_reported_in_deterministic_day_period_order():
+    problem = _reserved_problem(
+        resources=_ONE_RESOURCE_CAPACITY_1,
+        reserved_blocks=(
+            _reserved_block(id="rb1", class_sections=("c1",), slots=(TimeSlot("mon", "p2"),), resource_id="gym"),
+            _reserved_block(id="rb2", class_sections=("c2",), slots=(TimeSlot("mon", "p2"),), resource_id="gym"),
+            _reserved_block(id="rb3", activity_id="club1", class_sections=("c1",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+            _reserved_block(id="rb4", activity_id="club1", class_sections=("c2",), slots=(TimeSlot("mon", "p1"),), resource_id="gym"),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "RESERVED_RESOURCE_CAPACITY_EXCEEDED"]
+    assert [(e.context["day_id"], e.context["period_id"]) for e in errors] == [("mon", "p1"), ("mon", "p2")]

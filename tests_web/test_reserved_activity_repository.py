@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from school_timetable.application.errors import (
     ConfigurationChangedDuringGenerationError,
     ConfigurationLockedError,
+    InvalidReservedActivityError,
     NonSpecialActivityTargetError,
     ReservedActivityNotFoundError,
     UnknownReferenceError,
@@ -31,6 +32,7 @@ from school_timetable.domain.calendar import AcademicYear, Day, Period, TimeSlot
 from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
+from school_timetable.domain.resources import Resource
 from school_timetable.domain.result import SolverStatus
 from school_timetable.domain.school import School
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
@@ -88,6 +90,7 @@ def _other_year_problem() -> SchedulingProblem:
             Activity(id="club_other", name="Club Other", kind=ActivityKind.CLUB),
             Activity(id="ordinary_other", name="Ordinary Other", kind=ActivityKind.ORDINARY),
         ),
+        resources=(Resource(id="gym_other", name="Gym Other", capacity=1),),
         teaching_requirements=(),
         reserved_blocks=(
             ReservedBlock(
@@ -143,12 +146,16 @@ def _year_id(session_factory, school_id, year_id):
         session.close()
 
 
-def _fields(special_activity_id="club_robotics", class_section_ids=("8a",), teacher_id=None, slots=(("mon", "p1"),)):
+def _fields(
+    special_activity_id="club_robotics", class_section_ids=("8a",), teacher_id=None, slots=(("mon", "p1"),),
+    resource_id=None,
+):
     return ReservedActivityFields(
         special_activity_id=special_activity_id,
         class_section_ids=class_section_ids,
         teacher_id=teacher_id,
         slots=tuple(ReservedActivitySlotFields(day_id=d, period_id=p) for d, p in slots),
+        resource_id=resource_id,
     )
 
 
@@ -164,6 +171,7 @@ def _validate_for(problem, school_id, year_id, reserved_activity_id, fields, *, 
             current_problem, school_id, year_id, reserved_activity_id,
             special_activity_id=fields.special_activity_id, class_section_ids=fields.class_section_ids,
             teacher_id=fields.teacher_id, slots=tuple((s.day_id, s.period_id) for s in fields.slots),
+            resource_id=fields.resource_id,
         )
     return validate
 
@@ -808,3 +816,221 @@ def test_create_class_section_from_other_academic_year_rejected(seeded_db_two_ye
 
     remaining_ids = _reserved_block_ids(session_factory, problem.school.id, problem.academic_year.id)
     assert "rb_cross_ay_class" not in remaining_ids
+
+
+# -- E. Resources B2 (fixed Resource on a Reserved Activity) -------------
+
+def test_create_persists_resource_id(seeded_db):
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+    fields = _fields(slots=(("fri", "p1"),), resource_id="gym")
+    validate = _validate_for(problem, problem.school.id, problem.academic_year.id, "rb_new", fields, is_update=False)
+
+    result = repo.create(problem.school.id, problem.academic_year.id, "rb_new", fields, validate=validate)
+    assert result.resource_id == "gym"
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    created = next(b for b in reloaded.reserved_blocks if b.id == "rb_new")
+    assert created.resource_id == "gym"
+
+
+def test_create_without_resource_id_persists_null(seeded_db):
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+    fields = _fields(slots=(("fri", "p1"),))
+    validate = _validate_for(problem, problem.school.id, problem.academic_year.id, "rb_new", fields, is_update=False)
+
+    repo.create(problem.school.id, problem.academic_year.id, "rb_new", fields, validate=validate)
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    created = next(b for b in reloaded.reserved_blocks if b.id == "rb_new")
+    assert created.resource_id is None
+
+
+def test_update_assigns_resource_id(seeded_db):
+    # club_chess starts with no resource_id.
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+    fields = _fields(
+        special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym",
+    )
+    validate = _validate_for(problem, problem.school.id, problem.academic_year.id, "club_chess", fields, is_update=True)
+
+    result = repo.update(problem.school.id, problem.academic_year.id, "club_chess", fields, validate=validate)
+    assert result.resource_id == "gym"
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    updated = next(b for b in reloaded.reserved_blocks if b.id == "club_chess")
+    assert updated.resource_id == "gym"
+
+
+def test_update_replaces_resource_id(seeded_db, live_db_engine):
+    problem, session_factory = seeded_db
+    year_id = _year_id(session_factory, problem.school.id, problem.academic_year.id)
+
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    session.add(m.Resource(academic_year_id=year_id, natural_id="lab", name="Science Lab", capacity=1, ordinal=999))
+    session.commit()
+    session.close()
+    connection.close()
+
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+    fields_gym = _fields(
+        special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym",
+    )
+    validate_gym = _validate_for(
+        problem, problem.school.id, problem.academic_year.id, "club_chess", fields_gym, is_update=True,
+    )
+    repo.update(problem.school.id, problem.academic_year.id, "club_chess", fields_gym, validate=validate_gym)
+
+    fields_lab = _fields(
+        special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="lab",
+    )
+    validate_lab = _validate_for(
+        problem, problem.school.id, problem.academic_year.id, "club_chess", fields_lab, is_update=True,
+    )
+    result = repo.update(problem.school.id, problem.academic_year.id, "club_chess", fields_lab, validate=validate_lab)
+    assert result.resource_id == "lab"
+
+
+def test_update_omitted_resource_id_clears_it(seeded_db):
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+    fields_gym = _fields(
+        special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym",
+    )
+    validate_gym = _validate_for(
+        problem, problem.school.id, problem.academic_year.id, "club_chess", fields_gym, is_update=True,
+    )
+    repo.update(problem.school.id, problem.academic_year.id, "club_chess", fields_gym, validate=validate_gym)
+
+    fields_none = _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),))
+    validate_none = _validate_for(
+        problem, problem.school.id, problem.academic_year.id, "club_chess", fields_none, is_update=True,
+    )
+    result = repo.update(problem.school.id, problem.academic_year.id, "club_chess", fields_none, validate=validate_none)
+    assert result.resource_id is None
+
+
+def test_update_unknown_resource_leaves_aggregate_unchanged(seeded_db):
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+
+    def failing_validate(current_problem):
+        validate_update(
+            current_problem, problem.school.id, problem.academic_year.id, "club_chess",
+            special_activity_id="club_chess", class_section_ids=("8a", "8b"), teacher_id=None,
+            slots=(("wed", "p8"),), resource_id="no-such-resource",
+        )
+
+    with pytest.raises(UnknownReferenceError):
+        repo.update(
+            problem.school.id, problem.academic_year.id, "club_chess",
+            _fields(special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="no-such-resource"),
+            validate=failing_validate,
+        )
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    unchanged = next(b for b in reloaded.reserved_blocks if b.id == "club_chess")
+    assert unchanged.resource_id is None
+
+
+def test_create_cross_ay_resource_rejected(seeded_db_two_years):
+    problem, other_problem, session_factory = seeded_db_two_years
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+
+    def permissive_validate(current_problem):
+        pass
+
+    with pytest.raises(UnknownReferenceError) as exc_info:
+        repo.create(
+            problem.school.id, problem.academic_year.id, "rb_cross_ay_resource",
+            _fields(slots=(("fri", "p1"),), resource_id="gym_other"),
+            validate=permissive_validate,
+        )
+    assert exc_info.value.reference_kind == "resource"
+
+    remaining_ids = _reserved_block_ids(session_factory, problem.school.id, problem.academic_year.id)
+    assert "rb_cross_ay_resource" not in remaining_ids
+
+
+def test_create_aggregate_capacity_exceeded_leaves_no_partial_mutation(seeded_db):
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyReservedActivityRepository(session_factory)
+    before_ids = _reserved_block_ids(session_factory, problem.school.id, problem.academic_year.id)
+
+    first_fields = _fields(class_section_ids=("8a",), slots=(("fri", "p1"),), resource_id="gym")
+    first_validate = _validate_for(
+        problem, problem.school.id, problem.academic_year.id, "rb_first", first_fields, is_update=False,
+    )
+    repo.create(problem.school.id, problem.academic_year.id, "rb_first", first_fields, validate=first_validate)
+
+    def failing_validate(current_problem):
+        validate_create(
+            current_problem, problem.school.id, problem.academic_year.id, "rb_second",
+            special_activity_id="club_robotics", class_section_ids=("8b",), teacher_id=None,
+            slots=(("fri", "p1"),), resource_id="gym",
+        )
+
+    with pytest.raises(InvalidReservedActivityError) as exc_info:
+        repo.create(
+            problem.school.id, problem.academic_year.id, "rb_second",
+            _fields(class_section_ids=("8b",), slots=(("fri", "p1"),), resource_id="gym"),
+            validate=failing_validate,
+        )
+    assert any(e.code == "RESERVED_RESOURCE_CAPACITY_EXCEEDED" for e in exc_info.value.validation_errors)
+
+    after_ids = _reserved_block_ids(session_factory, problem.school.id, problem.academic_year.id)
+    assert after_ids == before_ids | {"rb_first"}
+    assert "rb_second" not in after_ids
+
+
+def test_generation_persist_aborts_when_only_a_reserved_block_resource_changed(seeded_db, live_db_engine):
+    """Resources B2: a write that changes ONLY the assigned Resource on
+    an existing ReservedBlock (every other field identical) must still
+    be caught by the Owner-Decision-#36 stale-input check -- proving
+    `ReservedBlock.resource_id` genuinely participates in
+    `SchedulingProblem`'s frozen-dataclass equality."""
+    problem, session_factory = seeded_db
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    reserved_activity_repo = SqlAlchemyReservedActivityRepository(session_factory)
+
+    stale_problem = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+
+    fields = _fields(
+        special_activity_id="club_chess", class_section_ids=("8a", "8b"), slots=(("wed", "p8"),), resource_id="gym",
+    )
+    validate = _validate_for(
+        problem, problem.school.id, problem.academic_year.id, "club_chess", fields, is_update=True,
+    )
+    reserved_activity_repo.update(
+        problem.school.id, problem.academic_year.id, "club_chess", fields, validate=validate,
+    )
+
+    with pytest.raises(ConfigurationChangedDuringGenerationError):
+        schedule_repo.persist_initial_version(
+            problem.school.id, problem.academic_year.id, stale_problem,
+            entries=(), solver_status=SolverStatus.OPTIMAL, total_soft_penalty=0,
+            wall_time_seconds=0.01, random_seed=None,
+        )
+
+    year_id = _year_id(session_factory, problem.school.id, problem.academic_year.id)
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    schedule_count = len(
+        session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalars().all()
+    )
+    session.close()
+    connection.close()
+    assert schedule_count == 0

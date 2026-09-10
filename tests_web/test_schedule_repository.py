@@ -19,6 +19,8 @@ only affects its own work, never the outer, never-committed transaction
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -28,7 +30,7 @@ from school_timetable.application.errors import (
     ScheduleAlreadyExistsError,
     SchedulingProblemNotFoundError,
 )
-from school_timetable.domain.result import SolverStatus
+from school_timetable.domain.result import EntrySource, SolverStatus
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
@@ -147,6 +149,50 @@ def test_persist_then_read_back_exact_order_and_full_reconstruction(db):
     assert reloaded == persisted
     assert not hasattr(reloaded, "_sa_instance_state")
     assert all(not hasattr(e, "_sa_instance_state") for e in reloaded.entries)
+
+
+def test_persist_then_read_back_preserves_reserved_block_resource_id(db):
+    """Resources B2 regression: `club_chess`'s `ReservedBlock` is given a
+    fixed Resource before solving. `mappers.schedule_entry_to_domain`'s
+    RESERVED_BLOCK branch must join back to `ReservedBlock.resource_id`
+    exactly like its REQUIREMENT branch already joins back to
+    `TeachingRequirement.resource_requirement.resource_id` -- proven by
+    the exact same full round-trip equality
+    `test_persist_then_read_back_exact_order_and_full_reconstruction`
+    already established, narrowed to the one RESERVED_BLOCK entry that
+    now carries a Resource. `build_valid_fixture()`'s own two
+    ReservedBlocks never carry a Resource, so that broader test alone
+    cannot catch a regression here -- this test exists specifically to
+    close that gap."""
+    session, session_factory = db
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=tuple(
+            replace(b, resource_id="gym") if b.id == "club_chess" else b for b in problem.reserved_blocks
+        ),
+    )
+    write_scheduling_problem(session, problem)
+    session.flush()
+    result = solve(problem)
+    assert result.is_success
+
+    repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    persisted = repo.persist_initial_version(
+        problem.school.id, problem.academic_year.id, problem, result.entries, result.status,
+        result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+    )
+
+    persisted_entry = next(e for e in persisted.entries if e.reserved_block_id == "club_chess")
+    assert persisted_entry.source == EntrySource.RESERVED_BLOCK
+    assert persisted_entry.resource_id == "gym"
+
+    reloaded = SqlAlchemyScheduleVersionRepository(session_factory).get_active_schedule(
+        problem.school.id, problem.academic_year.id,
+    )
+    reloaded_entry = next(e for e in reloaded.entries if e.reserved_block_id == "club_chess")
+    assert reloaded_entry.resource_id == "gym"
+    assert reloaded == persisted
 
 
 def test_get_active_schedule_none_when_school_year_exists_but_no_schedule(db):

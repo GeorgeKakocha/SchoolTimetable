@@ -22,6 +22,8 @@ from school_timetable.application.errors import (
 )
 from school_timetable.application.resource_models import ResourceFields
 from school_timetable.application.resource_service import ResourceService
+from school_timetable.domain.blocks import ReservedBlock
+from school_timetable.domain.calendar import TimeSlot
 from school_timetable.domain.resources import Resource
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 
@@ -277,6 +279,45 @@ def test_delete_teaching_requirement_blocker():
     with pytest.raises(ResourceInUseError) as exc_info:
         service.delete(_SCHOOL, _YEAR, "gym")
     assert exc_info.value.referenced_by == ("TEACHING_REQUIREMENT",)
+
+
+def test_delete_reserved_block_blocker():
+    # Resources B2: a Resource referenced only by a ReservedBlock (never
+    # any TeachingRequirement) must also block delete.
+    problem = _problem_with_unused_resource(build_valid_fixture(), resource_id="hall")
+    problem = replace(
+        problem,
+        reserved_blocks=problem.reserved_blocks + (
+            ReservedBlock(
+                id="rb_assembly", name="Assembly", activity_id="club_chess",
+                class_sections=("8a",), slots=(TimeSlot("fri", "p1"),), teacher_id=None, resource_id="hall",
+            ),
+        ),
+    )
+    service, _ = _service(problem=problem)
+    with pytest.raises(ResourceInUseError) as exc_info:
+        service.delete(_SCHOOL, _YEAR, "hall")
+    assert exc_info.value.referenced_by == ("RESERVED_BLOCK",)
+
+
+def test_delete_both_teaching_requirement_and_reserved_block_blockers_deterministic_order():
+    # "gym" is already referenced by TeachingRequirements in the fixture;
+    # add a ReservedBlock reference too and confirm both are reported,
+    # TEACHING_REQUIREMENT first.
+    problem = build_valid_fixture()
+    problem = replace(
+        problem,
+        reserved_blocks=problem.reserved_blocks + (
+            ReservedBlock(
+                id="rb_assembly", name="Assembly", activity_id="club_chess",
+                class_sections=("8a",), slots=(TimeSlot("fri", "p1"),), teacher_id=None, resource_id="gym",
+            ),
+        ),
+    )
+    service, _ = _service(problem=problem)
+    with pytest.raises(ResourceInUseError) as exc_info:
+        service.delete(_SCHOOL, _YEAR, "gym")
+    assert exc_info.value.referenced_by == ("TEACHING_REQUIREMENT", "RESERVED_BLOCK")
 
 
 def test_delete_rejected_once_schedule_exists():

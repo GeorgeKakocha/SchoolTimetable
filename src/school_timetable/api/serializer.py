@@ -46,6 +46,7 @@ from school_timetable.api.schemas import (
     ReservedActivityDayOptionResponse,
     ReservedActivityItemResponse,
     ReservedActivityPeriodOptionResponse,
+    ReservedActivityResourceOptionResponse,
     ReservedActivitySlotResponse,
     ReservedActivitySpecialActivityOptionResponse,
     ReservedActivityTeacherOptionResponse,
@@ -153,6 +154,7 @@ def config_response_from_problem(problem: SchedulingProblem) -> SchedulingConfig
                     TimeSlotResponse(day_id=s.day_id, period_id=s.period_id) for s in b.slots
                 ),
                 teacher_id=b.teacher_id,
+                resource_id=b.resource_id,
             )
             for b in problem.reserved_blocks
         ),
@@ -525,8 +527,13 @@ def reserved_activities_projection_response_from_view(
                 class_section_ids=r.class_section_ids,
                 teacher_id=r.teacher_id,
                 slots=tuple(ReservedActivitySlotResponse(day_id=s.day_id, period_id=s.period_id) for s in r.slots),
+                resource_id=r.resource_id,
             )
             for r in view.reserved_activities
+        ),
+        resources=tuple(
+            ReservedActivityResourceOptionResponse(id=r.id, name=r.name, capacity=r.capacity)
+            for r in view.resources
         ),
     )
 

@@ -91,6 +91,14 @@ function readContextString(context: unknown, field: string): string | undefined 
   return typeof value === "string" ? value : undefined;
 }
 
+function readContextNumber(context: unknown, field: string): number | undefined {
+  if (typeof context !== "object" || context === null) {
+    return undefined;
+  }
+  const value = (context as Record<string, unknown>)[field];
+  return typeof value === "number" ? value : undefined;
+}
+
 /** Maps one raw `INVALID_RESERVED_ACTIVITY` diagnostic (`{code,
  * message, context}`) to a human-facing string, resolving every
  * natural ID in `context` against the current projection's own
@@ -145,6 +153,11 @@ function describeOneDiagnostic(diagnostic: unknown, projection: ReservedActiviti
         return `Conflicts with the existing ${conflictingName} reservation: ${teacherName ?? "a teacher"}, ${slotLabel}.`;
       }
       return "Conflicts with another existing Reserved Activity.";
+    }
+    case "RESERVED_RESOURCE_CAPACITY_EXCEEDED": {
+      const resourceName = resolveName(projection.resources, readContextString(context, "resource_id"));
+      const capacity = readContextNumber(context, "capacity");
+      return `${resourceName ?? "The selected resource"} is already fully booked at ${slotLabel}${capacity !== undefined ? ` (capacity ${capacity})` : ""}.`;
     }
     default:
       return fallback;
@@ -367,6 +380,7 @@ function ReservedActivitiesPage() {
         class_section_ids: values.classSectionIds,
         teacher_id: values.teacherId,
         slots: values.slots,
+        resource_id: values.resourceId,
       };
       const action =
         editor.mode === "create"
@@ -612,6 +626,7 @@ function ReadyReservedActivities({
           teachers={projection.teachers}
           days={projection.days}
           instructionalPeriods={instructionalPeriods}
+          resources={projection.resources}
           initialValues={
             editor.mode === "edit"
               ? {
@@ -619,6 +634,7 @@ function ReadyReservedActivities({
                   classSectionIds: editor.item.class_section_ids,
                   teacherId: editor.item.teacher_id,
                   slots: editor.item.slots,
+                  resourceId: editor.item.resource_id,
                 }
               : undefined
           }
@@ -641,6 +657,7 @@ function ReadyReservedActivities({
               specialActivities={projection.special_activities}
               classSections={projection.class_sections}
               teachers={projection.teachers}
+              resources={projection.resources}
               days={projection.days}
               periods={projection.periods}
               locked={locked}

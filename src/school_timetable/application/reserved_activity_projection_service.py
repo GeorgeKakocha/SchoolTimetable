@@ -24,6 +24,7 @@ from school_timetable.application.reserved_activity_projection_models import (
     ReservedActivityDayOption,
     ReservedActivityItem,
     ReservedActivityPeriodOption,
+    ReservedActivityResourceOption,
     ReservedActivitySlotView,
     ReservedActivitySpecialActivityOption,
     ReservedActivityTeacherOption,
@@ -88,8 +89,15 @@ class ReservedActivityProjectionService:
                 class_section_ids=block.class_sections,
                 teacher_id=block.teacher_id,
                 slots=tuple(ReservedActivitySlotView(day_id=s.day_id, period_id=s.period_id) for s in block.slots),
+                resource_id=block.resource_id,
             )
             for block in problem.reserved_blocks
+        )
+        # Resources B2: the same Resource catalog option list a "fixed
+        # Resource" select needs, in the Resource catalog's own
+        # authoritative (persistence ordinal) order -- never re-sorted.
+        resources = tuple(
+            ReservedActivityResourceOption(id=r.id, name=r.name, capacity=r.capacity) for r in problem.resources
         )
 
         return ReservedActivitiesProjectionView(
@@ -100,4 +108,5 @@ class ReservedActivityProjectionService:
             days=days,
             periods=periods,
             reserved_activities=reserved_activities,
+            resources=resources,
         )

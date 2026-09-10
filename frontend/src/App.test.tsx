@@ -97,6 +97,7 @@ const EMPTY_RESERVED_ACTIVITIES_PROJECTION: ReservedActivitiesProjectionResponse
   days: [],
   periods: [],
   reserved_activities: [],
+  resources: [],
 };
 
 beforeEach(() => {

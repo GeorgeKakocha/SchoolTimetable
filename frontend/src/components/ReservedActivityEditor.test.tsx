@@ -5,6 +5,7 @@ import type {
   ReservedActivityClassSectionOption,
   ReservedActivityDay,
   ReservedActivityPeriod,
+  ReservedActivityResourceOption,
   ReservedActivitySpecialActivityOption,
   ReservedActivityTeacherOption,
 } from "../api/reservedActivities";
@@ -18,6 +19,10 @@ const CLASS_SECTIONS: ReservedActivityClassSectionOption[] = [
   { id: "class_8b", name: "8B" },
 ];
 const TEACHERS: ReservedActivityTeacherOption[] = [{ id: "teacher_a", name: "Maia Beridze" }];
+const RESOURCES: ReservedActivityResourceOption[] = [
+  { id: "gym", name: "Gym", capacity: 1 },
+  { id: "lab", name: "Science Lab", capacity: 1 },
+];
 const DAYS: ReservedActivityDay[] = [
   { id: "mon", name: "Monday", index: 0 },
   { id: "wed", name: "Wednesday", index: 2 },
@@ -33,6 +38,7 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof ReservedActivi
     specialActivities: SPECIAL_ACTIVITIES,
     classSections: CLASS_SECTIONS,
     teachers: TEACHERS,
+    resources: RESOURCES,
     days: DAYS,
     instructionalPeriods: INSTRUCTIONAL_PERIODS,
     submitting: false,
@@ -61,6 +67,7 @@ describe("ReservedActivityEditor", () => {
             classSectionIds: ["class_8a"],
             teacherId: null,
             slots: [{ day_id: "mon", period_id: "p1" }],
+            resourceId: null,
           },
         })}
       />,
@@ -101,6 +108,7 @@ describe("ReservedActivityEditor", () => {
       classSectionIds: ["class_8a"],
       teacherId: null,
       slots: [{ day_id: "mon", period_id: "p1" }],
+      resourceId: null,
     });
   });
 
@@ -154,6 +162,7 @@ describe("ReservedActivityEditor", () => {
               { day_id: "mon", period_id: "p1" },
               { day_id: "wed", period_id: "p2" },
             ],
+            resourceId: null,
           },
         })}
       />,
@@ -197,5 +206,106 @@ describe("ReservedActivityEditor", () => {
     expect(screen.getByRole("combobox", { name: "Special Activity" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Saving…" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+  });
+
+  it("Resource select shows 'No resource' first, then every Resource by name, never a raw ID", () => {
+    render(<ReservedActivityEditor {...baseProps()} />);
+
+    const resourceSelect = screen.getByRole("combobox", { name: "Resource" }) as HTMLSelectElement;
+    const optionLabels = Array.from(resourceSelect.options).map((option) => option.textContent);
+    expect(optionLabels[0]).toBe("No resource");
+    expect(optionLabels).toContain("Gym");
+    expect(optionLabels).toContain("Science Lab");
+    expect(resourceSelect.value).toBe("");
+    expect(optionLabels).not.toContain("gym");
+    expect(optionLabels).not.toContain("lab");
+  });
+
+  it("still renders the editor with only 'No resource' when the Resource catalog is empty", () => {
+    render(<ReservedActivityEditor {...baseProps({ resources: [] })} />);
+
+    const resourceSelect = screen.getByRole("combobox", { name: "Resource" }) as HTMLSelectElement;
+    expect(resourceSelect.options.length).toBe(1);
+    expect(resourceSelect.options[0]?.textContent).toBe("No resource");
+    expect(resourceSelect).toBeEnabled();
+  });
+
+  it("Resource defaults to 'No resource' and submits resourceId: null", () => {
+    const onSubmit = vi.fn();
+    render(<ReservedActivityEditor {...baseProps({ onSubmit })} />);
+
+    expect(screen.getByRole("combobox", { name: "Resource" })).toHaveValue("");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Special Activity" }), { target: { value: "club_debate" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "8A" }));
+    fireEvent.click(document.getElementById("reserved-slot-desktop-mon-p1")!);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ resourceId: null }));
+  });
+
+  it("submits the selected Resource's exact id", () => {
+    const onSubmit = vi.fn();
+    render(<ReservedActivityEditor {...baseProps({ onSubmit })} />);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Special Activity" }), { target: { value: "club_debate" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "8A" }));
+    fireEvent.click(document.getElementById("reserved-slot-desktop-mon-p1")!);
+    fireEvent.change(screen.getByRole("combobox", { name: "Resource" }), { target: { value: "gym" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ resourceId: "gym" }));
+  });
+
+  it("preselects the current Resource in edit mode", () => {
+    render(
+      <ReservedActivityEditor
+        {...baseProps({
+          mode: "edit",
+          initialValues: {
+            specialActivityId: "club_debate",
+            classSectionIds: ["class_8a"],
+            teacherId: null,
+            slots: [{ day_id: "mon", period_id: "p1" }],
+            resourceId: "lab",
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "Resource" })).toHaveValue("lab");
+  });
+
+  it("changing from one Resource to No resource marks the draft dirty and submits resourceId: null", () => {
+    const onSubmit = vi.fn();
+    render(
+      <ReservedActivityEditor
+        {...baseProps({
+          mode: "edit",
+          onSubmit,
+          initialValues: {
+            specialActivityId: "club_debate",
+            classSectionIds: ["class_8a"],
+            teacherId: null,
+            slots: [{ day_id: "mon", period_id: "p1" }],
+            resourceId: "gym",
+          },
+        })}
+      />,
+    );
+
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Resource" }), { target: { value: "" } });
+    expect(save).not.toBeDisabled();
+
+    fireEvent.click(save);
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ resourceId: null }));
+  });
+
+  it("disables the Resource select while submitting", () => {
+    render(<ReservedActivityEditor {...baseProps({ submitting: true })} />);
+    expect(screen.getByRole("combobox", { name: "Resource" })).toBeDisabled();
   });
 });

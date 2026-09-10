@@ -4,6 +4,7 @@ import type {
   ReservedActivityDay,
   ReservedActivityItem,
   ReservedActivityPeriod,
+  ReservedActivityResourceOption,
   ReservedActivitySpecialActivityOption,
   ReservedActivityTeacherOption,
 } from "../api/reservedActivities";
@@ -31,6 +32,7 @@ interface ReservedActivityCardProps {
   specialActivities: ReservedActivitySpecialActivityOption[];
   classSections: ReservedActivityClassSectionOption[];
   teachers: ReservedActivityTeacherOption[];
+  resources: ReservedActivityResourceOption[];
   days: ReservedActivityDay[];
   periods: ReservedActivityPeriod[];
   locked: boolean;
@@ -96,6 +98,7 @@ function ReservedActivityCard({
   specialActivities,
   classSections,
   teachers,
+  resources,
   days,
   periods,
   locked,
@@ -113,12 +116,14 @@ function ReservedActivityCard({
   const specialActivityName = resolveName(specialActivities, item.special_activity_id);
   const classNames = item.class_section_ids.map((id) => resolveName(classSections, id));
   const teacherName = item.teacher_id === null ? null : resolveName(teachers, item.teacher_id);
+  const resourceName = item.resource_id === null ? null : resolveName(resources, item.resource_id);
   const { groups: slotGroups, hasUnknown: hasUnknownSlot } = buildSlotGroups(item, days, periods);
 
   const isResolvable =
     specialActivityName !== null &&
     classNames.every((name) => name !== null) &&
     (item.teacher_id === null || teacherName !== null) &&
+    (item.resource_id === null || resourceName !== null) &&
     !hasUnknownSlot &&
     item.slots.length > 0;
 
@@ -141,6 +146,9 @@ function ReservedActivityCard({
         </span>
         <span className="reserved-activity-card-teacher">
           {item.teacher_id === null ? "No teacher" : (teacherName ?? "Unknown Teacher")}
+        </span>
+        <span className="reserved-activity-card-resource">
+          {item.resource_id === null ? "No resource" : (resourceName ?? "Unknown resource")}
         </span>
       </div>
 

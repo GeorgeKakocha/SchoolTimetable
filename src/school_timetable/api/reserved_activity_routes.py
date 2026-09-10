@@ -176,6 +176,7 @@ def _fields_from_request(body: ReservedActivityWriteRequest) -> ReservedActivity
         class_section_ids=body.class_section_ids,
         teacher_id=body.teacher_id,
         slots=tuple(ReservedActivitySlotFields(day_id=s.day_id, period_id=s.period_id) for s in body.slots),
+        resource_id=body.resource_id,
     )
 
 
@@ -186,6 +187,7 @@ def _response_from_result(result) -> ReservedActivityWriteResponse:
         class_section_ids=result.class_section_ids,
         teacher_id=result.teacher_id,
         slots=tuple(ReservedActivitySlotResponse(day_id=s.day_id, period_id=s.period_id) for s in result.slots),
+        resource_id=result.resource_id,
     )
 
 

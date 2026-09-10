@@ -150,6 +150,21 @@ def _add_weekly_fulfillment(model, requirements, lesson_vars, days, periods) -> 
 
 
 def _add_resource_capacity(model, index, requirements, lesson_vars, days, periods) -> None:
+    """Resources B2: fixed `ReservedBlock` usage (already known before
+    the solver ever runs -- never a CP-SAT decision variable) PRE-
+    CONSUMES Resource capacity, so only what remains is available to
+    ordinary lesson variables:
+
+        ordinary_scheduled_usage <= capacity - reserved_fixed_usage
+
+    equivalently `reserved_fixed_usage + ordinary_scheduled_usage <=
+    capacity` -- the same aggregate invariant preflight
+    (`_check_reserved_block_resource_capacity`, reserved-vs-reserved
+    only) and the independent verifier (`_check_resource_capacity`,
+    the full final cross-source result) each check their own slice of.
+    `available` is clamped at 0 (never negative) purely defensively --
+    preflight already guarantees `reserved_fixed_usage <= capacity` for
+    any input that reaches the solver at all."""
     reqs_by_resource: dict[str, list[TeachingRequirement]] = {}
     for req in requirements:
         if req.resource_requirement is not None:
@@ -159,8 +174,10 @@ def _add_resource_capacity(model, index, requirements, lesson_vars, days, period
         capacity = index.resources_by_id[resource_id].capacity
         for day in days:
             for period in periods:
+                reserved_usage = index.reserved_resource_usage_at(resource_id, day.id, period.id)
+                available = max(0, capacity - reserved_usage)
                 terms = [lesson_vars[(r.id, day.id, period.id)] for r in reqs]
-                model.Add(sum(terms) <= capacity)
+                model.Add(sum(terms) <= available)
 
 
 def _add_fixed_placements(model, problem: SchedulingProblem, lesson_vars) -> None:

@@ -126,6 +126,7 @@ class ReservedBlockResponse(BaseModel):
     class_sections: tuple[str, ...]
     slots: tuple[TimeSlotResponse, ...]
     teacher_id: str | None
+    resource_id: str | None = None
 
 
 class FixedPlacementResponse(BaseModel):
@@ -803,6 +804,18 @@ class ReservedActivitySlotResponse(BaseModel):
     period_id: str
 
 
+class ReservedActivityResourceOptionResponse(BaseModel):
+    """The Resource catalog option list this page's "fixed Resource"
+    select needs (Resources B2) -- kept local to this section, mirroring
+    `ReservedActivityTeacherOptionResponse` immediately above rather
+    than reused from `ResourceProjectionItemResponse` defined later in
+    this file."""
+
+    id: str
+    name: str
+    capacity: int
+
+
 class ReservedActivityItemResponse(BaseModel):
     """No `name`/`special_activity_name`/`teacher_name`/class-section
     names -- every reference here is a bare natural ID, resolved by
@@ -813,6 +826,7 @@ class ReservedActivityItemResponse(BaseModel):
     class_section_ids: tuple[str, ...]
     teacher_id: str | None
     slots: tuple[ReservedActivitySlotResponse, ...]
+    resource_id: str | None = None
 
 
 class ReservedActivitiesProjectionResponse(BaseModel):
@@ -823,6 +837,7 @@ class ReservedActivitiesProjectionResponse(BaseModel):
     days: tuple[ReservedActivityDayOptionResponse, ...]
     periods: tuple[ReservedActivityPeriodOptionResponse, ...]
     reserved_activities: tuple[ReservedActivityItemResponse, ...]
+    resources: tuple[ReservedActivityResourceOptionResponse, ...] = ()
 
 
 class ReservedActivityWriteRequest(BaseModel):
@@ -830,12 +845,19 @@ class ReservedActivityWriteRequest(BaseModel):
     partial patch. `teacher_id` is required but nullable -- an omitted
     `teacher_id` field is a normal request-validation failure, never
     silently defaulted. Never accepts `id`/`name`/`kind`/`ordinal`/
-    `resource`/`participant_group`/`duration`/`recurrence`."""
+    `participant_group`/`duration`/`recurrence`.
+
+    `resource_id` (Resources B2) is full-replacement, never PATCH:
+    omitted or explicit `null` both mean "no fixed Resource" -- on PUT
+    this always clears any Resource currently assigned, exactly like
+    every other field here. A non-null value assigns/replaces that
+    exact Resource."""
 
     special_activity_id: str
     class_section_ids: tuple[str, ...]
     teacher_id: str | None
     slots: tuple[ReservedActivitySlotResponse, ...]
+    resource_id: str | None = None
 
 
 class ReservedActivityWriteResponse(BaseModel):
@@ -848,6 +870,7 @@ class ReservedActivityWriteResponse(BaseModel):
     class_section_ids: tuple[str, ...]
     teacher_id: str | None
     slots: tuple[ReservedActivitySlotResponse, ...]
+    resource_id: str | None = None
 
 
 class ReservedActivityDeleteResponse(BaseModel):

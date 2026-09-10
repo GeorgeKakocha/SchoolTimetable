@@ -28,8 +28,10 @@ const VALID_PROJECTION: ReservedActivitiesProjectionResponse = {
       class_section_ids: ["class_8a"],
       teacher_id: null,
       slots: [{ day_id: "mon", period_id: "p1" }],
+      resource_id: null,
     },
   ],
+  resources: [],
 };
 
 const WRITE_REQUEST: ReservedActivityWriteRequest = {
@@ -37,6 +39,7 @@ const WRITE_REQUEST: ReservedActivityWriteRequest = {
   class_section_ids: ["class_8a"],
   teacher_id: null,
   slots: [{ day_id: "mon", period_id: "p1" }],
+  resource_id: null,
 };
 
 describe("reservedActivities api", () => {
@@ -93,6 +96,7 @@ describe("reservedActivities api", () => {
       class_section_ids: ["class_8a", "class_8b"],
       teacher_id: "teacher_a",
       slots: [{ day_id: "mon", period_id: "p1" }],
+      resource_id: null,
     };
 
     await updateReservedActivity("s1", "y1", "reserved_block_1", updatedRequest);

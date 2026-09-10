@@ -83,20 +83,20 @@ def validate_capacity(school_natural_id: str, academic_year_natural_id: str, cap
 
 def find_resource_references(problem: SchedulingProblem, resource_id: str) -> tuple[str, ...]:
     """Every current-configuration entity kind referencing
-    `resource_id` -- in Resources Slice A, only ever
-    `TEACHING_REQUIREMENT` (`TeachingRequirement.resource_requirement.
-    resource_id`). `ReservedBlock` has no `resource_id` field yet (a
-    future Resources B slice); this function will gain a
-    `RESERVED_BLOCK` branch then, never before. Historical
-    `ScheduleVersion`/`ScheduleEntry` rows are never inspected here --
-    Decision #35 already forbids reaching this check at all once any
-    `Schedule` exists for the year."""
+    `resource_id`, in deterministic order: `TEACHING_REQUIREMENT`
+    (`TeachingRequirement.resource_requirement.resource_id`), then
+    `RESERVED_BLOCK` (`ReservedBlock.resource_id`, Resources B2).
+    Historical `ScheduleVersion`/`ScheduleEntry` rows are never
+    inspected here -- Decision #35 already forbids reaching this check
+    at all once any `Schedule` exists for the year."""
     kinds: list[str] = []
     if any(
         req.resource_requirement is not None and req.resource_requirement.resource_id == resource_id
         for req in problem.teaching_requirements
     ):
         kinds.append("TEACHING_REQUIREMENT")
+    if any(block.resource_id == resource_id for block in problem.reserved_blocks):
+        kinds.append("RESERVED_BLOCK")
     return tuple(kinds)
 
 

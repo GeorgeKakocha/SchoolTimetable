@@ -3924,3 +3924,62 @@ reassign all round-tripped correctly.
 implementation commit `0a61339`. The overall Resources phase remains
 NOT closed. **Next slice: Resources B2 -- Reserved Activity Resource
 integration using aggregate Resource capacity.**
+
+## Resources B2 -- Reserved Activity Resource integration (IMPLEMENTED, not yet closed)
+
+**Status: IMPLEMENTED on branch `feature/reserved-activity-resource-b2`.**
+Not a phase closure -- see `docs/PROJECT_STATE.md`'s matching entry for
+the full implementation record.
+
+**Locked contract:** `ReservedBlock` gained one optional
+`resource_id: str | None`, exposed identically on the Reserved Activity
+API, full-replacement like every other field. At most one fixed
+Resource per block, never solver-selected. **One `ReservedBlock`
+consumes exactly ONE capacity unit of its Resource per slot, regardless
+of how many `class_sections` participate** -- this was the one rule
+this slice had to get exactly right, and it is enforced by a single
+shared index (`ProblemIndex.reserved_resource_usage`), never
+duplicated per layer.
+
+**Aggregate capacity, explicitly never pairwise collision**, proven at
+all three layers that could plausibly enforce it: preflight (new
+`RESERVED_RESOURCE_CAPACITY_EXCEEDED`, reserved-vs-reserved structural
+check only, reused through the existing candidate-diff mechanism --
+zero new validation architecture), the solver
+(`_add_resource_capacity` now subtracts fixed reserved usage from
+capacity before constraining ordinary lesson variables --
+`ReservedBlock`s stay fixed input, never CP-SAT variables), and the
+independent verifier (`_check_resource_capacity` needed **zero**
+production change, since it already counts every final entry by
+`resource_id` regardless of source).
+
+**A genuine correctness defect was found and fixed in this same task,
+per the task's own instruction not to open a separate gate cycle for
+it:** the schedule *read-back* mapper
+(`persistence/mappers.py::schedule_entry_to_domain`) was not updated
+alongside the fresh-solve entry builder
+(`scheduling/result_builder.py`), so a `RESERVED_BLOCK` entry's
+`resource_id` was correctly populated when freshly solved but silently
+dropped to `None` when a persisted schedule was reloaded (e.g. by
+timetable projections). Found via a real `POST .../schedule/generate`
+against a live, resource-assigned dataset during the required
+functional check -- not by static review. Fixed with a one-line
+addition to that mapper's `RESERVED_BLOCK` branch, and regression-
+proven at both the repository round-trip level and the real-solver
+Class/Teacher timetable API level (the existing broader round-trip
+test could not have caught this, since the shipped fixture's own
+`ReservedBlock`s never carry a Resource).
+
+**Migration:** one narrow Alembic migration, `9fbec2126831`, adding a
+nullable `reserved_block.resource_id` plus a composite FK mirroring
+`teaching_requirement.resource_id`'s existing pattern exactly. Applied
+to both the primary and `TEST_DATABASE_URL` databases; all pre-existing
+`reserved_block` rows survived with `resource_id = NULL`.
+
+Resource delete-in-use blocking now also detects `RESERVED_BLOCK`
+references (`resource_rules.find_resource_references`, deterministic
+`TEACHING_REQUIREMENT`-then-`RESERVED_BLOCK` order). Resource
+Availability remains deferred; no eligible-Resource sets, categories,
+or preferred-Resource concept exist; the solver never chooses among
+Resources. Owner Decision #39 remains absent -- no genuine unresolved
+product fork appeared.

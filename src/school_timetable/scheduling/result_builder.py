@@ -45,6 +45,7 @@ def build_schedule_entries(
                 class_sections=block.class_sections,
                 teacher_id=block.teacher_id,
                 participant_group_id=None,
+                resource_id=block.resource_id,
                 reserved_block_id=block.id,
             ))
 

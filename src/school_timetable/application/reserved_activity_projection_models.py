@@ -72,12 +72,26 @@ class ReservedActivitySlotView:
 
 
 @dataclass(frozen=True)
+class ReservedActivityResourceOption:
+    """The Resource catalog option list this page's "fixed Resource"
+    select needs (Resources B2) -- kept local to this projection
+    module, matching how `ReservedActivityTeacherOption`/etc. above are
+    already their own local shapes rather than cross-imported from
+    other projection modules."""
+
+    id: str
+    name: str
+    capacity: int
+
+
+@dataclass(frozen=True)
 class ReservedActivityItem:
     id: str
     special_activity_id: str
     class_section_ids: tuple[str, ...]
     teacher_id: str | None
     slots: tuple[ReservedActivitySlotView, ...]
+    resource_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,3 +103,4 @@ class ReservedActivitiesProjectionView:
     days: tuple[ReservedActivityDayOption, ...]
     periods: tuple[ReservedActivityPeriodOption, ...]
     reserved_activities: tuple[ReservedActivityItem, ...]
+    resources: tuple[ReservedActivityResourceOption, ...] = ()

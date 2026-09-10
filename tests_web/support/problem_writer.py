@@ -156,6 +156,7 @@ def write_scheduling_problem(session: Session, problem: SchedulingProblem) -> No
             academic_year_id=year_id, natural_id=block.id, name=block.name,
             activity_id=activity_ids[block.activity_id],
             teacher_id=(teacher_ids[block.teacher_id] if block.teacher_id is not None else None),
+            resource_id=(resource_ids[block.resource_id] if block.resource_id is not None else None),
             ordinal=ordinal,
         )
         session.add(row)

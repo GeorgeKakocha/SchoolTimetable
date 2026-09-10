@@ -24,12 +24,18 @@ class ReservedActivitySlotFields:
 class ReservedActivityFields:
     """The complete mutable aggregate -- the exact input shape for both
     create and update (PUT is always a whole-aggregate replacement,
-    never a partial patch)."""
+    never a partial patch). `resource_id` follows the same
+    full-replacement contract as every other field here (Resources B2,
+    locked Option A precedent from Resources B1): `None` always means
+    "no fixed Resource" on create, and always CLEARS any currently
+    assigned Resource on update -- there is no "leave the Resource
+    unchanged" option."""
 
     special_activity_id: str
     class_section_ids: tuple[str, ...]
     teacher_id: str | None
     slots: tuple[ReservedActivitySlotFields, ...]
+    resource_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,3 +49,4 @@ class ReservedActivityWriteResult:
     class_section_ids: tuple[str, ...]
     teacher_id: str | None
     slots: tuple[ReservedActivitySlotFields, ...]
+    resource_id: str | None = None
