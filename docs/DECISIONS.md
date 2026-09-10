@@ -2908,3 +2908,239 @@ Teacher workload policies, gap minimization UI, Clubs/Reserved Blocks,
 rooms/resources, subgroups/merged classes, or a calendar editor are
 complete -- none of those were touched. **Next planned product phase:
 Clubs / Reserved Blocks.**
+
+**[Historical -- superseded by the closure entry below.] Reserved
+Activities -- Reserved A1 (Special Activity catalog backend):
+IMPLEMENTED on `feature/special-activity-backend`. Technical review
+PASSED, real HTTP API review PASSED, automated gates PASSED. NOT yet
+committed, NOT merged, NOT pushed.** User-facing product
+terminology corrected per the design-gate review: **Special Activity**
+= `Activity(kind=CLUB)`, the catalog/reference-data half of the phase;
+**Reserved Activity** (a `ReservedBlock`) is a separate concept
+belonging to Reserved A2, not implemented here. The internal domain
+enum/persistence value `CLUB` is unchanged and never renamed; it is
+simply never exposed raw through this API surface, mirroring
+"Subject"'s own relationship to `Activity(kind=ORDINARY)` exactly.
+
+Reuses the existing `Activity` domain object and `activity` ORM table
+verbatim -- **zero schema change, zero migration, no new domain
+entity, no new enum.** CRUD contract: `name` is the sole user-managed
+field; `kind` is always `CLUB` server-side, never client-controlled.
+Duplicate rule: exact, case-sensitive, trimmed name rejected only
+among existing `CLUB` activities in the same `AcademicYear`; an
+identically-named `ORDINARY` Subject is never a conflict (and vice
+versa) -- the exact symmetric mirror of `subject_rules.find_duplicate`.
+Natural ID: server-generated `activity_<uuid4().hex>`, identical
+scheme to Subject. Ordinal: the single `AcademicYear`-wide `Activity`
+ordinal sequence shared across both `ORDINARY` and `CLUB` (max across
+the whole table + 1) -- never renumbered, never computed among CLUB
+alone. Delete: blocked only by a genuine `ReservedBlock` reference
+(`SPECIAL_ACTIVITY_IN_USE`, `referenced_by: ["RESERVED_BLOCK"]`),
+identical mechanism to Subject's own `RESERVED_BLOCK` blocker
+(`subject_rules.py`'s existing behavior is completely untouched).
+Kind isolation: an `ORDINARY` activity ID passed to any Special
+Activity endpoint behaves as `SpecialActivityNotFoundError` (404
+`"Special activity not found"`) -- never a wrong-kind conflict, never
+mutated, matching `SubjectService`'s own filtered-resource-surface
+contract precisely (proven by dedicated repository-level tests that
+target `math` directly against this new write port).
+
+**Mandatory derived-name synchronization invariant** (the corrected
+product contract's own consequence, not Owner Decision #39):
+`ReservedBlock.name` is server-derived from its Activity's `name`,
+never independent user input. Renaming a Special Activity therefore
+atomically updates, in the SAME transaction as the Activity rename,
+every persisted `ReservedBlock.name` whose `activity_id` references
+it -- proven for a single referencing block, for multiple blocks
+referencing the same renamed Activity (all synchronized), for an
+unrelated block referencing a different Activity (left untouched),
+and for a failed rename (zero partial synchronization -- neither the
+Activity name nor any `ReservedBlock.name` changes). Timetable
+projection behavior is completely unchanged: Class/Teacher Timetable
+continue displaying `Activity.name`, never `ReservedBlock.name`,
+exactly as before.
+
+Configuration lock: reuses `persistence/configuration_write_lock.py`
+verbatim, unchanged -- the same `resolve_year_id`/`lock_academic_year`/
+`reject_if_configuration_locked` sequence every other configuration
+writer already uses. All three mutations (`POST`/`PUT`/`DELETE`)
+reject with `409 SCHEDULING_CONFIGURATION_LOCKED` once any `Schedule`
+exists; `GET` remains readable regardless. Generation-race safety
+(Owner Decision #36): unchanged production infrastructure --
+`SchedulingProblem`'s frozen-dataclass equality already includes
+`activities` and `reserved_blocks` as ordinary fields, so both a
+Special Activity create/rename/delete AND its dependent
+`ReservedBlock.name` synchronization are automatically detected by the
+existing reload-and-compare check in `persist_initial_version`; proven
+with two new deterministic race tests mirroring the Subject-write
+precedent exactly (generation loads stale problem -> Special Activity
+rename commits (including block-name sync) -> generation's final
+persist raises `ConfigurationChangedDuringGenerationError`, zero
+Schedule persisted; and the reverse ordering, where generation commits
+first and a subsequent rename attempt is rejected under Decision #35
+with the configuration, including every `ReservedBlock.name`, left
+unchanged).
+
+Repository boundary: a new, separate `SpecialActivityRepository` port
+and `SqlAlchemySpecialActivityRepository` adapter -- deliberately NOT
+an extension of the existing `ActivityRepository`, whose own docstring
+already commits to never exposing Club management; that guarantee is
+preserved by adding a sibling port instead, reusing the same
+lock/recheck/validate discipline and the same shared
+`configuration_write_lock.py` primitives. `SpecialActivityService`
+mirrors `SubjectService`'s exact shape and orchestration discipline.
+
+New routes: `GET/POST /schools/{school_id}/years/{year_id}/
+special-activities`, `PUT/DELETE .../special-activities/
+{special_activity_id}` -- error mapping mirrors `subject_routes.py`
+exactly (422 `INVALID_SPECIAL_ACTIVITY`, 409
+`DUPLICATE_SPECIAL_ACTIVITY`/`SPECIAL_ACTIVITY_IN_USE`/
+`SCHEDULING_CONFIGURATION_LOCKED`, 404 `"Special activity not found"`/
+`"Scheduling configuration not found"`). `/config`'s own contract is
+completely unchanged -- it continues exposing every `Activity` with
+its raw `kind`, now correctly reflecting a rename's synchronized
+`ReservedBlock.name` values immediately, proven end-to-end via a
+dedicated API test and via the real running backend against a new
+local-only review dataset.
+
+Test gate: 26 new pure `tests/test_special_activity_service.py`
+(core suite 335 passed/5 deselected, 309 pre-existing + 26 new); 15
+new `tests_web/test_special_activity_repository.py` + 25 new
+`tests_web/test_special_activity_api.py` (canonical single-process
+`tests_web` 328 passed, 288 pre-existing + 40 new), zero
+DB-reachability skips; existing Subject/Teacher/Class/Teaching
+Assignment/Teacher Availability repository and API tests all
+reconfirmed unregressed by the same full-suite runs; frontend 302
+passed (fully unchanged -- zero frontend files touched), build clean;
+Alembic unchanged at `cae76cba3c58`, single head, no drift.
+
+A new local-only, unlocked review dataset,
+`special-activity-review-school`/`ay-special-activity-review-2026`,
+was created and is retained as durable local acceptance evidence,
+live-validated against the real, running dev server's actual HTTP API.
+**Seeded initial state** (a small deterministic problem built via the
+existing TEST-ONLY `write_scheduling_problem`, not the full 40-period
+pilot): one ORDINARY Subject `math`/"Mathematics", one CLUB Special
+Activity `club_robotics`/"Robotics Club", one `ReservedBlock`
+(`club_robotics_block`) referencing it, zero `Schedule`. During
+acceptance: `GET` showed CLUB only; a same-name `ORDINARY` Subject
+("Mathematics") did not conflict with an identically-named new CLUB
+Special Activity, which was created and retained; a second new CLUB
+Special Activity, "Debate Club", was created and retained; an exact
+CLUB duplicate ("Robotics Club") was rejected 409; renaming the
+referenced Special Activity ("Robotics Club" -> "STEM Lab") succeeded,
+and `GET .../config` immediately reflected both the renamed `Activity`
+and the synchronized `ReservedBlock.name`; deleting the
+still-referenced Special Activity was rejected 409
+`SPECIAL_ACTIVITY_IN_USE`; one further, separate temporary Special
+Activity was created then successfully deleted, leaving no residue.
+**Retained final state** (read-only re-inspected at closure,
+unmutated since): four `Activity` rows -- `math`/"Mathematics"
+(ORDINARY, unchanged), `club_robotics`/"STEM Lab" (CLUB, renamed),
+`activity_f463e125da19438f9efaa2f00603d2c0`/"Debate Club" (CLUB, new),
+`activity_167175007916472b843120305ef56183`/"Mathematics" (CLUB,
+new); one `ReservedBlock`, `club_robotics_block`/"STEM Lab" (name
+synchronized to its renamed Activity); **zero `Schedule`** throughout.
+
+The nine pre-existing datasets -- the seven earlier canonical/review
+datasets (`synthetic-school`, `synthetic-review-school`,
+`teacher-crud-review-school`, `class-crud-review-school`,
+`subject-crud-review-school`, `real-school-browser-smoke-school`,
+`teacher-availability-review-school`) plus the two Availability C
+acceptance datasets
+(`teacher-availability-browser-choice-school`,
+`teacher-availability-browser-required-school`) -- were snapshotted
+before and after this entire run (now including `ReservedBlock` row
+counts) and confirmed unchanged -- the same recorded snapshot/count
+fields held identical for all nine; this was never claimed nor
+performed as a byte-for-byte or row-by-row comparison, and the new
+`special-activity-review-school` dataset is deliberately excluded from
+that equality claim since it was intentionally created/mutated for
+this acceptance.
+
+Explicitly NOT part of this slice: `ReservedBlock` CRUD, the Reserved
+Activities page, the School Setup Special Activities frontend tab, any
+frontend change of any kind, Resource support, `ParticipantGroup`
+support, any of the five preflight/write-validation corrections
+recon identified for `ReservedBlock` itself (activity-kind validation,
+class-slot collision, teacher-slot collision, Teacher-`UNAVAILABLE`
+rejection, instructional-only slot rule) -- all of those belong to
+Reserved A2, not implemented here. **Owner Decision #39 was NOT
+created** -- the derived-name synchronization invariant is a
+consistency consequence of the already-corrected product contract, not
+a new product-semantics fork. Reserved A1 is **not** marked closed;
+Reserved A2, the frontend (Reserved B), and browser/solver/timetable
+acceptance (Reserved C) remain entirely unimplemented.
+
+**Reserved Activities -- Reserved A1 (Special Activity catalog
+backend): IMPLEMENTED, REVIEWED, real HTTP API review PASSED,
+COMMITTED, MERGED to `main`, CLOSED.** Implementation commit
+`0b64e115791e4da2bbc243d6d5ec848f28c9d064` ("feat: add special
+activity backend"), fast-forward merged to `main` from
+`feature/special-activity-backend` (now deleted). This entry is the
+authoritative current-state record; the preceding historical entry
+above captures the pending-review snapshot that led here and is
+superseded by it.
+
+Contract, unchanged from review and reconfirmed at closure: Special
+Activity = `Activity(kind=CLUB)`, never a new domain entity, zero
+schema/migration change. `name` is the sole mutable field; `kind`
+always server-set to `CLUB`; duplicate rule exact/case-sensitive/
+trimmed scoped to CLUB only (identical ORDINARY name never conflicts,
+proven both ways); natural ID `activity_<uuid4().hex>`; ordinal is the
+single `AcademicYear`-wide `Activity` sequence shared across both
+kinds; delete blocked only by a genuine `ReservedBlock` reference
+(`SPECIAL_ACTIVITY_IN_USE`); an `ORDINARY` target behaves as 404
+`"Special activity not found"` on every route, with the repository
+independently re-verifying `kind` regardless of the `validate`
+callback. Mandatory derived-name invariant: renaming a Special
+Activity atomically synchronizes every referencing `ReservedBlock.name`
+in the same transaction (proven for single/multiple referencing
+blocks, an untouched unrelated block, and zero partial synchronization
+on a failed rename) -- `/config`'s own contract is unchanged and simply
+reflects the synchronized values. Configuration lock and
+generation-race protection (both orderings) both reuse existing,
+unchanged shared infrastructure.
+
+**Review dataset -- final retained state, re-confirmed read-only at
+closure without further mutation:**
+`special-activity-review-school`/`ay-special-activity-review-2026` was
+seeded with one `ORDINARY` Subject ("Mathematics"), one `CLUB` Special
+Activity ("Robotics Club"), one referencing `ReservedBlock`, and zero
+`Schedule`. Its retained final state is four `Activity` rows --
+`math`/"Mathematics" (`ORDINARY`, unchanged), `club_robotics`/"STEM
+Lab" (`CLUB`, renamed from "Robotics Club" during review), `activity_
+f463e125da19438f9efaa2f00603d2c0`/"Debate Club" (`CLUB`, created and
+retained), `activity_167175007916472b843120305ef56183`/"Mathematics"
+(`CLUB`, created and retained, proving same-name-as-ORDINARY
+coexistence) -- one `ReservedBlock` (`club_robotics_block`) with its
+`name` synchronized to "STEM Lab", and **zero `Schedule`**. A separate
+temporary Special Activity created during review was deleted and
+leaves no residue. Retained, not cleaned up, as durable local
+acceptance evidence.
+
+Final regression, reconfirmed identical to the pre-closure baseline:
+pure `tests/test_special_activity_service.py` 26 passed; focused
+`tests_web/test_special_activity_repository.py` +
+`test_special_activity_api.py` 40 passed; core `tests -m "not slow"`
+**335 passed/5 deselected**; canonical single-process `tests_web`
+**328 passed, zero skips**; frontend **302 passed/18 files/zero
+skips**, fully unchanged (zero frontend files touched), build clean;
+Alembic unchanged at `cae76cba3c58`, single head, no drift. The nine
+pre-existing datasets -- the seven earlier canonical/review datasets
+plus the two Availability C acceptance datasets -- were re-snapshotted
+at closure across the same recorded fields and remain identical to
+both the pre- and post-review snapshots; the new review dataset
+remains excluded from that equality claim. **Zero production source
+changes beyond the reviewed scope**, **zero migration**, **zero
+frontend change**, **zero domain/ORM change**, **zero solver
+production change**.
+
+**Owner Decision #38 remains authoritative and unchanged. Owner
+Decision #39 was not created** -- the derived-name synchronization
+invariant is a cross-feature consistency rule, not a new
+product-semantics fork. **Reserved A2 (`ReservedBlock` backend CRUD +
+validation/preflight) is NOT implemented. Reserved B (frontend) is NOT
+implemented. Reserved C (browser/solver/timetable acceptance) is NOT
+executed.** Nothing was pushed to any remote. **Next planned slice:
+Reserved A2 -- `ReservedBlock` backend CRUD + validation/preflight.**
