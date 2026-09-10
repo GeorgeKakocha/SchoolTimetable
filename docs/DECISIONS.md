@@ -3539,7 +3539,179 @@ reasoning and existing precedent during the closed frontend contract
 gates, never a genuine product-semantics fork.
 
 **Reserved B is CLOSED ON MAIN** (implementation commit `81aef7f`).
-**Reserved C (browser/solver/timetable acceptance) remains NOT
-EXECUTED.** The overall Reserved Activities phase is **not** closed --
-only Reserved B is. Next planned slice: **Reserved C -- real-browser/
-persistence/solver/timetable/lock acceptance.**
+
+**Reserved Activities -- Reserved C (real-browser / persistence /
+solver / timetable / lock acceptance): PASSED.** Acceptance ran across
+two sessions against one retained, local-only dataset
+(`reserved-activity-c-acceptance-school`/
+`ay-reserved-activity-c-acceptance-2026`, created via the existing
+TEST-ONLY `tests_web/support/problem_writer.py` writer -- 2 ClassSections,
+3 Teachers, 2 ORDINARY Activities, 2 Special Activities, 2 instructional
+Days x 3 instructional Periods): the first session completed every CRUD/
+collision/validation proof and was then explicitly **BLOCKED** solely by
+a browser-viewport-tooling gap (`resize_window` proved a no-op in that
+session's environment -- verified via `window.innerWidth` staying fixed
+regardless of the requested size, including a large-size control). That
+block is preserved here as real acceptance history, not erased: nothing
+was faked or skipped in its place. This session resumed from the
+retained pre-generation checkpoint (2 ReservedBlocks, 0 Schedules) and
+resolved the gap.
+
+**Deliberate 3-teacher construction (a considered deviation from a
+2-teacher recommendation):** Teacher A is reserved with 8B (Debate Club,
+Monday/Period 1, PREFER_NOT) and also carries 8A's ordinary Math load --
+but Teacher A is additionally UNAVAILABLE at Monday/Period 2 (to prove
+hard rejection), which makes it mathematically impossible for Teacher A
+alone to cover all 5 of 8A's non-reserved slots (only 4 remain
+available). A third Teacher (Teacher C) was added solely to cover that
+one resulting 8A gap (1 Science period at Monday/Period 2) -- verified
+feasible by a direct `run_preflight`/`solve()` dry-run against the
+exact intended final `ReservedBlock` state before any browser step:
+**preflight errors = 0, solver status = OPTIMAL, total_soft_penalty =
+0**, with the solver's own placement matching the intended shape
+exactly (zero slack anywhere else, so the dry-run result was fully
+deterministic).
+
+**Viewport gap resolution:** a separate, genuinely narrow-viewport real
+Chrome instance was launched locally (`google-chrome --headless=new
+--remote-debugging-port=... `, an already-installed system browser --
+no project dependency added, no package.json/package-lock touched) and
+driven directly over the Chrome DevTools Protocol (`Emulation.
+setDeviceMetricsOverride`, using the system Python's already-installed
+`websockets`/`requests` packages -- outside the project's own
+dependency tree entirely) against the same live Vite dev server
+rendering the real application. Confirmed live: `innerWidth: 375,
+clientWidth: 360` -- a genuine, CDP-verified narrow viewport, not
+inferred from a screenshot. At that width: the desktop Period x Day
+matrix was hidden (`display:none`) and the mobile per-Day sections were
+shown; the Special Activity select, Classes fieldset, Teacher select,
+and Time-slots fieldset (with a correctly-labelled
+`reserved-slot-mobile-mon-p1` checkbox, accessible name "Monday, Period
+1") all rendered correctly within the editor; a scan restricted to the
+editor's own DOM subtree found **zero elements overflowing the
+viewport**. Save/Cancel remained fully on-screen and reachable. Desktop
+width (1280px) was re-confirmed in the same session: matrix visible,
+mobile hidden. A **93px overflow was found, but traced exclusively to
+the shared `AppShell` top nav bar** (`.app-nav-link`), not to any
+Reserved Activities content -- confirmed by reproducing the identical
+overflow on the pre-existing, unrelated Teacher Availability page,
+proving it predates this feature and was never in scope for any
+Reserved Activities design gate (the top nav has never had narrow-width
+collapsing behavior, by original `AppShell` design). This is recorded
+transparently as a pre-existing, out-of-scope observation, not fixed
+here and not treated as a Reserved C blocker.
+
+**Live acceptance evidence (this session, real browser + real API +
+direct PostgreSQL, `synthetic-school` and all other pre-existing
+datasets confirmed untouched):**
+- Class-collision rejection: "Conflicts with the existing Assembly
+  reservation: 8A, Monday Period 1." (draft preserved).
+- Teacher-UNAVAILABLE rejection: "Teacher A is unavailable on Monday
+  Period 2." (draft preserved).
+- PREFER_NOT acceptance: the Debate Club/8B/Teacher A/Monday-Period-1
+  reservation **created successfully** despite PREFER_NOT.
+- Full temporary Special-Activity/Reserved-Activity lifecycle (create,
+  rename, in-use delete blocker, whole-aggregate edit across three
+  dimensions, delete, then the now-unblocked Special Activity delete)
+  all passed with human-language messages only, never leaking `CLUB`/
+  `ORDINARY`/`ReservedBlock`/`RESERVED_BLOCK`.
+- Persistence reconciliation: PostgreSQL's `reserved_block`/
+  `reserved_block_class_section`/`reserved_block_slot` rows (canonical
+  ordinal 0 each) and the raw `/config` endpoint's `reserved_blocks`
+  both matched the browser-visible final state exactly (Assembly/8A/no
+  teacher/Mon-P1; Debate Club/8B/Teacher A/Mon-P1) before generation.
+- **Real-browser generation** (`Timetable` page, real "Generate
+  schedule" button): succeeded. Persisted `schedule_version` row:
+  **`solver_status = OPTIMAL`, `total_soft_penalty = 0`** -- confirming
+  Teacher A's PREFER_NOT reservation carries zero solver penalty, exactly
+  as designed (`ReservedBlock` remains fixed occupancy with zero CP-SAT
+  decision variables).
+- **Independent verifier**: `generate_schedule_service.py`'s own code
+  makes persistence structurally impossible unless
+  `verification.verifier.verify(...)` returns `passed=True` first (a
+  hard gate before any write, confirmed by direct code inspection) --
+  the persisted `Schedule`/`schedule_version` row's mere existence is
+  therefore conclusive verifier-pass evidence, not merely "CP-SAT said
+  OPTIMAL."
+- Class timetables (real browser): 8A Monday/Period 1 = "Assembly
+  RESERVED" exactly, remaining 5 slots = 4x Mathematics/Teacher A + 1x
+  Science/Teacher C. 8B Monday/Period 1 = "Debate Club RESERVED" /
+  Teacher A exactly, remaining 5 slots = 5x Science/Teacher B. Neither
+  reservation was moved by the solver.
+- Teacher A's timetable (real browser): Monday/Period 1 = "Debate Club
+  RESERVED" only (no simultaneous ordinary 8A lesson); Monday/Period 2 =
+  empty (the UNAVAILABLE slot, correctly never assigned); "Assembly"
+  (teacherless) never appears anywhere in Teacher A's timetable.
+- Exact-full occupancy, confirmed via direct PostgreSQL aggregation
+  over `schedule_entry` joined through both `teaching_requirement`/
+  `participant_group_class_section` and `reserved_block_class_section`:
+  **exactly 6 occupied cells for `class_8a` and exactly 6 for
+  `class_8b`** -- zero empty cells, zero double occupancy.
+- `ScheduleEntry` persistence: **12 rows total** -- 10 `source=REQUIREMENT`
+  (the ordinary lessons) + 2 `source=RESERVED_BLOCK` (one per fixed
+  Reserved Activity, each carrying its own `reserved_block_id` and the
+  exact Monday/Period-1 day/period).
+- Post-generation UI lock: both Reserved Activities and Special
+  Activities surfaces showed the identical banner text "Scheduling
+  configuration is locked because a schedule already exists.", with
+  every record readable and every Add/Edit/Delete/Rename control
+  disabled.
+- Direct API lock: `POST`/`PUT`/`DELETE .../reserved-activities` and
+  `POST .../special-activities` each returned exactly `409
+  {"code":"SCHEDULING_CONFIGURATION_LOCKED", ...}`; `GET` remained `200`
+  with `configuration_locked: true`; PostgreSQL counts (`ReservedBlock`
+  2, `Activity` 4, `Schedule` 1, `ScheduleEntry` 12) were identical
+  before and after every rejected write -- zero partial mutation.
+
+**Final retained C dataset state** (kept, not cleaned up, as durable
+acceptance evidence): Teachers 3, ClassSections 2, ORDINARY Activities
+2, Special Activities 2, TeachingRequirements 3, TeacherAvailability
+rows 2, ReservedBlocks 2, Schedules 1, ScheduleEntries 12.
+
+**Pre-existing dataset safety:** every dataset that existed before
+Reserved C (`synthetic-school`, `synthetic-review-school`,
+`teacher-crud-review-school`, `class-crud-review-school`,
+`subject-crud-review-school`, `real-school-browser-smoke-school`,
+`teacher-availability-review-school`,
+`teacher-availability-browser-choice-school`,
+`teacher-availability-browser-required-school`,
+`special-activity-review-school`, `reserved-activity-review-school`)
+was snapshotted across the same recorded practical count fields
+(Teacher/Class/ORDINARY/CLUB/TeachingRequirement/TeacherAvailability/
+ReservedBlock/Schedule) -- the same recorded snapshot/count fields held
+identical for all eleven, including `reserved-activity-review-school`'s
+own `ReservedBlock` count of exactly 5, matching its own already-closed
+A2 acceptance record precisely. No write request was ever directed at
+any of these datasets during Reserved B or C. This was never claimed
+nor performed as a byte-for-byte or row-by-row comparison.
+
+Full regression reconfirmed unchanged after all of the above: core 398
+passed/5 deselected, `tests_web` 396 passed/zero skips, frontend 402
+passed/25 files/zero skips, build clean, Alembic `cae76cba3c58`/one
+head/no drift. Zero production/test/frontend file changed by Reserved C
+(the only local change made -- `frontend/.env.local`'s gitignored
+`VITE_SCHOOL_ID`/`VITE_ACADEMIC_YEAR_ID`, used solely to point the local
+dev frontend at the acceptance dataset -- was restored to its original
+`synthetic-school`/`ay-2026` values before this entry was written).
+
+**Owner Decision #39 remains NOT created** -- the 3-teacher dataset
+construction was a test-fixture engineering decision to keep the
+acceptance dataset genuinely solver-feasible, never a product-semantics
+question.
+
+**RESERVED ACTIVITIES PHASE CLOSED.** A1 (Special Activity backend),
+A2 (Reserved Activity backend), B (frontend), and C (real acceptance)
+are all now closed/passed. The shipped product boundary: a Special
+Activity catalog; a fixed Reserved Activity aggregate (one Special
+Activity, 1+ Classes, an optional single Teacher, explicit
+instructional slots); hard Teacher-UNAVAILABLE rejection with
+non-blocking PREFER_NOT; cross-`ReservedBlock` class/teacher collision
+safety; fixed, zero-CP-SAT-variable solver occupancy; correct Class/
+Teacher timetable projection of both teacher-attached and teacherless
+reservations; configuration-lock enforcement identically across both
+management surfaces and the raw API; and a responsive (desktop
+matrix/mobile per-Day), accessible frontend workflow. Explicitly
+deferred, still out of scope: Resources, ParticipantGroups/subgroups in
+Reserved Activities, multiple Teachers per block, recurrence, duration
+semantics, flexible/autoplaced special activities, and any
+`ReservedBlock` soft solver scoring.

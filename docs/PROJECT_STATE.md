@@ -2620,7 +2620,89 @@ acceptance, no data mutated, no Schedule created.
 **Owner Decision #39 was NOT created.**
 
 **Reserved B is CLOSED ON MAIN** (implementation commit `81aef7f`).
-**Reserved C (browser/solver/timetable acceptance) is NOT EXECUTED.**
-The overall Reserved Activities phase is **not** closed -- only
-Reserved B is. Next planned slice: **Reserved C -- real-browser/
-persistence/solver/timetable/lock acceptance.**
+
+**Reserved C (real-browser/persistence/solver/timetable/lock
+acceptance): PASSED**, across two sessions on one retained dataset
+(`reserved-activity-c-acceptance-school`/
+`ay-reserved-activity-c-acceptance-2026`). The first session completed
+all CRUD/collision/validation proofs then was genuinely **BLOCKED** by
+a browser-viewport-tooling gap (`resize_window` was a proven no-op) --
+that history is preserved, not erased. This session resumed from the
+retained pre-generation checkpoint (2 ReservedBlocks, 0 Schedules) and
+resolved the gap by launching a separate, genuinely narrow real Chrome
+instance (already-installed `google-chrome --headless=new`, no new
+project dependency) driven directly via Chrome DevTools Protocol
+(`Emulation.setDeviceMetricsOverride`, using the system Python's
+already-installed `websockets`/`requests`) against the same live app --
+confirmed `innerWidth: 375, clientWidth: 360`, mobile slot layout shown/
+desktop hidden, zero overflow within the Reserved Activities editor's
+own DOM. (A 93px overflow was found and traced exclusively to the
+shared `AppShell` top nav bar, reproduced identically on the
+pre-existing, unrelated Teacher Availability page -- confirmed
+pre-existing and out of this feature's scope, not fixed here.)
+
+A deliberate 3-teacher dataset construction (Teacher C, added solely to
+keep the acceptance dataset solver-feasible once Teacher A is both
+reserved and made UNAVAILABLE at a slot that would otherwise strand one
+of 8A's ordinary periods) was dry-run verified before any browser step:
+preflight errors = 0, solver status = OPTIMAL, total_soft_penalty = 0.
+
+Live evidence (real browser + real API + direct PostgreSQL): class
+collision and Teacher-UNAVAILABLE rejections with exact human-readable
+messages and preserved drafts; PREFER_NOT reservation created
+successfully; full temporary Special/Reserved Activity CRUD lifecycle
+(create/rename/in-use-blocker/whole-aggregate-edit/delete) with zero
+internal-terminology leaks; persistence and `/config` both matched the
+browser-visible pre-generation state exactly; real-browser generation
+succeeded with persisted `solver_status = OPTIMAL`,
+`total_soft_penalty = 0`; independent-verifier pass proven structurally
+(the codebase's own generation service makes persistence impossible
+unless `verification.verifier.verify(...)` returns `passed=True`
+first, and a `Schedule` row now exists); Class timetables show Assembly
+fixed at 8A Monday/Period 1 and Debate Club (Teacher A) fixed at 8B
+Monday/Period 1, neither moved by the solver; Teacher A's timetable
+shows Debate Club at Monday/Period 1 with no simultaneous ordinary 8A
+lesson, an empty UNAVAILABLE slot, and never shows the teacherless
+Assembly; exact-full occupancy confirmed via direct PostgreSQL
+aggregation (6/6 cells for both 8A and 8B); `ScheduleEntry` persistence
+confirmed (12 rows: 10 `REQUIREMENT` + 2 `RESERVED_BLOCK`); post-
+generation UI lock identical on both management surfaces
+("Scheduling configuration is locked because a schedule already
+exists."); direct API `POST`/`PUT`/`DELETE` all returned `409
+SCHEDULING_CONFIGURATION_LOCKED` with `GET` remaining `200`/
+`configuration_locked: true` and zero partial mutation confirmed via
+before/after PostgreSQL counts.
+
+Final retained C dataset: Teachers 3, ClassSections 2, ORDINARY
+Activities 2, Special Activities 2, TeachingRequirements 3,
+TeacherAvailability 2, ReservedBlocks 2, Schedules 1, ScheduleEntries
+12 -- kept as durable acceptance evidence, not cleaned up.
+
+Pre-existing dataset safety: all eleven pre-existing datasets snapshotted
+across the same recorded practical count fields -- unchanged for all
+eleven (including `reserved-activity-review-school`'s own `ReservedBlock`
+count of exactly 5, matching its already-closed A2 record); no write was
+ever directed at any of them; never claimed as byte-for-byte/row-by-row.
+
+Full regression reconfirmed: core 398 passed/5 deselected, `tests_web`
+396 passed/zero skips, frontend 402 passed/25 files/zero skips, build
+clean, Alembic `cae76cba3c58`/one head/no drift. Zero production/test/
+frontend file changed (the only local change, `frontend/.env.local`'s
+gitignored school/year override, was restored to `synthetic-school`/
+`ay-2026`).
+
+**Owner Decision #39 remains NOT created** -- the 3-teacher dataset
+shape was a test-fixture engineering decision, never a product fork.
+
+**RESERVED ACTIVITIES PHASE CLOSED.** A1, A2, B, and C are all closed/
+passed. Shipped: Special Activity catalog; fixed Reserved Activity
+aggregate (Special Activity + 1+ Classes + optional single Teacher +
+explicit instructional slots); hard Teacher-UNAVAILABLE rejection with
+non-blocking PREFER_NOT; cross-block collision safety; fixed
+zero-CP-SAT-variable solver occupancy; correct Class/Teacher timetable
+projection (teacher-attached and teacherless); configuration-lock
+enforcement across both UI surfaces and the raw API; a responsive,
+accessible frontend workflow. Deferred: Resources, ParticipantGroups/
+subgroups in Reserved Activities, multiple Teachers per block,
+recurrence, duration semantics, flexible/autoplaced special activities,
+`ReservedBlock` soft solver scoring.
