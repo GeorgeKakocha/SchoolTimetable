@@ -200,6 +200,7 @@ def _fields_from_request(body: TeachingAssignmentWriteRequest) -> TeachingAssign
         participant_group_id=body.participant_group_id,
         activity_id=body.activity_id,
         weekly_periods=body.weekly_periods,
+        resource_id=body.resource_id,
     )
 
 

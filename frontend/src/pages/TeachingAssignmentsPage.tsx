@@ -9,6 +9,7 @@ import { ApiError } from "../api/client";
 import type {
   TeacherWorkload,
   TeachingAssignment,
+  TeachingAssignmentResourceOption,
   TeachingAssignmentsProjectionResponse,
   TeachingAssignmentWriteRequest,
   ValidationDiagnostic,
@@ -326,6 +327,7 @@ function TeachingAssignmentsPage() {
         participant_group_id: values.participantGroupId,
         activity_id: values.activityId,
         weekly_periods: values.weeklyPeriods,
+        resource_id: values.resourceId,
       };
       const action =
         drawer.mode === "create"
@@ -463,6 +465,7 @@ function TeachingAssignmentsPage() {
                 assignments={pageState.projection.assignments}
                 configurationLocked={pageState.projection.configuration_locked}
                 wholeClassTargets={pageState.projection.whole_class_targets}
+                resources={pageState.projection.resources}
                 controlsDisabled={controlsDisabled}
                 deleteConfirmId={deleteConfirmId}
                 deleteSubmitting={deleteSubmitting}
@@ -481,6 +484,7 @@ function TeachingAssignmentsPage() {
               teachers={pageState.projection.teachers}
               activities={pageState.projection.activities}
               wholeClassTargets={pageState.projection.whole_class_targets}
+              resources={pageState.projection.resources}
               initialValues={
                 drawer.mode === "edit"
                   ? {
@@ -488,6 +492,7 @@ function TeachingAssignmentsPage() {
                       participantGroupId: drawer.assignment.participant_group_id,
                       activityId: drawer.assignment.activity_id,
                       weeklyPeriods: drawer.assignment.weekly_periods,
+                      resourceId: drawer.assignment.resource_id,
                     }
                   : undefined
               }
@@ -546,6 +551,7 @@ interface AssignmentsTableProps {
   assignments: TeachingAssignment[];
   configurationLocked: boolean;
   wholeClassTargets: WholeClassTarget[];
+  resources: TeachingAssignmentResourceOption[];
   controlsDisabled: boolean;
   deleteConfirmId: string | null;
   deleteSubmitting: boolean;
@@ -560,6 +566,7 @@ function AssignmentsTable({
   assignments,
   configurationLocked,
   wholeClassTargets,
+  resources,
   controlsDisabled,
   deleteConfirmId,
   deleteSubmitting,
@@ -599,7 +606,9 @@ function AssignmentsTable({
               <td>
                 <GroupCell assignment={assignment} />
               </td>
-              <td>{assignment.activity_name}</td>
+              <td>
+                <ActivityCell assignment={assignment} resources={resources} />
+              </td>
               <td className="numeric-cell">{assignment.weekly_periods}</td>
               <td>
                 <StatusCell assignment={assignment} />
@@ -609,6 +618,7 @@ function AssignmentsTable({
                   assignment={assignment}
                   configurationLocked={configurationLocked}
                   wholeClassTargets={wholeClassTargets}
+                  resources={resources}
                   controlsDisabled={controlsDisabled}
                   deleteConfirmId={deleteConfirmId}
                   deleteSubmitting={deleteSubmitting}
@@ -624,6 +634,39 @@ function AssignmentsTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** Resources B1: resolves an assignment's `resource_id` against the
+ * authoritative `resources` option list -- never guessed, never a raw
+ * ID shown to the user. A `resource_id` present on the assignment but
+ * absent from `resources` is a genuine data inconsistency (e.g. a
+ * Resource deleted by another admin session since this page loaded),
+ * safely rendered as "Unknown resource" rather than crashing. */
+function resourceLabel(resourceId: string | null, resources: TeachingAssignmentResourceOption[]): string {
+  if (resourceId === null) {
+    return "No resource";
+  }
+  const match = resources.find((resource) => resource.id === resourceId);
+  return match !== undefined ? match.name : "Unknown resource";
+}
+
+function resourceResolvable(resourceId: string | null, resources: TeachingAssignmentResourceOption[]): boolean {
+  return resourceId === null || resources.some((resource) => resource.id === resourceId);
+}
+
+function ActivityCell({
+  assignment,
+  resources,
+}: {
+  assignment: TeachingAssignment;
+  resources: TeachingAssignmentResourceOption[];
+}) {
+  return (
+    <>
+      <span>{assignment.activity_name}</span>
+      <span className="resource-subtext">{resourceLabel(assignment.resource_id, resources)}</span>
+    </>
   );
 }
 
@@ -663,6 +706,7 @@ interface ActionsCellProps {
   assignment: TeachingAssignment;
   configurationLocked: boolean;
   wholeClassTargets: WholeClassTarget[];
+  resources: TeachingAssignmentResourceOption[];
   controlsDisabled: boolean;
   deleteConfirmId: string | null;
   deleteSubmitting: boolean;
@@ -684,6 +728,7 @@ function ActionsCell({
   assignment,
   configurationLocked,
   wholeClassTargets,
+  resources,
   controlsDisabled,
   deleteConfirmId,
   deleteSubmitting,
@@ -737,10 +782,17 @@ function ActionsCell({
   const matchingTarget = wholeClassTargets.find(
     (target) => target.participant_group_id === assignment.participant_group_id,
   );
+  // Resources B1: mirrors the `matchingTarget` orphan guard above -- an
+  // assignment whose `resource_id` cannot be resolved against the
+  // current `resources` option list can't be safely preselected in the
+  // edit form either (silently defaulting to "No resource" would risk
+  // discarding a real, just-not-yet-visible Resource on save), so Edit
+  // is blocked the same way. Delete never depends on either mapping.
+  const canEdit = matchingTarget !== undefined && resourceResolvable(assignment.resource_id, resources);
 
   return (
     <span className="actions-group">
-      {matchingTarget !== undefined ? (
+      {canEdit ? (
         <button
           type="button"
           className="action-button"

@@ -80,6 +80,7 @@ from school_timetable.api.schemas import (
     TeacherWorkloadResponse,
     TeachersProjectionResponse,
     TeachingAssignmentClassSectionResponse,
+    TeachingAssignmentResourceOptionResponse,
     TeachingAssignmentResponse,
     TeachingAssignmentsProjectionResponse,
     TeachingRequirementResponse,
@@ -394,6 +395,10 @@ def teaching_assignments_projection_response_from_view(
             )
             for w in view.teacher_workloads
         ),
+        resources=tuple(
+            TeachingAssignmentResourceOptionResponse(id=r.id, name=r.name, capacity=r.capacity)
+            for r in view.resources
+        ),
     )
 
 
@@ -413,6 +418,7 @@ def _teaching_assignment_response(item: TeachingAssignmentItem) -> TeachingAssig
         weekly_periods=item.weekly_periods,
         editable=item.editable,
         advanced_reasons=item.advanced_reasons,
+        resource_id=item.resource_id,
     )
 
 

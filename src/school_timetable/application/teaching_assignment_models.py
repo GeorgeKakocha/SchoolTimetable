@@ -12,13 +12,20 @@ from school_timetable.validation.errors import ValidationError
 
 @dataclass(frozen=True)
 class TeachingAssignmentFields:
-    """The four owner-approved editable fields (Decision #34) -- the
-    exact input shape for both create and update."""
+    """The owner-approved editable fields (Decision #34, extended by
+    Resources B1's Option A) -- the exact input shape for both create
+    and update. `resource_id` defaults to `None` so existing Python
+    callers constructing this without it keep today's behavior (no
+    fixed Resource) unchanged. PUT is full-replacement, never PATCH:
+    `resource_id=None` on an update always clears any currently
+    assigned Resource -- there is no way to say "leave the Resource
+    unchanged" (matching how the other four fields already work)."""
 
     teacher_id: str
     participant_group_id: str
     activity_id: str
     weekly_periods: int
+    resource_id: str | None = None
 
 
 @dataclass(frozen=True)

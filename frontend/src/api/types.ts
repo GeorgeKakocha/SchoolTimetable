@@ -216,6 +216,7 @@ export interface TeachingAssignment {
   weekly_periods: number;
   editable: boolean;
   advanced_reasons: string[];
+  resource_id: string | null;
 }
 
 export interface TeacherOption {
@@ -226,6 +227,16 @@ export interface TeacherOption {
 export interface ActivityOption {
   id: string;
   name: string;
+}
+
+// Resources B1's "fixed Resource" option list -- `Resource` is the
+// existing `domain.resources.Resource(id, name, capacity)` (Resources
+// Slice A); `capacity` means "maximum simultaneous resource
+// occupations," never seat/headcount capacity.
+export interface TeachingAssignmentResourceOption {
+  id: string;
+  name: string;
+  capacity: number;
 }
 
 export interface WholeClassTarget {
@@ -254,6 +265,7 @@ export interface TeachingAssignmentsProjectionResponse {
   whole_class_targets: WholeClassTarget[];
   activities: ActivityOption[];
   teacher_workloads: TeacherWorkload[];
+  resources: TeachingAssignmentResourceOption[];
 }
 
 // -- POST/PUT/DELETE .../teaching-assignments[/{requirement_id}] --------
@@ -274,6 +286,11 @@ export interface TeachingAssignmentWriteRequest {
   participant_group_id: string;
   activity_id: string;
   weekly_periods: number;
+  // Full-replacement, never PATCH (Resources B1): `null` (explicit,
+  // never omitted by this frontend) means "no fixed Resource" -- on a
+  // PUT this always clears any Resource currently assigned. A
+  // non-null value assigns/replaces that exact Resource.
+  resource_id: string | null;
 }
 
 export interface TeachingAssignmentWriteResponse {

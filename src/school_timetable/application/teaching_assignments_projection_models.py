@@ -47,6 +47,7 @@ class TeachingAssignmentItem:
     weekly_periods: int
     editable: bool
     advanced_reasons: tuple[str, ...]
+    resource_id: str | None
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,20 @@ class TeacherOption:
 class ActivityOption:
     id: str
     name: str
+
+
+@dataclass(frozen=True)
+class TeachingAssignmentResourceOption:
+    """The Resource catalog option list this page needs to offer a
+    "fixed Resource" select (Resources B1) -- kept local to this
+    projection module rather than imported from
+    `resource_projection_models.ResourceProjectionItem`, matching how
+    `TeacherOption`/`ActivityOption` above are already their own local
+    shapes rather than cross-imported from other projection modules."""
+
+    id: str
+    name: str
+    capacity: int
 
 
 @dataclass(frozen=True)
@@ -97,3 +112,4 @@ class TeachingAssignmentsProjectionView:
     whole_class_targets: tuple[WholeClassTarget, ...]
     activities: tuple[ActivityOption, ...]
     teacher_workloads: tuple[TeacherWorkload, ...]
+    resources: tuple[TeachingAssignmentResourceOption, ...]

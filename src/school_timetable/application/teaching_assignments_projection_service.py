@@ -28,6 +28,7 @@ from school_timetable.application.teaching_assignments_projection_models import 
     TeacherWorkload,
     TeachingAssignmentClassSection,
     TeachingAssignmentItem,
+    TeachingAssignmentResourceOption,
     TeachingAssignmentsProjectionView,
     WholeClassTarget,
 )
@@ -109,6 +110,13 @@ class TeachingAssignmentsProjectionService:
             for t in problem.teachers
         )
 
+        # Resources B1: the same Resource catalog option list a "fixed
+        # Resource" select needs, in the Resource catalog's own
+        # authoritative (persistence ordinal) order -- never re-sorted.
+        resources = tuple(
+            TeachingAssignmentResourceOption(id=r.id, name=r.name, capacity=r.capacity) for r in problem.resources
+        )
+
         return TeachingAssignmentsProjectionView(
             configuration_locked=configuration_locked,
             assignments=assignments,
@@ -116,6 +124,7 @@ class TeachingAssignmentsProjectionService:
             whole_class_targets=whole_class_targets,
             activities=activities,
             teacher_workloads=teacher_workloads,
+            resources=resources,
         )
 
 
@@ -150,6 +159,9 @@ def _project_assignment(
         weekly_periods=requirement.weekly_periods,
         editable=len(reasons) == 0,
         advanced_reasons=reasons,
+        resource_id=(
+            None if requirement.resource_requirement is None else requirement.resource_requirement.resource_id
+        ),
     )
 
 

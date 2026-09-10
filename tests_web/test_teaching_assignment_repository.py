@@ -27,6 +27,7 @@ from school_timetable.application.errors import (
     ConfigurationLockedError,
     DuplicateTeachingAssignmentError,
     TeachingAssignmentNotFoundError,
+    UnknownReferenceError,
 )
 from school_timetable.application.teaching_assignment_rules import validate_create, validate_delete, validate_update
 from school_timetable.domain.result import SolverStatus
@@ -68,6 +69,18 @@ def seeded_db(live_db_engine):
 def _requirement_ids(session_factory, school_id, year_id):
     problem = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(school_id, year_id)
     return {r.id for r in problem.teaching_requirements}
+
+
+def _year_id(session_factory, school_id, year_id):
+    session = session_factory()
+    try:
+        return session.execute(
+            select(m.AcademicYear.id).join(m.School, m.School.id == m.AcademicYear.school_id).where(
+                m.School.natural_id == school_id, m.AcademicYear.natural_id == year_id,
+            )
+        ).scalar_one()
+    finally:
+        session.close()
 
 
 # -- A. write persistence -----------------------------------------------
@@ -215,6 +228,257 @@ def test_rollback_leaves_no_partial_mutation_on_validation_failure(seeded_db):
     assert "req_should_not_exist" not in after_ids
 
 
+# -- A2. Resources B1 (fixed Resource on an ordinary requirement) -------
+
+def test_create_persists_resource_id(seeded_db):
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    def validate(current_problem):
+        validate_create(
+            current_problem, problem.school.id, problem.academic_year.id,
+            teacher_id="t_history", participant_group_id="pg_9a", activity_id="history", weekly_periods=3,
+            resource_id="gym",
+        )
+
+    repo.create(
+        problem.school.id, problem.academic_year.id, "req_test_create_resource",
+        "t_history", "pg_9a", "history", 3, validate=validate, resource_id="gym",
+    )
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    created = next(r for r in reloaded.teaching_requirements if r.id == "req_test_create_resource")
+    assert created.resource_requirement is not None
+    assert created.resource_requirement.resource_id == "gym"
+
+
+def test_create_without_resource_id_persists_null(seeded_db):
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    def validate(current_problem):
+        validate_create(
+            current_problem, problem.school.id, problem.academic_year.id,
+            teacher_id="t_history", participant_group_id="pg_9a", activity_id="history", weekly_periods=3,
+        )
+
+    repo.create(
+        problem.school.id, problem.academic_year.id, "req_test_create_no_resource",
+        "t_history", "pg_9a", "history", 3, validate=validate,
+    )
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    created = next(r for r in reloaded.teaching_requirements if r.id == "req_test_create_no_resource")
+    assert created.resource_requirement is None
+
+
+def test_update_assigns_resource_id(seeded_db):
+    # science_8a starts with no resource_requirement.
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    def validate(current_problem):
+        validate_update(
+            current_problem, problem.school.id, problem.academic_year.id, "science_8a",
+            teacher_id="t_science", participant_group_id="pg_8a", activity_id="science", weekly_periods=9,
+            resource_id="gym",
+        )
+
+    repo.update(
+        problem.school.id, problem.academic_year.id, "science_8a",
+        "t_science", "pg_8a", "science", 9, validate=validate, resource_id="gym",
+    )
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    updated = next(r for r in reloaded.teaching_requirements if r.id == "science_8a")
+    assert updated.resource_requirement is not None
+    assert updated.resource_requirement.resource_id == "gym"
+
+
+def test_update_replaces_resource_id(seeded_db, live_db_engine):
+    # sport_8a starts with resource_requirement=gym; add a second
+    # Resource ("lab") and reassign to it.
+    problem, session_factory = seeded_db
+    year_id = _year_id(session_factory, problem.school.id, problem.academic_year.id)
+
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    session.add(m.Resource(academic_year_id=year_id, natural_id="lab", name="Science Lab", capacity=1, ordinal=999))
+    session.commit()
+    session.close()
+    connection.close()
+
+    repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    def validate(current_problem):
+        validate_update(
+            current_problem, problem.school.id, problem.academic_year.id, "sport_8a",
+            teacher_id="t_sport", participant_group_id="pg_8a", activity_id="sport", weekly_periods=2,
+            resource_id="lab",
+        )
+
+    repo.update(
+        problem.school.id, problem.academic_year.id, "sport_8a",
+        "t_sport", "pg_8a", "sport", 2, validate=validate, resource_id="lab",
+    )
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    updated = next(r for r in reloaded.teaching_requirements if r.id == "sport_8a")
+    assert updated.resource_requirement.resource_id == "lab"
+
+
+def test_update_omitted_resource_id_clears_it(seeded_db):
+    # sport_8a starts with resource_requirement=gym.
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    def validate(current_problem):
+        validate_update(
+            current_problem, problem.school.id, problem.academic_year.id, "sport_8a",
+            teacher_id="t_sport", participant_group_id="pg_8a", activity_id="sport", weekly_periods=2,
+        )
+
+    repo.update(
+        problem.school.id, problem.academic_year.id, "sport_8a",
+        "t_sport", "pg_8a", "sport", 2, validate=validate,
+    )
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    updated = next(r for r in reloaded.teaching_requirements if r.id == "sport_8a")
+    assert updated.resource_requirement is None
+
+
+def test_update_preserves_requirement_identity_and_ordinal_when_changing_resource(seeded_db, live_db_engine):
+    problem, session_factory = seeded_db
+    year_id = _year_id(session_factory, problem.school.id, problem.academic_year.id)
+
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    before = session.execute(
+        select(m.TeachingRequirement).where(
+            m.TeachingRequirement.academic_year_id == year_id, m.TeachingRequirement.natural_id == "sport_8a",
+        )
+    ).scalar_one()
+    id_before, ordinal_before = before.id, before.ordinal
+    session.close()
+    connection.close()
+
+    repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    def validate(current_problem):
+        validate_update(
+            current_problem, problem.school.id, problem.academic_year.id, "sport_8a",
+            teacher_id="t_sport", participant_group_id="pg_8a", activity_id="sport", weekly_periods=2,
+        )
+
+    repo.update(
+        problem.school.id, problem.academic_year.id, "sport_8a",
+        "t_sport", "pg_8a", "sport", 2, validate=validate,
+    )
+
+    connection2 = live_db_engine.connect()
+    session2 = Session(bind=connection2)
+    after = session2.execute(
+        select(m.TeachingRequirement).where(
+            m.TeachingRequirement.academic_year_id == year_id, m.TeachingRequirement.natural_id == "sport_8a",
+        )
+    ).scalar_one()
+    session2.close()
+    connection2.close()
+    assert after.id == id_before
+    assert after.ordinal == ordinal_before
+
+
+def test_update_unknown_resource_leaves_row_unchanged(seeded_db):
+    """Atomicity proof: an unknown `resource_id` fails `validate` before
+    any write -- the row's own resource stays exactly as it was."""
+    problem, session_factory = seeded_db
+    repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    def failing_validate(current_problem):
+        validate_update(
+            current_problem, problem.school.id, problem.academic_year.id, "sport_8a",
+            teacher_id="t_sport", participant_group_id="pg_8a", activity_id="sport", weekly_periods=2,
+            resource_id="no-such-resource",
+        )
+
+    with pytest.raises(UnknownReferenceError):
+        repo.update(
+            problem.school.id, problem.academic_year.id, "sport_8a",
+            "t_sport", "pg_8a", "sport", 2, validate=failing_validate, resource_id="no-such-resource",
+        )
+
+    reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+    unchanged = next(r for r in reloaded.teaching_requirements if r.id == "sport_8a")
+    assert unchanged.resource_requirement is not None
+    assert unchanged.resource_requirement.resource_id == "gym"
+
+
+def test_cross_ay_resource_cannot_be_assigned(seeded_db, live_db_engine):
+    """A Resource natural ID that only exists in a DIFFERENT
+    School/AcademicYear must never be persistable against this one --
+    `validate` (loaded from THIS year's own `problem.resources`) already
+    rejects it as unknown, so the row is never reached."""
+    problem, session_factory = seeded_db
+
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    school2 = m.School(natural_id="other-school-cross-ay-resource", name="Other School")
+    session.add(school2)
+    session.flush()
+    year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
+    session.add(year2)
+    session.flush()
+    session.add(m.Resource(academic_year_id=year2.id, natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0))
+    session.commit()
+    school2_id = school2.id
+    session.close()
+    connection.close()
+
+    try:
+        repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+        def failing_validate(current_problem):
+            validate_update(
+                current_problem, problem.school.id, problem.academic_year.id, "science_8a",
+                teacher_id="t_science", participant_group_id="pg_8a", activity_id="science", weekly_periods=9,
+                resource_id="cross_ay_gym",
+            )
+
+        with pytest.raises(UnknownReferenceError):
+            repo.update(
+                problem.school.id, problem.academic_year.id, "science_8a",
+                "t_science", "pg_8a", "science", 9, validate=failing_validate, resource_id="cross_ay_gym",
+            )
+
+        reloaded = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+            problem.school.id, problem.academic_year.id,
+        )
+        unchanged = next(r for r in reloaded.teaching_requirements if r.id == "science_8a")
+        assert unchanged.resource_requirement is None
+    finally:
+        cleanup_connection = live_db_engine.connect()
+        cleanup_session = Session(bind=cleanup_connection)
+        row = cleanup_session.get(m.School, school2_id)
+        if row is not None:
+            cleanup_session.delete(row)
+            cleanup_session.commit()
+        cleanup_session.close()
+        cleanup_connection.close()
+
+
 # -- B. duplicate concurrency (genuine, thread-based, lock-serialized) --
 
 def test_concurrent_duplicate_create_exactly_one_succeeds(seeded_db):
@@ -357,3 +621,49 @@ def test_generation_persist_succeeds_then_blocks_a_waiting_config_write(seeded_d
 
     after_ids = _requirement_ids(session_factory, problem.school.id, problem.academic_year.id)
     assert "req_after_generation" not in after_ids
+
+
+def test_generation_persist_aborts_when_only_a_resource_assignment_changed(seeded_db, live_db_engine):
+    """Resources B1: a write that changes ONLY `resource_id` (every
+    other field on the row identical) must still be caught by the
+    Owner-Decision-#36 stale-input check -- proving
+    `TeachingRequirement.resource_requirement` genuinely participates in
+    `SchedulingProblem`'s frozen-dataclass equality, not just
+    `teacher_id`/`activity_id`/etc. science_8a starts with no
+    `resource_requirement`; this only assigns one, nothing else."""
+    problem, session_factory = seeded_db
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    assignment_repo = SqlAlchemyTeachingAssignmentRepository(session_factory)
+
+    stale_problem = SessionFactorySchedulingProblemRepository(session_factory).load_by_school_and_year(
+        problem.school.id, problem.academic_year.id,
+    )
+
+    def validate(current_problem):
+        validate_update(
+            current_problem, problem.school.id, problem.academic_year.id, "science_8a",
+            teacher_id="t_science", participant_group_id="pg_8a", activity_id="science", weekly_periods=9,
+            resource_id="gym",
+        )
+
+    assignment_repo.update(
+        problem.school.id, problem.academic_year.id, "science_8a",
+        "t_science", "pg_8a", "science", 9, validate=validate, resource_id="gym",
+    )
+
+    with pytest.raises(ConfigurationChangedDuringGenerationError):
+        schedule_repo.persist_initial_version(
+            problem.school.id, problem.academic_year.id, stale_problem,
+            entries=(), solver_status=SolverStatus.OPTIMAL, total_soft_penalty=0,
+            wall_time_seconds=0.01, random_seed=None,
+        )
+
+    year_id = _year_id(session_factory, problem.school.id, problem.academic_year.id)
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    schedule_count = len(
+        session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalars().all()
+    )
+    session.close()
+    connection.close()
+    assert schedule_count == 0

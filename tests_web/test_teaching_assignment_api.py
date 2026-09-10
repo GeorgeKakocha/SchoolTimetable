@@ -145,7 +145,7 @@ def test_get_projection_full_contract_shape(client, db):
 
     assert set(body.keys()) == {
         "configuration_locked", "assignments", "teachers", "whole_class_targets",
-        "activities", "teacher_workloads",
+        "activities", "teacher_workloads", "resources",
     }
     assert body["configuration_locked"] is False
     assert len(body["assignments"]) == len(problem.teaching_requirements)
@@ -155,7 +155,7 @@ def test_get_projection_full_contract_shape(client, db):
     assert set(assignment.keys()) == {
         "id", "teacher_id", "teacher_name", "activity_id", "activity_name",
         "participant_group_id", "participant_group_name", "participant_group_role",
-        "class_sections", "weekly_periods", "editable", "advanced_reasons",
+        "class_sections", "weekly_periods", "editable", "advanced_reasons", "resource_id",
     }
 
 
@@ -171,6 +171,51 @@ def test_get_editable_and_advanced_reasons_correct(client, db):
     math_8a = _by_id(body["assignments"], "math_8a")
     assert math_8a["editable"] is False
     assert "block_policy" in math_8a["advanced_reasons"]
+
+
+def test_get_otherwise_plain_resource_bearing_assignment_is_editable(client, db):
+    # Resources B1: sport_8a carries resource_requirement=gym but is
+    # otherwise plain -- must now be editable, with resource_id exposed
+    # and "resource_requirement" never appearing in advanced_reasons.
+    session, _session_factory = db
+    problem = _seed(session)
+
+    body = client.get(_url(problem)).json()
+    sport_8a = _by_id(body["assignments"], "sport_8a")
+    assert sport_8a["editable"] is True
+    assert sport_8a["advanced_reasons"] == []
+    assert sport_8a["resource_id"] == "gym"
+
+
+def test_get_assignment_without_resource_has_null_resource_id(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    body = client.get(_url(problem)).json()
+    science_8a = _by_id(body["assignments"], "science_8a")
+    assert science_8a["resource_id"] is None
+
+
+def test_get_other_advanced_reasons_unaffected_by_resources_b1(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    body = client.get(_url(problem)).json()
+    german_8a = _by_id(body["assignments"], "german_8a")
+    assert german_8a["editable"] is False
+    assert "split_group_id" in german_8a["advanced_reasons"]
+    assert "resource_requirement" not in german_8a["advanced_reasons"]
+
+
+def test_get_resource_options_included_and_ordered(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    body = client.get(_url(problem)).json()
+    assert [r["id"] for r in body["resources"]] == [r.id for r in problem.resources]
+    gym = _by_id(body["resources"], "gym")
+    assert gym["name"] == "Indoor Gym"
+    assert gym["capacity"] == 1
 
 
 def test_get_fixed_placement_makes_assignment_non_editable(client, db):
@@ -397,6 +442,88 @@ def test_post_non_positive_weekly_periods_returns_422(client, db):
     assert response.status_code == 422
 
 
+# -- POST/PUT: Resources B1 (fixed Resource) ---------------------------
+
+def test_post_without_resource_id_creates_with_no_resource(client, db):
+    session, session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json={
+        "teacher_id": "t_history", "participant_group_id": "pg_9a", "activity_id": "history", "weekly_periods": 3,
+    })
+    assert response.status_code == 201
+    new_id = response.json()["id"]
+
+    body = client.get(_url(problem)).json()
+    assert _by_id(body["assignments"], new_id)["resource_id"] is None
+
+
+def test_post_resource_id_null_creates_with_no_resource(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json={
+        "teacher_id": "t_history", "participant_group_id": "pg_9a", "activity_id": "history", "weekly_periods": 3,
+        "resource_id": None,
+    })
+    assert response.status_code == 201
+    new_id = response.json()["id"]
+
+    body = client.get(_url(problem)).json()
+    assert _by_id(body["assignments"], new_id)["resource_id"] is None
+
+
+def test_post_with_resource_id_creates_with_that_resource(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json={
+        "teacher_id": "t_history", "participant_group_id": "pg_9a", "activity_id": "history", "weekly_periods": 3,
+        "resource_id": "gym",
+    })
+    assert response.status_code == 201
+    new_id = response.json()["id"]
+
+    body = client.get(_url(problem)).json()
+    assert _by_id(body["assignments"], new_id)["resource_id"] == "gym"
+
+
+def test_post_unknown_resource_id_returns_422(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.post(_url(problem), json={
+        "teacher_id": "t_history", "participant_group_id": "pg_9a", "activity_id": "history", "weekly_periods": 3,
+        "resource_id": "no-such-resource",
+    })
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "UNKNOWN_REFERENCE"
+    assert body["reference_kind"] == "resource"
+    assert body["reference_id"] == "no-such-resource"
+
+
+def test_post_cross_ay_resource_id_returns_422(client, db, live_db_engine):
+    session, session_factory = db
+    problem = _seed(session)
+
+    school2 = m.School(natural_id="other-school-post-cross-ay", name="Other School")
+    session.add(school2)
+    session.flush()
+    year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
+    session.add(year2)
+    session.flush()
+    session.add(m.Resource(academic_year_id=year2.id, natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0))
+    session.flush()
+
+    response = client.post(_url(problem), json={
+        "teacher_id": "t_history", "participant_group_id": "pg_9a", "activity_id": "history", "weekly_periods": 3,
+        "resource_id": "cross_ay_gym",
+    })
+    assert response.status_code == 422
+    assert response.json()["code"] == "UNKNOWN_REFERENCE"
+
+
 # -- PUT --------------------------------------------------------------------
 
 def test_put_update_200_preserves_natural_id(client, db):
@@ -486,6 +613,116 @@ def test_put_locked_configuration_returns_409(client, db):
     assert response.json()["code"] == "SCHEDULING_CONFIGURATION_LOCKED"
 
 
+def test_put_without_resource_id_clears_existing_resource(client, db):
+    # sport_8a starts with resource_requirement=gym.
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(_url(problem, "sport_8a"), json={
+        "teacher_id": "t_sport", "participant_group_id": "pg_8a", "activity_id": "sport", "weekly_periods": 2,
+    })
+    assert response.status_code == 200
+
+    body = client.get(_url(problem)).json()
+    assert _by_id(body["assignments"], "sport_8a")["resource_id"] is None
+
+
+def test_put_resource_id_null_clears_existing_resource(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(_url(problem, "sport_8a"), json={
+        "teacher_id": "t_sport", "participant_group_id": "pg_8a", "activity_id": "sport", "weekly_periods": 2,
+        "resource_id": None,
+    })
+    assert response.status_code == 200
+
+    body = client.get(_url(problem)).json()
+    assert _by_id(body["assignments"], "sport_8a")["resource_id"] is None
+
+
+def test_put_replaces_resource_a_with_resource_b(client, db, live_db_engine):
+    session, session_factory = db
+    problem = _seed(session)
+    year_id = session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+    session.add(m.Resource(academic_year_id=year_id, natural_id="lab", name="Science Lab", capacity=1, ordinal=999))
+    session.flush()
+
+    response = client.put(_url(problem, "sport_8a"), json={
+        "teacher_id": "t_sport", "participant_group_id": "pg_8a", "activity_id": "sport", "weekly_periods": 2,
+        "resource_id": "lab",
+    })
+    assert response.status_code == 200
+
+    body = client.get(_url(problem)).json()
+    assert _by_id(body["assignments"], "sport_8a")["resource_id"] == "lab"
+
+
+def test_put_assigns_resource_to_previously_unassigned_row(client, db):
+    # science_8a starts with no resource_requirement.
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(_url(problem, "science_8a"), json={
+        "teacher_id": "t_science", "participant_group_id": "pg_8a", "activity_id": "science", "weekly_periods": 9,
+        "resource_id": "gym",
+    })
+    assert response.status_code == 200
+
+    body = client.get(_url(problem)).json()
+    assert _by_id(body["assignments"], "science_8a")["resource_id"] == "gym"
+
+
+def test_put_unknown_resource_id_returns_422(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(_url(problem, "science_8a"), json={
+        "teacher_id": "t_science", "participant_group_id": "pg_8a", "activity_id": "science", "weekly_periods": 9,
+        "resource_id": "no-such-resource",
+    })
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "UNKNOWN_REFERENCE"
+    assert body["reference_kind"] == "resource"
+
+
+def test_put_cross_ay_resource_id_returns_422(client, db, live_db_engine):
+    session, session_factory = db
+    problem = _seed(session)
+
+    school2 = m.School(natural_id="other-school-put-cross-ay", name="Other School")
+    session.add(school2)
+    session.flush()
+    year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
+    session.add(year2)
+    session.flush()
+    session.add(m.Resource(academic_year_id=year2.id, natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0))
+    session.flush()
+
+    response = client.put(_url(problem, "science_8a"), json={
+        "teacher_id": "t_science", "participant_group_id": "pg_8a", "activity_id": "science", "weekly_periods": 9,
+        "resource_id": "cross_ay_gym",
+    })
+    assert response.status_code == 422
+    assert response.json()["code"] == "UNKNOWN_REFERENCE"
+
+
+def test_put_otherwise_plain_resource_bearing_requirement_editable(client, db):
+    # Resources B1 closure regression: sport_8a must now be a normal
+    # PUT target (was previously ADVANCED_REQUIREMENT_NOT_EDITABLE).
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.put(_url(problem, "sport_8a"), json={
+        "teacher_id": "t_sport", "participant_group_id": "pg_8a", "activity_id": "sport", "weekly_periods": 4,
+    })
+    assert response.status_code == 200
+    assert response.json()["id"] == "sport_8a"
+
+
 # -- DELETE -------------------------------------------------------------
 
 def test_delete_200_exact_body(client, db):
@@ -517,6 +754,15 @@ def test_delete_advanced_requirement_returns_409(client, db):
     body = response.json()
     assert body["code"] == "ADVANCED_REQUIREMENT_NOT_EDITABLE"
     assert "block_policy" in body["advanced_reasons"]
+
+
+def test_delete_otherwise_plain_resource_bearing_requirement_succeeds(client, db):
+    session, _session_factory = db
+    problem = _seed(session)
+
+    response = client.delete(_url(problem, "sport_8a"))
+    assert response.status_code == 200
+    assert response.json()["deleted_id"] == "sport_8a"
 
 
 def test_delete_locked_configuration_returns_409(client, db):

@@ -71,6 +71,11 @@ const FULL_PROJECTION: TeachingAssignmentsProjectionResponse = {
     { id: "art", name: "Art" },
     { id: "pe", name: "Physical Education" },
     { id: "music", name: "Music" },
+    { id: "dance", name: "Dance" },
+  ],
+  resources: [
+    { id: "res1", name: "Gym", capacity: 1 },
+    { id: "res2", name: "Science Lab", capacity: 1 },
   ],
   assignments: [
     {
@@ -86,6 +91,7 @@ const FULL_PROJECTION: TeachingAssignmentsProjectionResponse = {
       weekly_periods: 4,
       editable: true,
       advanced_reasons: [],
+      resource_id: null,
     },
     {
       id: "r2",
@@ -100,6 +106,7 @@ const FULL_PROJECTION: TeachingAssignmentsProjectionResponse = {
       weekly_periods: 2,
       editable: false,
       advanced_reasons: ["participant_group_role"],
+      resource_id: null,
     },
     {
       id: "r3",
@@ -117,6 +124,7 @@ const FULL_PROJECTION: TeachingAssignmentsProjectionResponse = {
       weekly_periods: 2,
       editable: false,
       advanced_reasons: ["participant_group_role"],
+      resource_id: null,
     },
     {
       id: "r4",
@@ -131,6 +139,7 @@ const FULL_PROJECTION: TeachingAssignmentsProjectionResponse = {
       weekly_periods: 1,
       editable: false,
       advanced_reasons: ["fixed_placement"],
+      resource_id: null,
     },
     {
       id: "r5",
@@ -145,6 +154,22 @@ const FULL_PROJECTION: TeachingAssignmentsProjectionResponse = {
       weekly_periods: 3,
       editable: false,
       advanced_reasons: ["distribution_policy", "time_preferences"],
+      resource_id: null,
+    },
+    {
+      id: "r6",
+      teacher_id: "t1",
+      teacher_name: "Ms. Petrova",
+      activity_id: "dance",
+      activity_name: "Dance",
+      participant_group_id: "g4",
+      participant_group_name: "8-B",
+      participant_group_role: "WHOLE_CLASS",
+      class_sections: [{ id: "8b", name: "8-B" }],
+      weekly_periods: 2,
+      editable: true,
+      advanced_reasons: [],
+      resource_id: "res1",
     },
   ],
 };
@@ -155,6 +180,7 @@ const EMPTY_PROJECTION: TeachingAssignmentsProjectionResponse = {
   teacher_workloads: [{ teacher_id: "t1", teacher_name: "Ms. Petrova", total_weekly_periods: 0 }],
   whole_class_targets: [],
   activities: [],
+  resources: [],
   assignments: [],
 };
 
@@ -468,6 +494,7 @@ describe("Add assignment", () => {
         participant_group_id: "g4",
         activity_id: "art",
         weekly_periods: 3,
+        resource_id: null,
       }),
     );
   });
@@ -613,7 +640,7 @@ describe("Edit assignment", () => {
     expect(within(rowFor("Art")).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
   });
 
-  it("prepopulates all four fields from the target assignment, mapping the class by participant_group_id", async () => {
+  it("prepopulates all fields from the target assignment, mapping the class by participant_group_id", async () => {
     mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
     render(<TeachingAssignmentsPage />);
     await screen.findByText("Mathematics");
@@ -625,6 +652,18 @@ describe("Edit assignment", () => {
     expect(screen.getByRole("combobox", { name: "Class" })).toHaveValue("g1");
     expect(screen.getByRole("combobox", { name: "Activity" })).toHaveValue("math");
     expect(screen.getByRole("spinbutton", { name: "Weekly periods" })).toHaveValue(4);
+    expect(screen.getByRole("combobox", { name: "Resource" })).toHaveValue("");
+  });
+
+  it("prepopulates the Resource select with the assignment's current Resource", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Dance");
+
+    fireEvent.click(within(rowFor("Dance")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+
+    expect(screen.getByRole("combobox", { name: "Resource" })).toHaveValue("res1");
   });
 
   it("PUTs the exact full-replacement body, with the requirement ID only in the URL and never in the body", async () => {
@@ -646,6 +685,7 @@ describe("Edit assignment", () => {
         participant_group_id: "g1",
         activity_id: "math",
         weekly_periods: 6,
+        resource_id: null,
       }),
     );
     const [, , , calledBody] = mockedUpdateTeachingAssignment.mock.calls[0] ?? [];
@@ -690,6 +730,7 @@ describe("Edit assignment", () => {
           weekly_periods: 4,
           editable: true,
           advanced_reasons: [],
+          resource_id: null,
         },
       ],
     };
@@ -730,6 +771,196 @@ describe("Edit assignment", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await screen.findByText(/A schedule was generated since this page loaded/);
     await waitFor(() => expect(screen.getByRole("button", { name: "Add assignment" })).toBeDisabled());
+  });
+});
+
+describe("Resources B1: fixed Resource on an ordinary assignment", () => {
+  it("renders the Resource select with 'No resource' as the first option, and every Resource by name, never a raw ID", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+
+    const resourceSelect = screen.getByRole("combobox", { name: "Resource" }) as HTMLSelectElement;
+    const optionLabels = Array.from(resourceSelect.options).map((option) => option.textContent);
+    expect(optionLabels[0]).toBe("No resource");
+    expect(optionLabels).toContain("Gym");
+    expect(optionLabels).toContain("Science Lab");
+    expect(resourceSelect.value).toBe("");
+    // No raw Resource IDs ever appear as visible option text.
+    expect(optionLabels).not.toContain("res1");
+    expect(optionLabels).not.toContain("res2");
+  });
+
+  it("still permits create/edit when the Resource catalog is empty, offering only 'No resource'", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce({ ...FULL_PROJECTION, resources: [] });
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+
+    const resourceSelect = screen.getByRole("combobox", { name: "Resource" }) as HTMLSelectElement;
+    expect(resourceSelect.options.length).toBe(1);
+    expect(resourceSelect.options[0]?.textContent).toBe("No resource");
+    expect(resourceSelect).toBeEnabled();
+  });
+
+  it("creates an assignment with a selected Resource", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockResolvedValueOnce({ id: "new1", warnings: [] });
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+    fireEvent.change(screen.getByRole("combobox", { name: "Resource" }), { target: { value: "res1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockedCreateTeachingAssignment).toHaveBeenCalledWith("s1", "y1", {
+        teacher_id: "t1",
+        participant_group_id: "g1",
+        activity_id: "art",
+        weekly_periods: 1,
+        resource_id: "res1",
+      }),
+    );
+  });
+
+  it("creates an assignment with no Resource selected, sending resource_id: null explicitly", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedCreateTeachingAssignment.mockResolvedValueOnce({ id: "new1", warnings: [] });
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockedCreateTeachingAssignment).toHaveBeenCalledWith(
+        "s1", "y1",
+        expect.objectContaining({ resource_id: null }),
+      ),
+    );
+  });
+
+  it("changes an assignment from no Resource to a selected Resource", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedUpdateTeachingAssignment.mockResolvedValueOnce({ id: "r1", warnings: [] });
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+    fireEvent.click(within(rowFor("Mathematics")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Resource" }), { target: { value: "res2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockedUpdateTeachingAssignment).toHaveBeenCalledWith(
+        "s1", "y1", "r1",
+        expect.objectContaining({ resource_id: "res2" }),
+      ),
+    );
+  });
+
+  it("clears an assignment's Resource back to 'No resource'", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    mockedUpdateTeachingAssignment.mockResolvedValueOnce({ id: "r6", warnings: [] });
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Dance");
+    fireEvent.click(within(rowFor("Dance")).getByRole("button", { name: "Edit" }));
+    await screen.findByRole("dialog", { name: "Edit assignment" });
+    expect(screen.getByRole("combobox", { name: "Resource" })).toHaveValue("res1");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Resource" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockedUpdateTeachingAssignment).toHaveBeenCalledWith(
+        "s1", "y1", "r6",
+        expect.objectContaining({ resource_id: null }),
+      ),
+    );
+  });
+
+  it("shows the Resource name in the row when assigned", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Dance");
+
+    expect(within(rowFor("Dance")).getByText("Gym")).toBeInTheDocument();
+  });
+
+  it("shows 'No resource' in the row when unassigned", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Mathematics");
+
+    expect(within(rowFor("Mathematics")).getByText("No resource")).toBeInTheDocument();
+  });
+
+  it("shows a safe 'Unknown resource' fallback, without exposing the raw ID, and blocks Edit for that row", async () => {
+    const projection: TeachingAssignmentsProjectionResponse = {
+      ...FULL_PROJECTION,
+      assignments: [
+        {
+          id: "orphan-resource",
+          teacher_id: "t1",
+          teacher_name: "Ms. Petrova",
+          activity_id: "art",
+          activity_name: "Art",
+          participant_group_id: "g1",
+          participant_group_name: "8-A",
+          participant_group_role: "WHOLE_CLASS",
+          class_sections: [{ id: "8a", name: "8-A" }],
+          weekly_periods: 2,
+          editable: true,
+          advanced_reasons: [],
+          resource_id: "vanished-resource",
+        },
+      ],
+    };
+    mockedGetTeachingAssignments.mockResolvedValueOnce(projection);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Art");
+
+    const row = rowFor("Art");
+    expect(within(row).getByText("Unknown resource")).toBeInTheDocument();
+    expect(within(row).queryByText("vanished-resource")).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(within(row).getByText("This assignment can no longer be edited here.")).toBeInTheDocument();
+    // Delete never depends on the resource mapping -- only Edit does.
+    expect(within(row).getByRole("button", { name: "Delete" })).toBeEnabled();
+  });
+
+  it("shows an active Edit and Delete for an otherwise-plain resource-bearing row", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await screen.findByText("Dance");
+
+    const row = rowFor("Dance");
+    expect(within(row).getByRole("button", { name: "Edit" })).toBeEnabled();
+    expect(within(row).getByRole("button", { name: "Delete" })).toBeEnabled();
+    expect(within(row).queryByText("Read-only")).not.toBeInTheDocument();
+  });
+
+  it("disables the Resource select while a submit is in flight, matching every other field", async () => {
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    const deferredCreate = deferred<{ id: string; warnings: ValidationDiagnostic[] }>();
+    mockedCreateTeachingAssignment.mockReturnValueOnce(deferredCreate.promise);
+
+    render(<TeachingAssignmentsPage />);
+    await openAddDrawer();
+    await fillCreateForm("t1", "g1", "art");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(screen.getByRole("combobox", { name: "Resource" })).toBeDisabled();
+
+    mockedGetTeachingAssignments.mockResolvedValueOnce(FULL_PROJECTION);
+    deferredCreate.resolve({ id: "new1", warnings: [] });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });
 

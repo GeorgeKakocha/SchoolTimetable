@@ -2910,5 +2910,139 @@ dependency/`uv.lock`/`dist` changes.
 **RESOURCES A -- RESOURCE CATALOG BACKEND CLOSED ON MAIN.** Implementation
 commit `6a90a28`. The overall Resources phase is **NOT** yet closed.
 
-**Next slice: Resources B1 -- ordinary `TeachingRequirement`
-fixed-resource assignment contract.**
+## Resources B1 -- ordinary Teaching Assignment fixed-resource assignment (IMPLEMENTED, not yet closed)
+
+**Status: IMPLEMENTED on branch `feature/resource-assignment-b1`.** Not
+yet merged/closed as this entry is written; see the closure entry below
+for final status and commit hash once merged.
+
+**Locked product contract (Option A, per the B1 recon's recommendation):**
+the existing Teaching Assignment `POST/PUT .../teaching-assignments[/{id}]`
+contract gained one new field, `resource_id: str | null`, rather than a
+second endpoint or a separate Advanced editor. Full-replacement
+semantics, matching every other field on this write: POST omitted/null
+`resource_id` means "no fixed Resource"; PUT omitted `resource_id` OR
+explicit `null` both mean "clear any Resource currently assigned" --
+there is no partial-update "leave unchanged" option; a non-null value
+assigns/replaces that exact Resource. Mapped 1:1 onto the existing,
+unchanged `domain.resources.ResourceRequirement(resource_id)` --
+`resource_id=None` -> `TeachingRequirement.resource_requirement=None`,
+otherwise `ResourceRequirement(resource_id=resource_id)`.
+
+**The Advanced/read-only gate corrected.** `teaching_assignment_rules.
+plain_reasons()` no longer treats a non-null `resource_requirement` as
+an Advanced disqualifier on its own -- an otherwise-plain
+(`WHOLE_CLASS`, `FLEXIBLE` block policy, no split group, no time
+preferences, no `FixedPlacement`) resource-bearing requirement is now
+editable and deletable through this same narrow write service. Every
+other existing Advanced reason (non-whole-class target, split group,
+non-`FLEXIBLE` block policy, non-default distribution policy, time
+preferences, `FixedPlacement`) is completely unchanged. In the shipped
+`valid_fixture`, this immediately unblocks all 8 previously-stranded
+`sport_*`/`dance_*` rows (the gym-using rows) -- confirmed live via a
+real-browser pass (see below).
+
+**Resource reference validation** reuses `resource_rules.find_resource`
+(Resources Slice A) via a new `require_known_resource()` helper --
+raises the existing, generic `UnknownReferenceError(reference_kind=
+"resource", reference_id=...)` (422 `UNKNOWN_REFERENCE`) for an unknown
+or cross-AY Resource natural ID, mirroring the identical treatment
+already given to `teacher_id`/`activity_id`/`participant_group_id`. No
+new error class was introduced.
+
+**Projection additions:** `TeachingAssignmentItem`/`TeachingAssignmentResponse`
+gained `resource_id: str | null`; `TeachingAssignmentsProjectionView`/
+`TeachingAssignmentsProjectionResponse` gained a `resources: [{id, name,
+capacity}]` option list (in the Resource catalog's own authoritative
+order), matching the existing `activities`/`teachers`/`whole_class_targets`
+option-list pattern exactly. No cross-projection-module type reuse --
+the small `TeachingAssignmentResourceOption`/`TeachingAssignmentResourceOptionResponse`
+shapes are local to this module, matching how `TeacherOption`/`ActivityOption`
+are already local rather than imported from other projection modules.
+
+**Frontend (`AssignmentDrawer`/`TeachingAssignmentsPage`):** one new
+`<select>` field, "Resource," in the existing single create/edit drawer
+-- "No resource" is itself a first-class selectable option (not a
+"please choose" placeholder), and the frontend always submits
+`resource_id` explicitly as `string | null`, never omitted, keeping the
+wire contract unambiguous even though the backend also treats omission
+as null. The Activity table cell gained a small muted subtext line
+showing the assigned Resource's name (or "No resource") -- deliberately
+not a new table column. A `resource_id` present on a row but absent
+from the current `resources` option list renders as a safe "Unknown
+resource" (never a raw ID) and blocks Edit for that row only (mirroring
+the existing `whole_class_targets` orphan-row precedent) -- Delete is
+never affected by either mapping.
+
+**Atomicity/locking/race safety:** unchanged infrastructure reused
+verbatim -- one write, one `AcademicYear` row lock, one `validate`
+closure, one commit (Owner Decision #36); `resource_id` is threaded
+through the *same* single transaction as every other field, never a
+second request. A dedicated race test
+(`test_generation_persist_aborts_when_only_a_resource_assignment_changed`)
+proves a write that changes *only* `resource_id` (every other field
+identical) still triggers the existing stale-input abort, confirming
+`TeachingRequirement.resource_requirement` genuinely participates in
+`SchedulingProblem`'s frozen-dataclass equality Owner Decision #36
+already relies on.
+
+**Zero solver, verifier, domain, or schema change.** `Resource`,
+`ResourceRequirement`, `TeachingRequirement.resource_requirement`, the
+`teaching_requirement.resource_id` column, the solver's resource-capacity
+constraint, and preflight's `UNKNOWN_RESOURCE`/`INVALID_RESOURCE_CAPACITY`
+checks were all already fully wired (Resources Slice A) and required no
+changes -- confirmed by rerunning the existing solver/verifier
+resource-capacity fixture tests (`test_editing_moves.py::test_resource_capacity_conflict_rejected`,
+`test_verifier.py`/`test_preflight.py`'s resource-scoped tests), all
+still passing unmodified.
+
+**Explicitly deferred/out of scope for B1:** Resource Availability
+(unchanged, still deferred); `ReservedBlock.resource_id` (does not
+exist -- that is Resources B2); the solver never chooses among
+Resources (a fixed, admin-picked Resource only); Owner Decision #39
+remains absent (no genuine unresolved product fork was found in the B1
+recon).
+
+**Real-browser functional check** against the existing, unlocked
+`teacher-crud-review-school`/`ay-teacher-crud-2026` local dataset
+(`frontend/.env.local` temporarily pointed there, then restored to
+`synthetic-school`/`ay-2026` afterward, matching established practice):
+confirmed the previously-stranded "Teacher Sport / 8-A / Sport / Indoor
+Gym" and "Teacher Dance / 8-A / Dance / Indoor Gym" rows now show
+"Standard" (not "Advanced") with active Edit/Delete; assigned "Indoor
+Gym" to a previously-resource-free assignment ("Teacher Science / 8-A /
+Science") via the edit drawer, confirmed the row updated and the
+Resource re-selected correctly on reopen, cleared it back to "No
+resource," confirmed the row updated, then reassigned it -- all four
+save cycles reflected correctly with no stale/error state.
+
+**Tests added:** 12 pure-application (`tests/test_teaching_assignment_service.py`,
+covering create/update with omitted/null/valid/unknown/cross-snapshot
+resource references, clearing, reassigning, otherwise-plain
+editability/deletability, and other-Advanced-reasons-unaffected), 9
+repository/integration plus 1 dedicated generation-race proof
+(`tests_web/test_teaching_assignment_repository.py`), 16 HTTP contract
+(`tests_web/test_teaching_assignment_api.py`, covering GET shape/
+editability/resource-options, POST/PUT create/clear/reassign/unknown/
+cross-AY, and DELETE for an otherwise-plain resource-bearing row) -- 38
+new backend tests, plus 12 new frontend tests
+(`TeachingAssignmentsPage.test.tsx`) covering the Resource select
+render/empty-catalog/create/change/clear/row-display/unknown-fallback/
+locked-disable behavior. Two small pre-existing tests were corrected to
+reflect the new, intentional behavior (the "resource_requirement is
+Advanced" assertion became "otherwise-plain resource-bearing
+requirement is editable"); two pre-existing exact-shape assertions
+(`test_get_projection_full_contract_shape`'s key sets) were extended
+with the new fields.
+
+**Full regression:** core 446 passed/5 deselected (434 + 12 new),
+`tests_web` 464 passed/zero skips (438 + 17 + 9 new... i.e. 438 + 26
+new: 9 repository + 1 race + 16 API), frontend 415 passed/25 files/zero
+skips (403 + 12 new; one unrelated pre-existing `TimetablePage.test.tsx`
+timing test flaked once under full-suite load and passed cleanly on
+immediate rerun in isolation and in a second full-suite run -- not a
+regression, nothing in this slice touches that page), build clean,
+Alembic `cae76cba3c58`/one head/no drift/zero migration. Scope audit
+confirmed only the expected Teaching-Assignment-related backend/
+frontend/test files changed -- zero domain/solver/verifier/migration/
+dependency/ReservedBlock/Resource-catalog-backend changes.

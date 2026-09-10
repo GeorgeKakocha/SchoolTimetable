@@ -83,6 +83,7 @@ class TeachingAssignmentService:
                 current_problem, school_natural_id, academic_year_natural_id,
                 teacher_id=fields.teacher_id, participant_group_id=fields.participant_group_id,
                 activity_id=fields.activity_id, weekly_periods=fields.weekly_periods,
+                resource_id=fields.resource_id,
             )
 
         # Fast precheck against the just-loaded snapshot -- the
@@ -93,7 +94,7 @@ class TeachingAssignmentService:
         self._teaching_assignment_repository.create(
             school_natural_id, academic_year_natural_id, natural_id,
             fields.teacher_id, fields.participant_group_id, fields.activity_id, fields.weekly_periods,
-            validate=validate,
+            resource_id=fields.resource_id, validate=validate,
         )
         return TeachingAssignmentWriteResult(natural_id=natural_id, warnings=warnings_holder[0])
 
@@ -116,6 +117,7 @@ class TeachingAssignmentService:
                 current_problem, school_natural_id, academic_year_natural_id, natural_id,
                 teacher_id=fields.teacher_id, participant_group_id=fields.participant_group_id,
                 activity_id=fields.activity_id, weekly_periods=fields.weekly_periods,
+                resource_id=fields.resource_id,
             )
 
         validate(problem)
@@ -123,7 +125,7 @@ class TeachingAssignmentService:
         self._teaching_assignment_repository.update(
             school_natural_id, academic_year_natural_id, natural_id,
             fields.teacher_id, fields.participant_group_id, fields.activity_id, fields.weekly_periods,
-            validate=validate,
+            resource_id=fields.resource_id, validate=validate,
         )
         return TeachingAssignmentWriteResult(natural_id=natural_id, warnings=warnings_holder[0])
 

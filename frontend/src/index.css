@@ -458,6 +458,16 @@ select:focus-visible {
   letter-spacing: 0.02em;
 }
 
+/* Resources B1: a small, muted subtext line under the Activity cell --
+   deliberately not a new table column, to avoid widening the table for
+   a field most rows leave at "No resource". */
+.resource-subtext {
+  display: block;
+  margin-top: 0.2em;
+  color: #7a7a7a;
+  font-size: 0.8em;
+}
+
 .status-standard {
   color: #4a4a4a;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ActivityOption, TeacherOption, WholeClassTarget } from "../api/types";
+import type { ActivityOption, TeacherOption, TeachingAssignmentResourceOption, WholeClassTarget } from "../api/types";
 
 /**
  * Phase 3C.3b: the right-side Add/Edit drawer for a plain `WHOLE_CLASS`
@@ -12,12 +12,21 @@ import type { ActivityOption, TeacherOption, WholeClassTarget } from "../api/typ
  * a plain fixed-position overlay + panel, matching this project's
  * "no component library" discipline (`DECISIONS.md` Owner Decision 10).
  *
- * Option lists (`teachers`/`activities`/`wholeClassTargets`) are always
- * exactly the authoritative GET projection's own arrays -- this
- * component never invents, sorts, or filters them, and never defaults
- * a selection to their first entry; every selector starts on an
- * explicit, unselected placeholder option in create mode so a save can
- * never silently target the wrong teacher/class/activity.
+ * Option lists (`teachers`/`activities`/`wholeClassTargets`/`resources`)
+ * are always exactly the authoritative GET projection's own arrays --
+ * this component never invents, sorts, or filters them, and never
+ * defaults a selection to their first entry; every REQUIRED selector
+ * starts on an explicit, unselected placeholder option in create mode
+ * so a save can never silently target the wrong teacher/class/activity.
+ *
+ * The Resource select is the one OPTIONAL field (Resources B1, locked
+ * Option A): its own placeholder-shaped first option is itself a valid,
+ * selectable choice -- "No resource" -- never a "please choose"
+ * prompt, since not choosing IS the valid, common case. `resourceId`
+ * is always submitted explicitly as `string | null` (never omitted),
+ * matching the backend's full-replacement PUT contract: saving with
+ * "No resource" selected always clears any Resource the assignment
+ * previously had.
  */
 
 export interface AssignmentDrawerValues {
@@ -25,6 +34,7 @@ export interface AssignmentDrawerValues {
   participantGroupId: string;
   activityId: string;
   weeklyPeriods: number;
+  resourceId: string | null;
 }
 
 interface AssignmentDrawerProps {
@@ -32,6 +42,7 @@ interface AssignmentDrawerProps {
   teachers: TeacherOption[];
   activities: ActivityOption[];
   wholeClassTargets: WholeClassTarget[];
+  resources: TeachingAssignmentResourceOption[];
   initialValues?: AssignmentDrawerValues | undefined;
   submitting: boolean;
   error: string | null;
@@ -40,6 +51,7 @@ interface AssignmentDrawerProps {
 }
 
 const UNSELECTED = "";
+const NO_RESOURCE = "";
 
 function isPositiveIntegerText(text: string): boolean {
   return /^[0-9]+$/.test(text) && Number(text) >= 1;
@@ -50,6 +62,7 @@ function AssignmentDrawer({
   teachers,
   activities,
   wholeClassTargets,
+  resources,
   initialValues,
   submitting,
   error,
@@ -62,6 +75,7 @@ function AssignmentDrawer({
   const [weeklyPeriodsText, setWeeklyPeriodsText] = useState(
     initialValues !== undefined ? String(initialValues.weeklyPeriods) : "1",
   );
+  const [resourceId, setResourceId] = useState(initialValues?.resourceId ?? NO_RESOURCE);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLSelectElement>(null);
@@ -141,6 +155,7 @@ function AssignmentDrawer({
       participantGroupId,
       activityId,
       weeklyPeriods: Number(weeklyPeriodsText),
+      resourceId: resourceId === NO_RESOURCE ? null : resourceId,
     });
   }
 
@@ -208,6 +223,22 @@ function AssignmentDrawer({
               {activities.map((activity) => (
                 <option key={activity.id} value={activity.id}>
                   {activity.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Resource
+            <select
+              value={resourceId}
+              onChange={(event) => setResourceId(event.target.value)}
+              disabled={submitting}
+            >
+              <option value={NO_RESOURCE}>No resource</option>
+              {resources.map((resource) => (
+                <option key={resource.id} value={resource.id}>
+                  {resource.name}
                 </option>
               ))}
             </select>

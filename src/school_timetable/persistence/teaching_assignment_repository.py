@@ -69,6 +69,7 @@ class SqlAlchemyTeachingAssignmentRepository:
         activity_id: str,
         weekly_periods: int,
         validate: Callable[[SchedulingProblem], None],
+        resource_id: str | None = None,
     ) -> None:
         session = self._session_factory()
         try:
@@ -84,6 +85,13 @@ class SqlAlchemyTeachingAssignmentRepository:
             teacher_ids = _natural_to_surrogate(session, orm.Teacher, year_id)
             activity_ids = _natural_to_surrogate(session, orm.Activity, year_id)
             group_ids = _natural_to_surrogate(session, orm.ParticipantGroup, year_id)
+            # `validate` already proved `resource_id` (when not None)
+            # resolves in this school/year -- this lookup is therefore
+            # never expected to miss.
+            resource_surrogate_id = (
+                None if resource_id is None
+                else _natural_to_surrogate(session, orm.Resource, year_id)[resource_id]
+            )
 
             session.add(orm.TeachingRequirement(
                 academic_year_id=year_id,
@@ -96,7 +104,7 @@ class SqlAlchemyTeachingAssignmentRepository:
                 block_sizes=[],
                 min_distinct_days=None,
                 max_periods_per_day=None,
-                resource_id=None,
+                resource_id=resource_surrogate_id,
                 split_group_id=None,
                 ordinal=_next_ordinal(session, year_id),
             ))
@@ -117,6 +125,7 @@ class SqlAlchemyTeachingAssignmentRepository:
         activity_id: str,
         weekly_periods: int,
         validate: Callable[[SchedulingProblem], None],
+        resource_id: str | None = None,
     ) -> None:
         session = self._session_factory()
         try:
@@ -128,13 +137,19 @@ class SqlAlchemyTeachingAssignmentRepository:
                 school_natural_id, academic_year_natural_id,
             )
             # `validate` (application-owned) already confirms `natural_id`
-            # exists and is plain -- the row lookup below is therefore
-            # never expected to miss.
+            # exists and is plain, and that `resource_id` (when not None)
+            # resolves in this school/year -- the row lookup below and
+            # the surrogate resolution above are therefore never
+            # expected to miss.
             validate(current_problem)
 
             teacher_ids = _natural_to_surrogate(session, orm.Teacher, year_id)
             activity_ids = _natural_to_surrogate(session, orm.Activity, year_id)
             group_ids = _natural_to_surrogate(session, orm.ParticipantGroup, year_id)
+            resource_surrogate_id = (
+                None if resource_id is None
+                else _natural_to_surrogate(session, orm.Resource, year_id)[resource_id]
+            )
 
             row = session.execute(
                 select(orm.TeachingRequirement).where(
@@ -146,6 +161,9 @@ class SqlAlchemyTeachingAssignmentRepository:
             row.activity_id = activity_ids[activity_id]
             row.participant_group_id = group_ids[participant_group_id]
             row.weekly_periods = weekly_periods
+            # Full-replacement, matching every other field on this row
+            # (Resources B1) -- `resource_id=None` always clears it.
+            row.resource_id = resource_surrogate_id
             session.commit()
         except BaseException:
             session.rollback()

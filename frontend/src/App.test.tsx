@@ -86,6 +86,7 @@ const EMPTY_PROJECTION: TeachingAssignmentsProjectionResponse = {
   whole_class_targets: [],
   activities: [],
   teacher_workloads: [],
+  resources: [],
 };
 
 const EMPTY_RESERVED_ACTIVITIES_PROJECTION: ReservedActivitiesProjectionResponse = {

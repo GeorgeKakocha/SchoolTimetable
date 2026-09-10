@@ -371,6 +371,7 @@ class TeachingAssignmentResponse(BaseModel):
     weekly_periods: int
     editable: bool
     advanced_reasons: tuple[str, ...]
+    resource_id: str | None
 
 
 class TeacherOptionResponse(BaseModel):
@@ -381,6 +382,20 @@ class TeacherOptionResponse(BaseModel):
 class ActivityOptionResponse(BaseModel):
     id: str
     name: str
+
+
+class TeachingAssignmentResourceOptionResponse(BaseModel):
+    """The Resource catalog option list this page's "fixed Resource"
+    select needs (Resources B1) -- kept local to this section, mirroring
+    `TeacherOptionResponse`/`ActivityOptionResponse` immediately above,
+    rather than reused from `ResourceProjectionItemResponse` defined
+    later in this file (this module's classes are read top-to-bottom;
+    every field this page needs already exists here, so no cross-section
+    dependency is introduced)."""
+
+    id: str
+    name: str
+    capacity: int
 
 
 class WholeClassTargetResponse(BaseModel):
@@ -417,22 +432,31 @@ class TeachingAssignmentsProjectionResponse(BaseModel):
     whole_class_targets: tuple[WholeClassTargetResponse, ...]
     activities: tuple[ActivityOptionResponse, ...]
     teacher_workloads: tuple[TeacherWorkloadResponse, ...]
+    resources: tuple[TeachingAssignmentResourceOptionResponse, ...]
 
 
 class TeachingAssignmentWriteRequest(BaseModel):
     """POST/PUT request body -- maps 1:1 onto the locked
-    `TeachingAssignmentFields` application dataclass (Decision #34).
-    `participant_group_id` must be sourced verbatim from a prior GET's
+    `TeachingAssignmentFields` application dataclass (Decision #34,
+    extended by Resources B1's locked Option A). `participant_group_id`
+    must be sourced verbatim from a prior GET's
     `whole_class_targets[*].participant_group_id`; the frontend never
     infers or constructs it. Pydantic enforces only basic request
     shape/type here -- `TeachingAssignmentService`/`teaching_assignment_rules`
     remain the sole authoritative validators, including when called
-    outside HTTP."""
+    outside HTTP.
+
+    `resource_id` is full-replacement, never PATCH: omitted (POST or
+    PUT) or explicit `null` both mean "no fixed Resource" -- on PUT this
+    always clears any Resource currently assigned, exactly like every
+    other field here. A non-null value replaces/assigns that exact
+    Resource."""
 
     teacher_id: str
     participant_group_id: str
     activity_id: str
     weekly_periods: int = Field(gt=0)
+    resource_id: str | None = None
 
 
 class TeachingAssignmentWriteResponse(BaseModel):

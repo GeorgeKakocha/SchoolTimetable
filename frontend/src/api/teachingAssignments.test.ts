@@ -23,6 +23,7 @@ const VALID_PROJECTION: TeachingAssignmentsProjectionResponse = {
   ],
   activities: [{ id: "math", name: "Mathematics" }],
   teacher_workloads: [{ teacher_id: "t1", teacher_name: "Teacher One", total_weekly_periods: 0 }],
+  resources: [],
 };
 
 describe("teachingAssignments api", () => {
@@ -90,6 +91,7 @@ const WRITE_REQUEST: TeachingAssignmentWriteRequest = {
   participant_group_id: "g1",
   activity_id: "math",
   weekly_periods: 4,
+  resource_id: null,
 };
 
 describe("createTeachingAssignment", () => {

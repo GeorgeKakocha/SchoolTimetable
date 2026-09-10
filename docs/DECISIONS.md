@@ -3863,3 +3863,47 @@ skips, frontend 403 passed/25 files/zero skips, build clean, Alembic
 implementation commit `6a90a28`. The overall Resources phase remains
 NOT closed. **Next slice: Resources B1 -- ordinary
 `TeachingRequirement` fixed-resource assignment contract.**
+
+## Resources B1 -- ordinary Teaching Assignment fixed-resource assignment (IMPLEMENTED, not yet closed)
+
+**Status: IMPLEMENTED on branch `feature/resource-assignment-b1`.** Not
+a phase closure -- see `docs/PROJECT_STATE.md`'s matching entry for the
+full implementation record.
+
+**Locked product decision: Option A**, per the B1 recon's recommendation
+(the smallest coherent MVP with no second write surface, no second
+transaction per logical edit, and no second page). Teaching Assignment
+`POST/PUT` gained `resource_id: str | null`. Full-replacement, not
+PATCH: omitted or explicit `null` always mean "no fixed Resource" on
+POST, and always **clear** any currently-assigned Resource on PUT --
+there is no "leave the Resource unchanged" option, matching how the
+other four fields on this same write already behave.
+
+**The `resource_requirement` Advanced-disqualifier is removed.**
+`teaching_assignment_rules.plain_reasons()` no longer treats a fixed
+Resource as disqualifying on its own -- an otherwise-plain
+`WHOLE_CLASS`/`FLEXIBLE` requirement carrying a `resource_requirement`
+is now editable and deletable through the same narrow write service
+that already handles the other four fields. Every other existing
+Advanced reason is unchanged. This was a required, intentional
+behavior change (not a bug): the original Teaching Assignments slice
+predates Resources and had no way to express "no resource" versus "some
+resource," so it conservatively treated any Resource as Advanced;
+Resources B1 removes that conservatism now that the field is properly
+editable.
+
+**No solver, verifier, domain, or schema change** -- `Resource`,
+`ResourceRequirement`, `TeachingRequirement.resource_requirement`, the
+`teaching_requirement.resource_id` column, and the solver's/preflight's
+resource-capacity handling were already fully wired by Resources Slice
+A; B1 only adds the missing ordinary-write entrypoint for a field the
+rest of the system already understood. The solver never chooses among
+Resources in this contract -- exactly one, admin-picked, fixed Resource
+per requirement, or none.
+
+Resource reference validation reuses `resource_rules.find_resource`
+(Resources Slice A) and the existing generic `UnknownReferenceError`
+(`reference_kind: "resource"`) -- no new error class. Explicitly
+deferred: Resource Availability; `ReservedBlock.resource_id` (Resources
+B2); Owner Decision #39 remains absent -- the B1 recon found no genuine
+unresolved product fork.

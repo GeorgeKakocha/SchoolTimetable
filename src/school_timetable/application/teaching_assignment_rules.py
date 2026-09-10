@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from school_timetable.application import resource_rules
 from school_timetable.application.errors import (
     AdvancedRequirementNotEditableError,
     DuplicateTeachingAssignmentError,
@@ -33,6 +34,7 @@ from school_timetable.domain.requirements import (
     LessonBlockPolicy,
     TeachingRequirement,
 )
+from school_timetable.domain.resources import ResourceRequirement
 from school_timetable.validation.errors import ValidationError
 from school_timetable.validation.preflight import run_preflight
 
@@ -70,6 +72,20 @@ def require_ordinary_activity(
         raise NonOrdinaryActivityTargetError(
             school_natural_id, academic_year_natural_id, activity_id, activity.kind.value,
         )
+
+
+def require_known_resource(
+    problem: SchedulingProblem, school_natural_id: str, academic_year_natural_id: str, resource_id: str,
+) -> None:
+    """Raises `UnknownReferenceError` if `resource_id` does not resolve
+    in this school/academic-year's persisted Resource catalog -- reuses
+    `resource_rules.find_resource` (Resources Slice A) rather than a
+    second lookup implementation. Scoping to the already-loaded,
+    year-specific `problem.resources` is what makes a cross-AY Resource
+    natural ID behave identically to a genuinely unknown one (Resources
+    B1's cross-AY defense-in-depth)."""
+    if resource_rules.find_resource(problem, resource_id) is None:
+        raise UnknownReferenceError(school_natural_id, academic_year_natural_id, "resource", resource_id)
 
 
 def find_requirement(problem: SchedulingProblem, natural_id: str) -> TeachingRequirement | None:
@@ -118,8 +134,13 @@ def plain_reasons(problem: SchedulingProblem, requirement: TeachingRequirement) 
         reasons.append("distribution_policy")
     if requirement.time_preferences != ():
         reasons.append("time_preferences")
-    if requirement.resource_requirement is not None:
-        reasons.append("resource_requirement")
+    # Resources B1 (Option A): a fixed `resource_requirement` is no
+    # longer an Advanced disqualifier on its own -- "this lesson always
+    # happens in the gym" is an ordinary, plain-editable attribute now
+    # that `TeachingAssignmentFields.resource_id` can express it
+    # directly. An otherwise-plain, resource-bearing requirement is
+    # therefore editable/deletable through this same narrow write
+    # service; every other advanced reason below is unaffected.
     if any(fp.requirement_id == requirement.id for fp in problem.fixed_placements):
         reasons.append("fixed_placement")
 
@@ -159,13 +180,16 @@ def validate_create(
     participant_group_id: str,
     activity_id: str,
     weekly_periods: int,
+    resource_id: str | None = None,
 ) -> tuple[ValidationError, ...]:
     """Validates a create request against `problem` (a specific,
     already-loaded snapshot -- the caller is responsible for supplying
     either an initial fast-fail snapshot or, authoritatively, a
     freshly-reloaded one under the Owner-Decision-#36 lock). Raises on
     any hard-blocking violation; returns non-blocking warnings
-    (`WARNING_ONLY_VALIDATION_CODES`) for the caller to surface."""
+    (`WARNING_ONLY_VALIDATION_CODES`) for the caller to surface.
+    `resource_id=None` means "no fixed Resource" (Resources B1's
+    locked Option A contract)."""
     if weekly_periods <= 0:
         raise InvalidTeachingAssignmentError(
             school_natural_id, academic_year_natural_id,
@@ -188,10 +212,13 @@ def validate_create(
         raise DuplicateTeachingAssignmentError(
             school_natural_id, academic_year_natural_id, teacher_id, participant_group_id, activity_id,
         )
+    if resource_id is not None:
+        require_known_resource(problem, school_natural_id, academic_year_natural_id, resource_id)
 
     candidate_requirement = TeachingRequirement(
         id="__candidate__", teacher_id=teacher_id, activity_id=activity_id,
         participant_group_id=participant_group_id, weekly_periods=weekly_periods,
+        resource_requirement=ResourceRequirement(resource_id=resource_id) if resource_id is not None else None,
     )
     candidate = replace(
         problem, teaching_requirements=problem.teaching_requirements + (candidate_requirement,),
@@ -213,7 +240,12 @@ def validate_update(
     participant_group_id: str,
     activity_id: str,
     weekly_periods: int,
+    resource_id: str | None = None,
 ) -> tuple[ValidationError, ...]:
+    """`resource_id` follows the same full-replacement contract as
+    every other field here (Resources B1's locked Option A): `None`
+    always clears any currently assigned Resource -- there is no way to
+    say "leave the Resource unchanged" via this PUT."""
     existing = find_requirement(problem, natural_id)
     if existing is None:
         raise TeachingAssignmentNotFoundError(school_natural_id, academic_year_natural_id, natural_id)
@@ -246,10 +278,13 @@ def validate_update(
         raise DuplicateTeachingAssignmentError(
             school_natural_id, academic_year_natural_id, teacher_id, participant_group_id, activity_id,
         )
+    if resource_id is not None:
+        require_known_resource(problem, school_natural_id, academic_year_natural_id, resource_id)
 
     updated_requirement = replace(
         existing, teacher_id=teacher_id, activity_id=activity_id,
         participant_group_id=participant_group_id, weekly_periods=weekly_periods,
+        resource_requirement=ResourceRequirement(resource_id=resource_id) if resource_id is not None else None,
     )
     candidate = replace(
         problem,
