@@ -2556,9 +2556,10 @@ was settled by direct existing precedent.
 **Reserved A2 is CLOSED ON MAIN** (implementation commit `ab15e6a`).
 
 **Reserved Activities -- Reserved B (Special Activities + Reserved
-Activities frontend): IMPLEMENTED on
-`feature/reserved-activities-frontend`, pending technical review. NOT
-committed, NOT merged, NOT pushed.** Frontend-only, zero backend/
+Activities frontend): CLOSED ON MAIN.** Implementation commit
+`81aef7f` (`81aef7f73460e5ae5828a43dcdd6f1c3942bcdd2`, "feat: add
+reserved activities frontend"), fast-forwarded onto `main` directly
+after `dc22655` (no merge commit). Frontend-only, zero backend/
 migration/domain/solver change; `api/types.ts` unchanged (only
 `ValidationDiagnostic` is imported from it).
 
@@ -2608,16 +2609,18 @@ cleared to `null`, and a two-record proof that opening one Reserved
 Activity's editor disables Add, the other record's Edit, and both
 records' Delete.) The authoritative **full suite total is 402
 passed/25 files/zero skips** (400 pre-audit + the same 2 audit-added
-tests); build clean. Backend/Alembic reconfirmed unchanged: core 398
-passed/5 deselected, `tests_web` 396 passed/zero skips, Alembic
-`cae76cba3c58`/one head/no drift. A lightweight manual browser pass
-against the real dev server confirmed live end-to-end rendering
-(nav/tab order, existing Reserved Blocks, locked state) --
-not Reserved C acceptance, no data mutated, no Schedule created.
+tests); build clean. No backend tracked files changed in Reserved B;
+backend regression baselines remained 398 passed/5 deselected and
+`tests_web` 396 passed/zero skips. Alembic remained `cae76cba3c58`
+with one head and no drift. A lightweight manual browser pass against
+the real dev server confirmed live end-to-end rendering (nav/tab
+order, existing Reserved Blocks, locked state) -- not Reserved C
+acceptance, no data mutated, no Schedule created.
 
 **Owner Decision #39 was NOT created.**
 
-**Reserved B is NOT closed** (pending technical review). **Reserved C
-(browser/solver/timetable acceptance) is NOT EXECUTED.** Next planned
-slice: **Reserved C -- browser/solver/timetable acceptance** (after
-Reserved B's technical review closes).
+**Reserved B is CLOSED ON MAIN** (implementation commit `81aef7f`).
+**Reserved C (browser/solver/timetable acceptance) is NOT EXECUTED.**
+The overall Reserved Activities phase is **not** closed -- only
+Reserved B is. Next planned slice: **Reserved C -- real-browser/
+persistence/solver/timetable/lock acceptance.**

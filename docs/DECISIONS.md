@@ -3400,9 +3400,10 @@ code-unresolvable product-semantics fork.
 **Reserved A2 is CLOSED ON MAIN** (implementation commit `ab15e6a`).
 
 **Reserved Activities -- Reserved B (Special Activities + Reserved
-Activities frontend): IMPLEMENTED on
-`feature/reserved-activities-frontend`, pending technical review. NOT
-committed, NOT merged, NOT pushed.** Frontend-only -- zero backend
+Activities frontend): CLOSED ON MAIN.** Implementation commit
+`81aef7f` (`81aef7f73460e5ae5828a43dcdd6f1c3942bcdd2`, "feat: add
+reserved activities frontend"), fast-forwarded onto `main` directly
+after `dc22655` (no merge commit). Frontend-only -- zero backend
 production change, zero backend test change, zero migration, zero
 domain change, zero solver change, zero `api/types.ts` change (the one
 genuinely shared type this feature needs, `ValidationDiagnostic`, is
@@ -3520,10 +3521,10 @@ editor disables Add, the *other* record's Edit, and *both* records'
 Delete.) The authoritative **full suite total is 402 passed, 25
 files, zero skips** (400 pre-audit + the same 2 audit-added tests
 above -- no other test was added, removed, or changed); build clean.
-Backend/Alembic reconfirmed
-byte-for-byte unchanged: core 398 passed/5 deselected, `tests_web` 396
-passed/zero skips, Alembic `cae76cba3c58`/one head/no drift. A
-lightweight manual visual pass against the real
+No backend tracked files changed in Reserved B; backend regression
+baselines remained 398 passed/5 deselected and `tests_web` 396
+passed/zero skips. Alembic remained `cae76cba3c58` with one head and
+no drift. A lightweight manual visual pass against the real
 running dev server (`synthetic-school`/`ay-2026`, already locked, with
 two pre-existing Reserved Blocks) confirmed live end-to-end rendering
 of both the Special Activities tab and the Reserved Activities card
@@ -3537,5 +3538,8 @@ table, checkbox matrix vs. token list, contained panel vs. drawer,
 reasoning and existing precedent during the closed frontend contract
 gates, never a genuine product-semantics fork.
 
-**Reserved B is NOT closed** (pending technical review). **Reserved C
-(browser/solver/timetable acceptance) remains NOT EXECUTED.**
+**Reserved B is CLOSED ON MAIN** (implementation commit `81aef7f`).
+**Reserved C (browser/solver/timetable acceptance) remains NOT
+EXECUTED.** The overall Reserved Activities phase is **not** closed --
+only Reserved B is. Next planned slice: **Reserved C -- real-browser/
+persistence/solver/timetable/lock acceptance.**
