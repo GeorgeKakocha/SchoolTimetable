@@ -2417,9 +2417,10 @@ planned slice: Reserved A2 -- `ReservedBlock` backend CRUD +
 validation/preflight.**
 
 **Reserved Activities -- Reserved A2 (Reserved Activity /
-`ReservedBlock` backend): IMPLEMENTED on
-`feature/reserved-activity-backend`, pending technical review. NOT
-committed, NOT merged, NOT pushed.** "Reserved Activity" = the
+`ReservedBlock` backend): CLOSED ON MAIN.** Implementation commit
+`ab15e6a` (`ab15e6a0ea645b6160d62941eb2609b87b09a96f`, "feat: add
+reserved activity backend"), fast-forwarded onto `main` directly after
+`8bfd9e8` (no merge commit). "Reserved Activity" = the
 user-facing name for `ReservedBlock`, mirroring "Special Activity" =
 `Activity(kind=CLUB)`. Reuses the existing `ReservedBlock` domain
 object and `reserved_block`/`reserved_block_class_section`/
@@ -2485,10 +2486,30 @@ operation: children cascade at the DB level; `schedule_entry`'s
 the configuration lock already forbids the delete once any Schedule
 exists.
 
-Test gate: 46 new pure + 16 new preflight tests (core 397 passed/5
-deselected); 25 new repository + 38 new API tests (`tests_web` 391
-passed, zero skips); frontend 302 passed (fully unchanged), build
+Test gate: 46 new pure + 17 new preflight tests (core 398 passed/5
+deselected); 30 new repository (including 5 dedicated cross-
+AcademicYear defense-in-depth tests added during the pre-closure
+audit) + 38 new API tests (`tests_web` 396 passed, zero skips);
+frontend 302 passed/18 files, zero skips (fully unchanged), build
 clean; Alembic unchanged at `cae76cba3c58`, single head, no drift.
+
+**Pre-closure audit result: A. RESERVED A2 PRE-CLOSURE AUDIT PASSED**
+(run twice, identical results, zero drift). Cross-AcademicYear
+repository defense-in-depth explicitly proven via dedicated tests with
+a deliberately permissive fake `validate` callback: cross-AY UPDATE
+target rejected, cross-AY DELETE target rejected, UPDATE onto an
+`ORDINARY` activity rejected even with a permissive validator, UPDATE
+onto a Special Activity from another `AcademicYear` rejected, and a
+representative other-AY `ClassSection` reference rejected on CREATE --
+all confirmed zero-partial-mutation. Owner Decision #36's
+generation-vs-write race protection reconfirmed unchanged
+(`SchedulingProblem.reserved_blocks` was already part of the frozen-
+dataclass equality `persist_initial_version` uses).
+
+**Final verification baseline (post-merge, on `main`):** core 398
+passed/5 deselected; `tests_web` 396 passed, zero skips; frontend 302
+passed/18 files, zero skips; frontend build clean; Alembic
+`cae76cba3c58`, one head, no drift.
 
 A new local-only review dataset,
 `reserved-activity-review-school`/`ay-reserved-activity-review-2026`
@@ -2530,5 +2551,9 @@ Teachers per block, recurrence/flexible placement, any timetable or
 solver production change (both fully unchanged -- the five invariants
 are pure preflight/application validation, never a solver behavior
 change). **Owner Decision #39 was NOT created** -- every open question
-was settled by direct existing precedent. Reserved A2 is **not**
-closed; Reserved B/C remain unimplemented.
+was settled by direct existing precedent.
+
+**Reserved A2 is CLOSED ON MAIN** (implementation commit `ab15e6a`).
+**Reserved B (Reserved Activities frontend) is NOT IMPLEMENTED.
+Reserved C (browser/solver/timetable acceptance) is NOT EXECUTED.**
+Next planned slice: **Reserved B -- Reserved Activities frontend.**

@@ -3146,9 +3146,10 @@ executed.** Nothing was pushed to any remote. **Next planned slice:
 Reserved A2 -- `ReservedBlock` backend CRUD + validation/preflight.**
 
 **Reserved Activities -- Reserved A2 (Reserved Activity /
-`ReservedBlock` backend): IMPLEMENTED on
-`feature/reserved-activity-backend`, pending technical review. NOT
-committed, NOT merged, NOT pushed.** "Reserved Activity" is not a new
+`ReservedBlock` backend): CLOSED ON MAIN.** Implementation commit
+`ab15e6a` (`ab15e6a0ea645b6160d62941eb2609b87b09a96f`, "feat: add
+reserved activity backend"), fast-forwarded onto `main` directly after
+`8bfd9e8` (no merge commit). "Reserved Activity" is not a new
 domain entity -- it is the user-facing name for `ReservedBlock` (see
 `domain/blocks.py`), exactly mirroring "Special Activity"'s own
 relationship to `Activity(kind=CLUB)`. Reuses the existing `ReservedBlock`
@@ -3276,18 +3277,41 @@ future frontend offers.
 
 Test gate: 46 new pure `tests/test_reserved_activity_service.py`
 (covering both `ReservedActivityService` and
-`ReservedActivityProjectionService`) + 16 new preflight tests in
-`tests/test_preflight.py` (core suite 397 passed/5 deselected, 335
-pre-existing + 62 new); 25 new
-`tests_web/test_reserved_activity_repository.py` + 38 new
-`tests_web/test_reserved_activity_api.py` (canonical single-process
-`tests_web` 391 passed, 328 pre-existing + 63 new), zero
+`ReservedActivityProjectionService`) + 17 new preflight tests in
+`tests/test_preflight.py` (core suite 398 passed/5 deselected, 335
+pre-existing + 63 new); 30 new
+`tests_web/test_reserved_activity_repository.py` (including 5 dedicated
+cross-AcademicYear defense-in-depth tests added during the pre-closure
+audit) + 38 new `tests_web/test_reserved_activity_api.py` (canonical
+single-process `tests_web` 396 passed, 328 pre-existing + 68 new), zero
 DB-reachability skips; existing Special Activity/Subject/Teacher/
 Class/Teaching Assignment/Teacher Availability repository and API
 tests all reconfirmed unregressed by the same full-suite runs;
-frontend 302 passed (fully unchanged -- zero frontend files touched),
-build clean; Alembic unchanged at `cae76cba3c58`, single head, no
-drift.
+frontend 302 passed/18 files, zero skips (fully unchanged -- zero
+frontend files touched), build clean; Alembic unchanged at
+`cae76cba3c58`, single head, no drift.
+
+**Pre-closure audit result: A. RESERVED A2 PRE-CLOSURE AUDIT PASSED**
+(run twice, verbatim-identical results both times, zero drift). Cross-
+AcademicYear repository defense-in-depth was explicitly proven, not
+merely asserted, via dedicated tests using a deliberately permissive
+fake `validate` callback so the proof isolates the repository's own
+independent re-scoping: cross-AY UPDATE target rejected, cross-AY
+DELETE target rejected, UPDATE onto an `ORDINARY` activity rejected
+even with a permissive validator, UPDATE onto a Special Activity from
+another `AcademicYear` rejected, and a representative other-AY
+`ClassSection` reference rejected on CREATE -- all five confirmed as
+zero-partial-mutation (no row from either `AcademicYear` was altered
+by a rejected write). Owner Decision #36's generation-vs-write race
+protection was reconfirmed unchanged: `SchedulingProblem.
+reserved_blocks` was already part of the frozen-dataclass equality
+`persist_initial_version` uses for stale-problem detection, requiring
+zero changes to that mechanism.
+
+**Final verification baseline (post-merge, on `main`):** core `pytest
+-m "not slow"` 398 passed/5 deselected; `tests_web` 396 passed, zero
+skips; frontend `vitest` 302 passed/18 files, zero skips; frontend
+build clean; Alembic `cae76cba3c58`, one head, no drift.
 
 A new local-only, unlocked review dataset,
 `reserved-activity-review-school`/`ay-reserved-activity-review-2026`
@@ -3371,6 +3395,9 @@ the solver, never a change to how the solver itself treats one).
 slice resolved (naming, ordering, response shape, error-type
 granularity, repository boundary) was settled by direct, load-bearing
 precedent already present in the codebase, never a genuine
-code-unresolvable product-semantics fork. Reserved A2 is **not**
-marked closed; the frontend (Reserved B) and browser/solver/timetable
-acceptance (Reserved C) remain entirely unimplemented.
+code-unresolvable product-semantics fork.
+
+**Reserved A2 is CLOSED ON MAIN** (implementation commit `ab15e6a`).
+**Reserved B (Reserved Activities frontend) is NOT IMPLEMENTED.
+Reserved C (browser/solver/timetable acceptance) is NOT EXECUTED.**
+Next planned slice: **Reserved B -- Reserved Activities frontend.**
