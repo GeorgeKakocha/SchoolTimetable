@@ -2213,3 +2213,72 @@ exist**. Availability C: **NOT executed** -- next planned slice is
 Availability C (real-browser write/persistence + solver acceptance).
 Teacher Availability overall phase: **NOT complete** -- Availability
 B's closure is scoped to the frontend page only. Nothing pushed.
+
+**Teacher Availability -- Availability C (real-browser write /
+persistence / solver / lock acceptance): EXECUTED, PASSED, CLOSED.**
+Pure acceptance -- zero production source diff (frontend, backend,
+migrations all unchanged, confirmed empty before and after). Two new,
+local-only, dedicated SchedulingProblem datasets were created via the
+existing TEST-ONLY `problem_writer.py`, derived from the small
+deterministic two-teacher minimal-problem pattern already used by
+`tests/test_teacher_availability_solver.py` rather than the full
+40-period pilot.
+
+Choice dataset (`teacher-availability-browser-choice-school` /
+`ay-teacher-availability-browser-choice-2026`, one day, three
+periods A/B/C): via a temporary isolated frontend instance and the
+real backend, B was set to `Prefer not` and C to `Unavailable`
+through the real cell buttons and a real Save (one PUT, authoritative
+refetch); PostgreSQL confirmed exactly those two persisted rows and
+none for A; a real page reload reproduced all three states; `/config`
+carried both rows. Generation through the real "Generate schedule"
+control succeeded (`OPTIMAL`, `total_soft_penalty=0`); the target
+Teacher's only `ScheduleEntry` was at A, with zero entries at B or C
+-- proving `UNAVAILABLE` is HARD (C never used) and `PREFER_NOT` is
+avoided when an equivalent `AVAILABLE` alternative exists (B skipped
+at zero cost). Post-generation the page showed the lock banner, both
+states still readable, cells/Save/Reset disabled, and the Teacher
+selector still usable. A supporting direct API `PUT` against the
+locked dataset returned `409 SCHEDULING_CONFIGURATION_LOCKED` with
+zero mutation.
+
+Soft-required dataset (`teacher-availability-browser-required-school`
+/ `ay-teacher-availability-browser-required-2026`, one day, two
+periods; B pre-seeded `UNAVAILABLE` at creation, making A the only
+feasible slot): the real cell button set A to `Prefer not` and saved;
+persisted and reload-confirmed. Generation succeeded (`OPTIMAL`,
+`total_soft_penalty=5` -- a genuine nonzero soft cost, not silent
+infeasibility), with the target Teacher's only entry at A --
+`Prefer not`, proving `PREFER_NOT` never blocks a placement even when
+it is the only option. Post-generation lock behavior independently
+reconfirmed on this second dataset.
+
+Responsive: the same known tooling limitation from Slices B/E/F
+recurred (`resize_window` did not change the rendered viewport);
+reported honestly, non-blocking, matching Availability B's own green
+automated responsive coverage.
+
+All seven pre-existing canonical/review datasets were snapshotted
+before and after this run across the same recorded
+Teacher/Class/ORDINARY/CLUB/TeachingRequirement/TeacherAvailability/
+Schedule fields -- identical throughout; the two new Availability C
+datasets are excluded from that claim (intentionally created/mutated)
+and are retained as durable acceptance evidence, never cleaned up.
+
+Final regression identical to baseline: frontend 302 passed/18
+files/zero skips (one isolated single-test flake observed and
+reconfirmed non-reproducible on immediate rerun, matching the
+project's known environmental full-suite-contention pattern, not a
+regression), build clean; backend core 309 passed/5 deselected;
+`tests_web` 288 passed, zero skips; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. Zero production source
+changes, zero test-source changes, zero migration, zero dependency
+change. Owner Decision #39 was not created.
+
+**The Teacher Availability phase is now COMPLETE and CLOSED**:
+Availability A CLOSED, Availability B CLOSED, Availability C CLOSED.
+Owner Decision #38 remains the sole authoritative locked decision.
+This closure does **not** mean Teacher workload policies, gap
+minimization UI, Clubs/Reserved Blocks, rooms/resources,
+subgroups/merged classes, or a calendar editor are complete. **Next
+planned product phase: Clubs / Reserved Blocks.**

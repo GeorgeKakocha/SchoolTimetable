@@ -2780,3 +2780,131 @@ acceptance against this surface) was NOT executed** and remains the
 next planned slice. **The overall Teacher Availability phase is NOT
 complete** -- Availability B's closure is scoped to the frontend page
 only. Nothing was pushed to any remote.
+
+**Teacher Availability -- Availability C (real-browser write /
+persistence / solver / lock acceptance): EXECUTED, PASSED, CLOSED.**
+Pure acceptance, not feature implementation -- zero production
+source diff (frontend, backend, and migrations all unchanged;
+confirmed via `git status --short`/`git diff --name-only` returning
+empty both before and after). Two NEW, local-only, dedicated
+SchedulingProblem datasets were created via the existing TEST-ONLY
+`tests_web/support/problem_writer.py` writer (the same tool used to
+seed the Slice A review dataset), derived from the small deterministic
+two-teacher (`t_target` + an unconstrained `t_filler`) minimal-problem
+pattern already used by `tests/test_teacher_availability_solver.py`,
+rather than cloning the full 40-period pilot fixture -- both pass
+`run_preflight` cleanly and started with zero `Schedule`.
+
+**Choice dataset** (`teacher-availability-browser-choice-school` /
+`ay-teacher-availability-browser-choice-2026`): one day, three
+instructional periods (A=`p1`, B=`p2`, C=`p3`), `t_target`'s one-
+period lesson plus `t_filler`'s two-period filler lesson exactly
+filling the three-slot class occupancy, zero availability exceptions
+at creation. A temporary isolated frontend instance (port 5199, real
+backend, `frontend/.env.local` untouched) was used to: load the page
+(auto-selected Teacher, Period rows x Day columns, all three cells
+"Available"); cycle B to `Prefer not` and C to `Unavailable` through
+the real cell buttons (dirty state, Teacher-selector disable, and
+Save/Reset enable all observed live); click the real Save button
+(one real PUT, followed by the page's own authoritative GET, dirty
+clearing, controls re-enabling). Read-only PostgreSQL inspection
+confirmed exactly two persisted rows (`t_target`/`p2`/`PREFER_NOT`,
+`t_target`/`p3`/`UNAVAILABLE`) and zero row for A (the sparse default);
+a real full-page reload reproduced all three states unchanged; the
+raw `GET .../config` `teacher_availabilities` array carried both
+rows unmodified. Schedule generation was run through the existing
+"Generate schedule" button on `/timetable` (never a direct
+`ScheduleRepository`/generation-API call) and succeeded
+(`solver_status=OPTIMAL`, version 1, `total_soft_penalty=0`). Direct
+read-only inspection of every `ScheduleEntry` for the academic year
+showed `t_target`'s only entry at `(mon, p1)` -- A -- and zero entries
+at B or C; `t_filler` occupied both B and C. This single dataset
+proves both halves of Owner Decision #38's HARD/SOFT contract
+end-to-end through the real product surface: `UNAVAILABLE` (C) was
+never used (HARD), and the equivalent `AVAILABLE` alternative (A) was
+chosen over the merely-discouraged `PREFER_NOT` slot (B) at zero
+soft-objective cost (SOFT, genuinely avoided rather than forbidden).
+Returning to `/configuration/teacher-availability` post-generation
+showed the lock banner, both persisted states still readable, every
+cell/Save/Reset control disabled, and the Teacher selector still
+usable (switching to `t_filler` and back worked; a click on a
+disabled cell caused no state change). As supporting evidence, a
+direct API `PUT` against the now-locked dataset (bypassing the UI)
+returned `409 SCHEDULING_CONFIGURATION_LOCKED` and left both
+persisted rows unchanged.
+
+**Soft-required dataset**
+(`teacher-availability-browser-required-school` /
+`ay-teacher-availability-browser-required-2026`): one day, two
+instructional periods (A=`p1`, B=`p2`); B was pre-seeded (at dataset
+creation, not through the browser) as `UNAVAILABLE` for `t_target`,
+eliminating it as a HARD constraint so A is the *only* feasible slot
+before any browser write. Through the same temporary-instance pattern
+(port 5200), the real cell button at A was cycled to `Prefer not` and
+saved (one real PUT, authoritative refetch, persisted, reload-
+confirmed: `t_target`/`p1`/`PREFER_NOT`). Schedule generation via the
+same real "Generate schedule" control succeeded
+(`solver_status=OPTIMAL`, version 1, `total_soft_penalty=5` -- a
+nonzero penalty, showing the solver genuinely paid the SOFT cost
+rather than the slot being silently infeasible or the preference
+being ignored); `t_target`'s only `ScheduleEntry` was at `(mon, p1)`
+-- A, the `PREFER_NOT` slot. This proves `PREFER_NOT` remains a true
+SOFT preference: it never blocks a placement, even when it is the
+only option. Post-generation, the page independently reconfirmed the
+same lock contract (readable `Prefer not`, disabled cells/Save/Reset,
+usable Teacher selector) on this second, unrelated dataset.
+
+Responsive sanity: the same known browser-automation limitation from
+Slices B/E/F recurred (a `resize_window` call does not propagate to
+the actual rendered viewport in this session's tooling --
+`window.innerWidth` stayed `1346` and `matchMedia("(max-width:
+640px)")` stayed `false` after a 400x700 resize request) -- not
+fabricated; reported honestly. Structurally reconfirmed instead: both
+DOM branches render simultaneously and the exact `@media (max-width:
+640px)` rule (unchanged, verified present) is the only thing that
+would toggle them, matching Availability B's own already-green
+automated responsive test coverage -- non-blocking per the same
+precedent.
+
+Pre-existing canonical/review datasets (`synthetic-school`,
+`synthetic-review-school`, `teacher-crud-review-school`,
+`class-crud-review-school`, `subject-crud-review-school`,
+`real-school-browser-smoke-school`,
+`teacher-availability-review-school`) were snapshotted before and
+after this entire acceptance run across the same recorded fields
+(Teacher/Class/ORDINARY/CLUB/TeachingRequirement/TeacherAvailability/
+Schedule counts) -- the same recorded snapshot/count fields held
+identical before and after for all seven; this was never claimed nor
+performed as a byte-for-byte or row-by-row comparison. The two new
+Availability C datasets are intentionally excluded from that equality
+claim (they were created and mutated on purpose) and are retained,
+never cleaned up, as durable local acceptance/review evidence for
+future debugging -- both now carry a persisted `Schedule` and are
+locked, exactly like `teacher-availability-review-school` before them.
+
+Final regression, reconfirmed identical to the pre-acceptance
+baseline: frontend `npm test` 302 passed/18 files/zero skips
+(confirmed clean across multiple full-suite runs both before and
+after browser acceptance -- one isolated single-test flake was
+observed and reconfirmed non-reproducible on immediate rerun, matching
+the project's known environmental full-suite-contention pattern, not
+a regression), `npm run build` clean, `dist/` removed; backend core
+`tests -m "not slow"` 309 passed/5 deselected; canonical single-
+process `tests_web` 288 passed, zero skips; Alembic unchanged at
+`cae76cba3c58`, single head, no drift. **Zero production source
+changes** (frontend and backend both), **zero test-source changes**,
+**zero migration**, **zero dependency change** -- this slice is pure
+acceptance against the already-closed Availability A/B surfaces.
+**Owner Decision #39 was not created.**
+
+**The Teacher Availability phase is now COMPLETE and CLOSED**:
+Availability A (backend read/bulk-write/persistence/API) CLOSED,
+Availability B (frontend 3-state matrix) CLOSED, Availability C
+(real-browser write/persistence/solver/lock acceptance) CLOSED. Owner
+Decision #38 remains the sole, authoritative, locked decision
+governing this feature -- no #39 was ever needed. This closure covers
+Teacher Availability specifically and explicitly does **not** mean
+Teacher workload policies, gap minimization UI, Clubs/Reserved Blocks,
+rooms/resources, subgroups/merged classes, or a calendar editor are
+complete -- none of those were touched. **Next planned product phase:
+Clubs / Reserved Blocks.**
