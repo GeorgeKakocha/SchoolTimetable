@@ -685,6 +685,64 @@ class SubjectInUseErrorResponse(BaseModel):
     referenced_by: tuple[str, ...]
 
 
+# -- Special Activity CRUD API (Reserved Activities Slice A1). -------------
+
+
+class SpecialActivityProjectionItemResponse(BaseModel):
+    """No `kind` field -- every member of this resource is already,
+    by construction, `ActivityKind.CLUB` (Special Activity =
+    Activity(kind=CLUB), never a separate domain entity)."""
+
+    id: str
+    name: str
+
+
+class SpecialActivitiesProjectionResponse(BaseModel):
+    configuration_locked: bool
+    special_activities: tuple[SpecialActivityProjectionItemResponse, ...]
+
+
+class SpecialActivityWriteRequest(BaseModel):
+    """POST/PUT request body -- maps 1:1 onto `SpecialActivityFields`.
+    The natural ID and `kind` are never accepted here -- the natural ID
+    is always server-generated on create and immutable on update (path
+    parameter only), and `kind` is always `CLUB`, never
+    client-controlled."""
+
+    name: str
+
+
+class SpecialActivityWriteResponse(BaseModel):
+    """POST/PUT success body -- the written `Activity`'s own resolved
+    fields. No `kind` -- internal/always CLUB on this surface."""
+
+    id: str
+    name: str
+
+
+class SpecialActivityDeleteResponse(BaseModel):
+    """DELETE success body. No `warnings` field, no `kind`."""
+
+    deleted_id: str
+
+
+class InvalidSpecialActivityErrorResponse(BaseModel):
+    code: Literal["INVALID_SPECIAL_ACTIVITY"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class DuplicateSpecialActivityErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_SPECIAL_ACTIVITY"]
+    detail: str
+
+
+class SpecialActivityInUseErrorResponse(BaseModel):
+    code: Literal["SPECIAL_ACTIVITY_IN_USE"]
+    detail: str
+    referenced_by: tuple[str, ...]
+
+
 # -- Teacher Availability API (Owner Decision #38). ------------------------
 
 

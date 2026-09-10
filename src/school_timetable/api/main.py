@@ -14,7 +14,9 @@ and write routes -- see `api/class_section_routes.py`. Slice D adds
 the Subject CRUD read projection and write routes -- see
 `api/subject_routes.py`. Owner Decision #38 adds the Teacher
 Availability read projection and teacher-scoped bulk write route --
-see `api/teacher_availability_routes.py`.
+see `api/teacher_availability_routes.py`. Reserved Activities Slice A1
+adds the Special Activity CRUD read projection and write routes --
+see `api/special_activity_routes.py`.
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ from sqlalchemy.orm import Session
 from school_timetable.api.class_section_routes import router as class_section_router
 from school_timetable.api.config_routes import router as config_router
 from school_timetable.api.schedule_routes import router as schedule_router
+from school_timetable.api.special_activity_routes import router as special_activity_router
 from school_timetable.api.subject_routes import router as subject_router
 from school_timetable.api.teacher_availability_routes import router as teacher_availability_router
 from school_timetable.api.teacher_routes import router as teacher_router
@@ -42,6 +45,7 @@ app.include_router(teacher_router)
 app.include_router(class_section_router)
 app.include_router(subject_router)
 app.include_router(teacher_availability_router)
+app.include_router(special_activity_router)
 
 
 class HealthResponse(BaseModel):

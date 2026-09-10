@@ -47,6 +47,8 @@ from school_timetable.api.schemas import (
     ScheduleEntryResponse,
     SchedulingConfigResponse,
     SchoolResponse,
+    SpecialActivitiesProjectionResponse,
+    SpecialActivityProjectionItemResponse,
     SubjectProjectionItemResponse,
     SubjectsProjectionResponse,
     TeacherAvailabilityDayResponse,
@@ -79,6 +81,7 @@ from school_timetable.api.schemas import (
 from school_timetable.application.class_section_projection_models import ClassSectionsProjectionView
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.special_activity_projection_models import SpecialActivitiesProjectionView
 from school_timetable.application.subject_projection_models import SubjectsProjectionView
 from school_timetable.application.teacher_availability_models import TeacherAvailabilityWriteResult
 from school_timetable.application.teacher_availability_projection_models import TeacherAvailabilityProjectionView
@@ -450,6 +453,24 @@ def subjects_projection_response_from_view(view: SubjectsProjectionView) -> Subj
     return SubjectsProjectionResponse(
         configuration_locked=view.configuration_locked,
         subjects=tuple(SubjectProjectionItemResponse(id=s.id, name=s.name) for s in view.subjects),
+    )
+
+
+# -- Special Activity CRUD API (Reserved Activities Slice A1). -------------
+
+
+def special_activities_projection_response_from_view(
+    view: SpecialActivitiesProjectionView,
+) -> SpecialActivitiesProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- order
+    already resolved in `SpecialActivityProjectionService` (persistence
+    ordinal order, filtered to CLUB); this function never re-sorts
+    anything."""
+    return SpecialActivitiesProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        special_activities=tuple(
+            SpecialActivityProjectionItemResponse(id=s.id, name=s.name) for s in view.special_activities
+        ),
     )
 
 

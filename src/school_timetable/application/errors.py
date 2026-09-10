@@ -593,3 +593,92 @@ class InvalidTeacherAvailabilityError(Exception):
             f"invalid teacher availability replacement for school={school_natural_id!r}, "
             f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
         )
+
+
+class InvalidSpecialActivityError(Exception):
+    """A `SpecialActivityService` create/update request fails input
+    validation (Reserved Activities Slice A1 -- "Special Activity" is
+    the user-facing name for `Activity(kind=CLUB)`, never a separate
+    domain entity, mirroring "Subject"'s own relationship to
+    `Activity(kind=ORDINARY)`) -- a blank `name` after trimming.
+    Carries the validator's own safe, structured diagnostics as an
+    immutable tuple, exactly like `InvalidSubjectError`."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid special activity for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class DuplicateSpecialActivityError(Exception):
+    """A `SpecialActivityService` create/update request would produce a
+    second `Activity(kind=CLUB)` sharing the identical (exact,
+    case-sensitive, trimmed) `name` within one academic year (Reserved
+    Activities Slice A1). Checked ONLY against other `CLUB` activities
+    -- an `ORDINARY` Subject sharing the same name is never a conflict,
+    mirroring `DuplicateSubjectError`'s own symmetric exclusion."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, name: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.name = name
+        super().__init__(
+            f"a special activity named {name!r} already exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class SpecialActivityNotFoundError(Exception):
+    """No `ActivityKind.CLUB` activity with this natural ID exists in
+    this school/academic-year's persisted configuration (Reserved
+    Activities Slice A1). Raised identically whether `activity_id`
+    does not exist at all, or it exists but is `ActivityKind.ORDINARY`
+    -- an ORDINARY Subject is indistinguishable from a missing Special
+    Activity through this filtered resource surface, so `ActivityKind`
+    is never leaked here. Carries only the natural identifiers already
+    supplied -- no persistence surrogate ID."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, special_activity_id: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.special_activity_id = special_activity_id
+        super().__init__(
+            f"no special activity {special_activity_id!r} for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class SpecialActivityInUseError(Exception):
+    """A `SpecialActivityService.delete` request targets an
+    `Activity(kind=CLUB)` currently referenced by a persisted
+    `ReservedBlock` (Reserved Activities Slice A1) -- never
+    cascade-deleted. `referenced_by` names every referencing entity
+    kind found (only ever `RESERVED_BLOCK` -- a CLUB activity is never
+    a `TeachingRequirement` target), never a persistence surrogate ID."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        special_activity_id: str,
+        referenced_by: tuple[str, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.special_activity_id = special_activity_id
+        self.referenced_by = referenced_by
+        super().__init__(
+            f"special activity {special_activity_id!r} is still referenced by {list(referenced_by)!r} "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )
