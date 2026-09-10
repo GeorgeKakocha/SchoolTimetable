@@ -4,6 +4,7 @@ import TimetablePage from "./pages/TimetablePage";
 import SchoolSetupPage from "./pages/SchoolSetupPage";
 import TeacherAvailabilityPage from "./pages/TeacherAvailabilityPage";
 import TeachingAssignmentsPage from "./pages/TeachingAssignmentsPage";
+import ReservedActivitiesPage from "./pages/ReservedActivitiesPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
 /**
@@ -25,6 +26,7 @@ function App() {
           <Route path="/configuration/setup" element={<SchoolSetupPage />} />
           <Route path="/configuration/teacher-availability" element={<TeacherAvailabilityPage />} />
           <Route path="/configuration/teaching-assignments" element={<TeachingAssignmentsPage />} />
+          <Route path="/configuration/reserved-activities" element={<ReservedActivitiesPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

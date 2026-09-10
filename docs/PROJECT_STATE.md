@@ -2554,6 +2554,70 @@ change). **Owner Decision #39 was NOT created** -- every open question
 was settled by direct existing precedent.
 
 **Reserved A2 is CLOSED ON MAIN** (implementation commit `ab15e6a`).
-**Reserved B (Reserved Activities frontend) is NOT IMPLEMENTED.
-Reserved C (browser/solver/timetable acceptance) is NOT EXECUTED.**
-Next planned slice: **Reserved B -- Reserved Activities frontend.**
+
+**Reserved Activities -- Reserved B (Special Activities + Reserved
+Activities frontend): IMPLEMENTED on
+`feature/reserved-activities-frontend`, pending technical review. NOT
+committed, NOT merged, NOT pushed.** Frontend-only, zero backend/
+migration/domain/solver change; `api/types.ts` unchanged (only
+`ValidationDiagnostic` is imported from it).
+
+School Setup tabs: Teachers, Classes, Subjects, Special Activities.
+Flat nav: Timetable, School Setup, Teacher Availability, Teaching
+Assignments, Reserved Activities (last). A new narrow, typed, one-shot
+`location.state` tab-target mechanism
+(`SchoolSetupNavigationState`/`isSchoolSetupTabKey`) lets Reserved
+Activities' prerequisite links land on School Setup with Special
+Activities or Classes pre-selected; a direct/reload visit still
+defaults to Teachers, and normal tab clicks stay fully local.
+
+Special Activities tab: full CRUD (`SpecialActivitiesPanel.tsx`,
+structural copy of `SubjectsPanel.tsx`) with help/empty/lock/stale
+states and `SPECIAL_ACTIVITY_IN_USE` mapped to human text, never
+leaking `RESERVED_BLOCK`.
+
+Reserved Activities page (`/configuration/reserved-activities`):
+stacked summary cards; one full-width contained Add/Edit editor panel
+(never a modal/drawer); Special Activity single-select (no default);
+Class checkbox list (`fieldset`/`legend`); optional Teacher select
+("No teacher" default); instructional-only Period x Day checkbox
+matrix with a CSS-only <=640px per-Day layout (own component, not a
+reuse of `AvailabilityGrid` -- set membership, not a 3-state status);
+unique desktop/mobile checkbox ids with their own labels; no bulk slot
+actions; backend-authoritative semantic validation
+(`INVALID_RESERVED_ACTIVITY` diagnostics mapped to human text via the
+current projection's catalogs, including collision-target resolution);
+a combined page-level prerequisite surface for missing Special
+Activities/Classes/instructional calendar data (never a broken
+editor); stale-authority and lock-race protection reusing the existing
+patterns exactly, extended with one new `referenceStale` write outcome
+(`UNKNOWN_REFERENCE`/`NON_SPECIAL_ACTIVITY_TARGET`) that closes the
+editor and discards its draft rather than preserving it; defensive
+"Unknown ..." fallback rendering for any unresolvable saved reference.
+
+Test gate (affected-file focused execution totals, not "new tests" --
+`SchoolSetupPage.test.tsx`/`App.test.tsx` already carried pre-existing
+tests): **B1 focused execution: 42 passed across 3 files.** **B2
+focused execution: 77 passed across 6 files.** **Combined focused
+execution: 119 passed across 9 distinct files.** (Corrects an earlier
+"focused B1+B2 gate 76 passed/6 files" entry, which conflated the
+B2-only group with the combined total and used a pre-audit count;
+also reflects two pre-closure-audit additions -- an executable proof
+that School Setup's `location.state` tab-target hint is actually
+cleared to `null`, and a two-record proof that opening one Reserved
+Activity's editor disables Add, the other record's Edit, and both
+records' Delete.) The authoritative **full suite total is 402
+passed/25 files/zero skips** (400 pre-audit + the same 2 audit-added
+tests); build clean. Backend/Alembic reconfirmed unchanged: core 398
+passed/5 deselected, `tests_web` 396 passed/zero skips, Alembic
+`cae76cba3c58`/one head/no drift. A lightweight manual browser pass
+against the real dev server confirmed live end-to-end rendering
+(nav/tab order, existing Reserved Blocks, locked state) --
+not Reserved C acceptance, no data mutated, no Schedule created.
+
+**Owner Decision #39 was NOT created.**
+
+**Reserved B is NOT closed** (pending technical review). **Reserved C
+(browser/solver/timetable acceptance) is NOT EXECUTED.** Next planned
+slice: **Reserved C -- browser/solver/timetable acceptance** (after
+Reserved B's technical review closes).

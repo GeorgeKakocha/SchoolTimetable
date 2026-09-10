@@ -25,6 +25,14 @@ import { loadAppConfig } from "../config/appConfig";
  * before workload (Teaching Assignments) is entered; same flat-nav
  * discipline, no new navigation construct.
  *
+ * Reserved Activities Slice B adds "Reserved Activities" as a fifth
+ * flat link, last in the list -- it is where the fixed scheduling
+ * commitments configured via School Setup's Special Activities tab are
+ * actually placed, so it comes after every reference-data/workload
+ * surface. "Special Activities" itself is deliberately never added
+ * here: it lives inside School Setup, exactly like "Subjects"/
+ * "Teachers"/"Classes" do.
+ *
  * Owns the ONE visible "school · academic year" context line (never a
  * raw natural ID) -- `TimetablePage` deliberately no longer renders its
  * own copy of this text, so it appears exactly once regardless of which
@@ -106,6 +114,9 @@ function AppShell() {
           </NavLink>
           <NavLink to="/configuration/teaching-assignments" className={navLinkClassName}>
             Teaching Assignments
+          </NavLink>
+          <NavLink to="/configuration/reserved-activities" className={navLinkClassName}>
+            Reserved Activities
           </NavLink>
         </nav>
       </header>

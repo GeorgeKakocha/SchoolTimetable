@@ -3398,6 +3398,144 @@ precedent already present in the codebase, never a genuine
 code-unresolvable product-semantics fork.
 
 **Reserved A2 is CLOSED ON MAIN** (implementation commit `ab15e6a`).
-**Reserved B (Reserved Activities frontend) is NOT IMPLEMENTED.
-Reserved C (browser/solver/timetable acceptance) is NOT EXECUTED.**
-Next planned slice: **Reserved B -- Reserved Activities frontend.**
+
+**Reserved Activities -- Reserved B (Special Activities + Reserved
+Activities frontend): IMPLEMENTED on
+`feature/reserved-activities-frontend`, pending technical review. NOT
+committed, NOT merged, NOT pushed.** Frontend-only -- zero backend
+production change, zero backend test change, zero migration, zero
+domain change, zero solver change, zero `api/types.ts` change (the one
+genuinely shared type this feature needs, `ValidationDiagnostic`, is
+imported, never redefined or modified there).
+
+**B1 -- School Setup -- Special Activities tab.** A fourth local,
+non-routed tab (`Teachers, Classes, Subjects, Special Activities`),
+`SpecialActivitiesPanel.tsx`, built as a structural copy of
+`SubjectsPanel.tsx`: independent GET on mount, create/rename/delete via
+inline contained forms (no modal, no `window.confirm`), authoritative
+GET after every write, lock/lock-race/stale-authority states, and
+`SPECIAL_ACTIVITY_IN_USE` mapped to "This Special Activity is used by a
+Reserved Activity and cannot be deleted." -- never leaking
+`RESERVED_BLOCK`. A new, narrow, typed, one-shot School Setup
+tab-target mechanism (`SchoolSetupPage.tsx`'s exported `TabKey`/
+`SchoolSetupNavigationState`/`isSchoolSetupTabKey`) lets another page
+land on this tab pre-selected via `navigate(..., {state:
+{requestedTab: "..."}})`, consumed once via `navigate(path, {replace:
+true, state: null})` so it never replays on Back/reload; a direct
+visit or reload always defaults to Teachers, and normal in-page tab
+clicks never touch `location.state`.
+
+**B2 -- Reserved Activities page** (`/configuration/reserved-activities`,
+fifth and last flat nav link, after Teaching Assignments --
+`ReservedActivitiesPage.tsx`). Saved records render as stacked summary
+cards (`ReservedActivityCard.tsx`), never table rows, so multiple
+Classes/slots stay readable. Exactly ONE full-width contained Add/Edit
+editor panel (`ReservedActivityEditor.tsx`, never a modal/drawer --
+`AssignmentDrawer`'s narrow fixed-width side panel cannot hold the slot
+matrix without horizontal scroll): Special Activity single-select (no
+first-item default), Classes as a `fieldset`/checkbox list, Teacher
+single-select defaulting to "No teacher", and
+`ReservedActivitySlotGrid.tsx` -- a desktop Period-rows x Day-columns
+checkbox matrix plus a per-Day mobile stacked layout, both always in
+the DOM with one `@media (max-width:640px)` CSS toggle (reusing
+`AvailabilityGrid`'s proven layout/responsive *pattern* only, never the
+component itself -- a Reserved Activity slot is set membership, so
+every cell is a real `<input type="checkbox">`, never a 3-state status
+button/`aria-pressed`). Desktop/mobile checkboxes for the same slot are
+two distinct DOM nodes with unique `reserved-slot-desktop-{day}-{period}`/
+`reserved-slot-mobile-{day}-{period}` ids, each with its own
+`<label htmlFor>` (visually hidden via the existing `.sr-only` on
+desktop, visible on mobile); non-instructional periods are never
+rendered. The submitted `class_section_ids`/`slots` are always
+canonically ordered (catalog order; Day-index-then-Period-index) from
+internal `Set`-based selection state, regardless of click order --
+proven by a dedicated test that toggling a checkbox off and back on
+never spuriously marks an edit-mode draft dirty.
+
+A page-level prerequisite surface (`computeMissingPrerequisites`)
+replaces the Add toolbar -- never a broken/disabled editor -- whenever
+`special_activities`, `class_sections`, or (`days`/instructional
+`periods`) is empty; multiple missing items render as one combined
+surface, each naming its own missing requirement, with a School Setup
+tab-target link for the first two and no fabricated destination for
+the calendar case (no Calendar editor exists in this phase). Locked/
+stale states take precedence over the prerequisite surface (computed
+only once fresh and unlocked) and reuse the existing `.lock-banner`/
+`.stale-banner` exactly.
+
+Write-outcome classification extends the established
+`SubjectsPanel`/`TeachingAssignmentsPage` pattern
+(`ok`/`lockRace`/`notFound`/inline-error) with one new `referenceStale`
+outcome for `UNKNOWN_REFERENCE`/`NON_SPECIAL_ACTIVITY_TARGET`: the
+write did not commit, the editor closes and its draft is discarded
+immediately (never preserved, unlike an ordinary
+`INVALID_RESERVED_ACTIVITY` failure) -- a deliberate correction to the
+literal single-reference precedent, since a Reserved Activity draft
+carries five independently-stale-able references. A successful
+refetch shows a transient, dismissible "The configuration changed.
+Review the latest data and try again."; a failed one enters the same
+stale-authority state as every other mutation path. `SCHEDULING_
+CONFIGURATION_LOCKED` and a successful-write-then-failed-refresh both
+reuse the exact existing lock-race/stale sequencing verbatim -- the
+editor already closes immediately on a confirmed successful mutation,
+before the authoritative refetch is even attempted, so a failed
+refetch can never leave a re-submittable stale editor on screen.
+
+`INVALID_RESERVED_ACTIVITY` diagnostics (`RESERVED_BLOCK_REQUIRES_
+CLASS_SECTION`/`_REQUIRES_SLOT`, both `DUPLICATE_RESERVED_BLOCK_*`,
+`RESERVED_BLOCK_NON_INSTRUCTIONAL_SLOT`, `_TEACHER_UNAVAILABLE`, both
+`_COLLISION` codes) are mapped to human text by resolving every
+natural ID in each diagnostic's `context` against the current
+projection's own catalogs -- a collision additionally resolves
+`conflicting_reserved_block_id` to that other reservation's own
+Special Activity name (e.g. "Conflicts with the existing Debate Club
+reservation: 8A, Monday P1"), falling back to "Conflicts with another
+existing Reserved Activity" if that lookup fails; no raw ID is ever
+shown. A saved record with an unresolvable reference (legacy/corrupt
+data, not expected from the real single-snapshot projection) falls
+back to "Unknown Special Activity"/"Unknown Class"/"Unknown Teacher"/
+"Unknown time slot", stays read-only-renderable and Delete-able, and
+refuses to open its editor (a small inline notice instead).
+
+Test gate (frontend-only) -- reported here as **affected-file focused
+execution totals**, not "new tests" (`SchoolSetupPage.test.tsx`/
+`App.test.tsx` both already carried pre-existing tests before this
+slice): **B1 focused execution: 42 passed across 3 files**
+(`specialActivities.test.ts`, `SpecialActivitiesPanel.test.tsx`,
+`SchoolSetupPage.test.tsx`). **B2 focused execution: 77 passed across
+6 files** (`reservedActivities.test.ts`,
+`ReservedActivitySlotGrid.test.tsx`, `ReservedActivityCard.test.tsx`,
+`ReservedActivityEditor.test.tsx`, `ReservedActivitiesPage.test.tsx`,
+`App.test.tsx`). **Combined focused execution (the union of both
+groups' affected files, `SchoolSetupPage.test.tsx` and
+`ReservedActivitiesPage.test.tsx` run together): 119 passed across 9
+distinct files.** (An earlier draft of this entry mischaracterized this
+as a single "focused B1+B2 gate 76 passed across 6 files" -- that
+conflated the B2-only group with the combined B1+B2 total and used a
+pre-audit count; this entry is the corrected, current figure, which
+also reflects two pre-closure-audit additions: an executable proof
+that the School Setup tab-target `location.state` is actually cleared
+to `null`, and a two-record proof that opening one Reserved Activity's
+editor disables Add, the *other* record's Edit, and *both* records'
+Delete.) The authoritative **full suite total is 402 passed, 25
+files, zero skips** (400 pre-audit + the same 2 audit-added tests
+above -- no other test was added, removed, or changed); build clean.
+Backend/Alembic reconfirmed
+byte-for-byte unchanged: core 398 passed/5 deselected, `tests_web` 396
+passed/zero skips, Alembic `cae76cba3c58`/one head/no drift. A
+lightweight manual visual pass against the real
+running dev server (`synthetic-school`/`ay-2026`, already locked, with
+two pre-existing Reserved Blocks) confirmed live end-to-end rendering
+of both the Special Activities tab and the Reserved Activities card
+list, correct nav/tab order, and correct locked-state disabling --
+this was not Reserved C acceptance, mutated no data, and created no
+Schedule.
+
+**Owner Decision #39 was NOT created** -- every choice here (card vs.
+table, checkbox matrix vs. token list, contained panel vs. drawer,
+`location.state` vs. query/hash) was resolved by direct usability
+reasoning and existing precedent during the closed frontend contract
+gates, never a genuine product-semantics fork.
+
+**Reserved B is NOT closed** (pending technical review). **Reserved C
+(browser/solver/timetable acceptance) remains NOT EXECUTED.**

@@ -1,21 +1,24 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import TeachersPanel from "../components/setup/TeachersPanel";
 import ClassesPanel from "../components/setup/ClassesPanel";
 import SubjectsPanel from "../components/setup/SubjectsPanel";
+import SpecialActivitiesPanel from "../components/setup/SpecialActivitiesPanel";
 
 /**
  * Real-School Setup MVP Slice E: `/configuration/setup`, the School
- * Setup page. Manages exactly Teachers, Classes, and Subjects via three
- * local tabs -- no nested tab routes (`/configuration/setup/teachers`
- * etc.), matching the locked design-gate contract that tabs are page
- * state only, not router state.
+ * Setup page. Manages Teachers, Classes, Subjects, and (Reserved
+ * Activities Slice A1/Reserved B) Special Activities via four local
+ * tabs -- no nested tab routes (`/configuration/setup/teachers` etc.),
+ * matching the locked design-gate contract that tabs are page state
+ * only, not router state.
  *
- * Only the active tab's panel is ever mounted: `ACTIVE_PANELS` below
+ * Only the active tab's panel is ever mounted: the tabpanel below
  * renders exactly one panel component per render, so switching tabs
  * unmounts the previous panel (discarding its own local fetch/state)
  * and mounts the new one, which performs its own independent GET on
  * mount. This is a deliberate simplicity choice (design gate #11/#21):
- * no cross-tab cache, no global store, no requirement that all three
+ * no cross-tab cache, no global store, no requirement that all four
  * resource projections load on initial page view -- each panel is
  * exactly as self-contained as `TeachingAssignmentsPage` already is.
  *
@@ -26,9 +29,32 @@ import SubjectsPanel from "../components/setup/SubjectsPanel";
  * both move focus AND change the active tab (automatic activation) --
  * the standard behavior for a tablist that doesn't fetch anything the
  * user finds costly on every keypress.
+ *
+ * Reserved B's corrected frontend contract adds one narrow, typed,
+ * one-shot navigation mechanism so another page (Reserved Activities'
+ * own prerequisite surface) can land here with a specific tab already
+ * active, without introducing nested routes, a persistent global tab
+ * store, or query/hash parameters. A caller navigates via
+ * `navigate("/configuration/setup", { state: { requestedTab: "..." }
+ * satisfies SchoolSetupNavigationState })`; this page reads that
+ * `location.state` once, on mount, to seed its initial `activeTab`,
+ * then immediately replaces the history entry with `state: null` so
+ * the hint never survives a later Back/reload -- a direct visit, a
+ * reload, or a normal in-page tab click are all completely unaffected
+ * and default/stay on "teachers"/whatever tab is locally active.
  */
 
-type TabKey = "teachers" | "classes" | "subjects";
+export type TabKey = "teachers" | "classes" | "subjects" | "special-activities";
+
+export interface SchoolSetupNavigationState {
+  requestedTab?: TabKey;
+}
+
+const VALID_TAB_KEYS: readonly TabKey[] = ["teachers", "classes", "subjects", "special-activities"];
+
+export function isSchoolSetupTabKey(value: unknown): value is TabKey {
+  return typeof value === "string" && (VALID_TAB_KEYS as readonly string[]).includes(value);
+}
 
 interface TabDefinition {
   key: TabKey;
@@ -39,6 +65,7 @@ const TABS: readonly TabDefinition[] = [
   { key: "teachers", label: "Teachers" },
   { key: "classes", label: "Classes" },
   { key: "subjects", label: "Subjects" },
+  { key: "special-activities", label: "Special Activities" },
 ];
 
 function tabId(key: TabKey): string {
@@ -50,8 +77,27 @@ function panelId(key: TabKey): string {
 }
 
 function SchoolSetupPage() {
-  const [activeTab, setActiveTab] = useState<TabKey>("teachers");
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    const requestedTab = (location.state as SchoolSetupNavigationState | null)?.requestedTab;
+    return isSchoolSetupTabKey(requestedTab) ? requestedTab : "teachers";
+  });
   const tabRefs = useRef<Partial<Record<TabKey, HTMLButtonElement | null>>>({});
+
+  // One-shot consumption of a `requestedTab` navigation hint: the
+  // initial `activeTab` above already applied it, so this effect only
+  // clears `location.state` (replacing this history entry) so a later
+  // Back navigation or a reload of this exact entry never re-applies
+  // it. Runs at most once per mount -- a normal in-page tab click
+  // never touches `location.state` at all.
+  useEffect(() => {
+    const requestedTab = (location.state as SchoolSetupNavigationState | null)?.requestedTab;
+    if (isSchoolSetupTabKey(requestedTab)) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, []);
 
   const activateTab = useCallback((key: TabKey, focus: boolean) => {
     setActiveTab(key);
@@ -131,6 +177,7 @@ function SchoolSetupPage() {
         {activeTab === "teachers" && <TeachersPanel />}
         {activeTab === "classes" && <ClassesPanel />}
         {activeTab === "subjects" && <SubjectsPanel />}
+        {activeTab === "special-activities" && <SpecialActivitiesPanel />}
       </div>
     </div>
   );

@@ -1320,3 +1320,246 @@ select:focus-visible {
     min-width: 8rem;
   }
 }
+
+/* -- Reserved Activities (Reserved B) ---------------------------------- */
+
+.reserved-activities-prerequisites {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.reserved-activities-prerequisite {
+  border: 1px solid #e2e2e2;
+  border-radius: 4px;
+  background-color: #fafafa;
+  padding: 0.9rem 1.1rem;
+}
+
+.reserved-activities-prerequisite-heading {
+  margin: 0 0 0.3rem;
+  font-weight: 600;
+}
+
+.reserved-activities-prerequisite p {
+  margin: 0 0 0.6rem;
+  color: #4a4a4a;
+}
+
+.reserved-activities-toolbar {
+  margin-bottom: 1.25rem;
+}
+
+/* -- Reserved Activity editor: one contained, full-width panel, never
+   a modal/drawer -- a narrow side drawer cannot hold the slot matrix
+   without horizontal scroll, so this reuses the full-width contained-
+   panel visual language already established by `.create-panel`. */
+.reserved-activity-editor {
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  background-color: #ffffff;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.reserved-activity-editor h2 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+.reserved-activity-editor-errors {
+  border: 1px solid #e3a0a0;
+  background-color: #fdecec;
+  border-radius: 4px;
+  padding: 0.7rem 1rem;
+  margin: 0 0 1.1rem;
+}
+
+.reserved-activity-editor-errors ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #8a1414;
+  font-size: 0.9em;
+}
+
+.reserved-activity-editor > form > label {
+  display: block;
+  margin: 0 0 1.1rem;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.reserved-activity-editor > form > label > select {
+  display: block;
+  width: 100%;
+  max-width: 26rem;
+  margin-top: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 1em;
+  font-weight: 400;
+}
+
+.reserved-activity-editor fieldset {
+  border: 1px solid #e2e2e2;
+  border-radius: 4px;
+  padding: 0.75rem 1rem 1rem;
+  margin: 0 0 1.1rem;
+}
+
+.reserved-activity-editor legend {
+  padding: 0 0.4rem;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #444444;
+}
+
+.reserved-class-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.92em;
+  font-weight: 400;
+}
+
+.reserved-class-checkbox-row:last-child {
+  margin-bottom: 0;
+}
+
+.reserved-activity-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.reserved-activity-editor-actions button[type="submit"] {
+  border: none;
+}
+
+.reserved-activity-editor-actions button[type="button"] {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #b0b0b0;
+  border-radius: 3px;
+  background-color: #ffffff;
+  color: #333333;
+}
+
+/* -- Reserved Activity slot grid: same desktop-matrix/mobile-stacked
+   CSS-toggle strategy as `.availability-desktop-matrix`/
+   `.availability-mobile-days`, but each cell is a real checkbox (set
+   membership), never a 3-state status button. */
+.reserved-slot-table th,
+.reserved-slot-table td {
+  text-align: center;
+}
+
+.reserved-slot-table th[scope="row"] {
+  text-align: left;
+}
+
+.col-reserved-slot-period {
+  width: 14%;
+}
+
+.reserved-slot-checkbox {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.reserved-slot-mobile-days {
+  display: none;
+}
+
+.reserved-slot-mobile-day {
+  margin-bottom: 1rem;
+  border: 1px solid #e2e2e2;
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+}
+
+.reserved-slot-mobile-day-heading {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.reserved-slot-mobile-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid #ececec;
+}
+
+.reserved-slot-mobile-row:last-child {
+  border-bottom: none;
+}
+
+.reserved-slot-mobile-row label {
+  font-size: 0.9em;
+  color: #333333;
+}
+
+@media (max-width: 640px) {
+  .reserved-slot-desktop-matrix {
+    display: none;
+  }
+
+  .reserved-slot-mobile-days {
+    display: block;
+  }
+}
+
+/* -- Reserved Activity cards: stacked summaries, never table rows, so
+   a record with several Classes and slots stays readable. */
+.reserved-activities-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.reserved-activity-card {
+  border: 1px solid #e2e2e2;
+  border-radius: 4px;
+  background-color: #ffffff;
+  padding: 0.9rem 1.1rem;
+}
+
+.reserved-activity-card-primary {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.reserved-activity-card-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  color: #4a4a4a;
+  font-size: 0.92em;
+  margin-bottom: 0.5rem;
+}
+
+.reserved-activity-card-slots {
+  font-size: 0.9em;
+  color: #333333;
+  margin-bottom: 0.7rem;
+}
+
+.reserved-activity-card-slot-row {
+  margin-bottom: 0.15rem;
+}
+
+.reserved-activity-card-day {
+  font-weight: 600;
+}
+
+.reserved-activity-card-notice {
+  color: #8a1414;
+  font-size: 0.85em;
+  margin: 0 0 0.6rem;
+}

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { getClassTimetable, getSchedulingConfigIndex } from "./api/client";
 import { getTeachingAssignments } from "./api/teachingAssignments";
+import { getReservedActivities } from "./api/reservedActivities";
 import { loadAppConfig } from "./config/appConfig";
 import type {
   ClassTimetableResponse,
   SchedulingConfigIndexResponse,
   TeachingAssignmentsProjectionResponse,
 } from "./api/types";
+import type { ReservedActivitiesProjectionResponse } from "./api/reservedActivities";
 
 // Phase 3C.3a routing/shell tests -- `App.tsx` is now only the router
 // root, so this file covers route wiring, the shared shell's nav/active
@@ -32,6 +34,14 @@ vi.mock("./api/teachingAssignments", async (importOriginal) => {
   };
 });
 
+vi.mock("./api/reservedActivities", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./api/reservedActivities")>();
+  return {
+    ...actual,
+    getReservedActivities: vi.fn(),
+  };
+});
+
 vi.mock("./config/appConfig", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./config/appConfig")>();
   return {
@@ -43,6 +53,7 @@ vi.mock("./config/appConfig", async (importOriginal) => {
 const mockedGetSchedulingConfigIndex = vi.mocked(getSchedulingConfigIndex);
 const mockedGetClassTimetable = vi.mocked(getClassTimetable);
 const mockedGetTeachingAssignments = vi.mocked(getTeachingAssignments);
+const mockedGetReservedActivities = vi.mocked(getReservedActivities);
 const mockedLoadAppConfig = vi.mocked(loadAppConfig);
 
 const CONFIG_INDEX: SchedulingConfigIndexResponse = {
@@ -77,11 +88,22 @@ const EMPTY_PROJECTION: TeachingAssignmentsProjectionResponse = {
   teacher_workloads: [],
 };
 
+const EMPTY_RESERVED_ACTIVITIES_PROJECTION: ReservedActivitiesProjectionResponse = {
+  configuration_locked: false,
+  special_activities: [],
+  teachers: [],
+  class_sections: [],
+  days: [],
+  periods: [],
+  reserved_activities: [],
+};
+
 beforeEach(() => {
   mockedLoadAppConfig.mockReturnValue({ schoolId: "s1", academicYearId: "y1" });
   mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
   mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
   mockedGetTeachingAssignments.mockResolvedValue(EMPTY_PROJECTION);
+  mockedGetReservedActivities.mockResolvedValue(EMPTY_RESERVED_ACTIVITIES_PROJECTION);
   window.history.pushState({}, "", "/");
 });
 
@@ -110,15 +132,22 @@ describe("App routing", () => {
     await screen.findByRole("heading", { name: "School Setup", level: 1 });
   });
 
-  it("shows exactly one School Setup nav link, ordered between Timetable and Teaching Assignments", async () => {
+  it("shows the exact five nav links in order, with Reserved Activities last and no Special Activities entry", async () => {
     window.history.pushState({}, "", "/timetable");
 
     render(<App />);
 
     const links = await screen.findAllByRole("link");
     const labels = links.map((link) => link.textContent);
-    expect(labels).toEqual(["Timetable", "School Setup", "Teacher Availability", "Teaching Assignments"]);
+    expect(labels).toEqual([
+      "Timetable",
+      "School Setup",
+      "Teacher Availability",
+      "Teaching Assignments",
+      "Reserved Activities",
+    ]);
     expect(screen.getAllByRole("link", { name: "School Setup" })).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: "Special Activities" })).not.toBeInTheDocument();
   });
 
   it("renders the Teacher Availability page at /configuration/teacher-availability", async () => {
@@ -145,6 +174,23 @@ describe("App routing", () => {
 
     await screen.findByRole("heading", { name: "Teaching Assignments", level: 1 });
     expect(mockedGetTeachingAssignments).toHaveBeenCalledWith("s1", "y1", expect.any(AbortSignal));
+  });
+
+  it("renders the Reserved Activities page at /configuration/reserved-activities", async () => {
+    window.history.pushState({}, "", "/configuration/reserved-activities");
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Reserved Activities", level: 1 });
+  });
+
+  it("shows exactly one Reserved Activities nav link", async () => {
+    window.history.pushState({}, "", "/timetable");
+
+    render(<App />);
+
+    await screen.findAllByRole("link");
+    expect(screen.getAllByRole("link", { name: "Reserved Activities" })).toHaveLength(1);
   });
 
   it("renders a not-found state for an unknown route", async () => {
