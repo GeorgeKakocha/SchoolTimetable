@@ -2755,3 +2755,128 @@ accessible frontend workflow. Deferred: Resources, ParticipantGroups/
 subgroups in Reserved Activities, multiple Teachers per block,
 recurrence, duration semantics, flexible/autoplaced special activities,
 `ReservedBlock` soft solver scoring.
+
+## Resources Slice A -- Resource catalog backend (pending technical review, NOT committed)
+
+**Status: IMPLEMENTED on branch `feature/resource-catalog-backend`,
+pending technical review. NOT committed, NOT merged, NOT pushed.** This
+entry documents work sitting uncommitted on a feature branch, not a
+closed phase -- it must not be read as a phase closure.
+
+Preceded by a read-only recon (concluded "A. RESOURCES RECON COMPLETE
+-- PRODUCT DECISIONS REQUIRED") that mapped pre-existing Resource
+support across the domain/solver/preflight/verifier/persistence/API-
+read layers and confirmed the live PostgreSQL `resource` table already
+matches the target schema exactly -- Slice A required zero migration.
+
+Scope: the narrow Resource catalog write surface (`GET/POST
+/schools/{school_id}/years/{year_id}/resources`, `PUT/DELETE
+.../resources/{resource_id}`) over the existing, unchanged
+`domain.resources.Resource(id, name, capacity=1)` entity -- no new
+Room/ResourceType/ResourceCategory entity, no domain redesign.
+`capacity` means "maximum number of simultaneous lesson/resource
+occupations" (already the pre-existing solver/verifier semantics via
+`model_builder.py::_add_resource_capacity()`), explicitly never
+student-seat/room-headcount capacity. Validated `>= 1` at the
+application layer (`resource_rules.validate_capacity`,
+`INVALID_RESOURCE_CAPACITY`), never relying on the DB
+`CheckConstraint("capacity > 0")` alone (that constraint remains a
+structural backstop only).
+
+Follows every existing catalog precedent (Teacher/Class/Subject/
+Special Activity) exactly: server-generated `resource_<uuid4().hex>`
+natural IDs; trimmed, exact case-sensitive duplicate-name check scoped
+solely to the Resource catalog (an identically-named Subject/Teacher/
+Class/Special Activity is never a conflict); Resource owns its own
+ordinal sequence, never shared with any other catalog; full
+configuration-lock discipline (409 `SCHEDULING_CONFIGURATION_LOCKED`,
+reusing `configuration_write_lock.py` unchanged); Owner-Decision-#36
+generation-race safety (reusing the existing exact-equality stale-input
+detection on `SchedulingProblem`, since `resources` was already an
+ordinary field on it) -- proven with a dedicated race test pair
+(`test_generation_persist_aborts_when_resource_write_committed_since_load`,
+`test_generation_persist_succeeds_then_blocks_a_waiting_resource_write`)
+mirroring the Special Activity precedent exactly.
+
+Delete-in-use blocker checks only `TeachingRequirement.resource_id`
+(`RESOURCE_IN_USE`, `referenced_by: ["TEACHING_REQUIREMENT"]`) --
+deliberately NOT `RESERVED_BLOCK` yet, since `ReservedBlock.resource_id`
+does not exist in Slice A. `/config`'s pre-existing read-only
+`ResourceResponse`/`ResourceRequirementResponse` schemas were left
+untouched; new schema names (`ResourceProjectionItemResponse`,
+`ResourcesProjectionResponse`, `ResourceWriteRequest`/`Response`,
+`ResourceDeleteResponse`, and three error-response schemas) were added
+instead to avoid collision. `/config` confirmed to reflect Resource
+create/update/delete immediately (dedicated interoperability tests).
+
+**Preflight capacity-validation gap -- discovered during Resources A
+implementation review, resolved before closure.** A hand-constructed
+`SchedulingProblem` with `Resource(capacity<=0)` was confirmed to pass
+`run_preflight()` with zero errors -- preflight previously had no
+capacity check at all (only `UNKNOWN_RESOURCE` for a dangling
+reference). This was a real, confirmed validation hole; per the
+original slice instruction it was first reported rather than silently
+fixed, and a subsequent narrow corrective pre-closure pass then
+resolved it: `validation/preflight.py` gained a new, independent
+`_check_resource_capacity()` check, and `run_preflight()` now emits a
+`ValidationError` with code `INVALID_RESOURCE_CAPACITY` (context
+`{"resource_id", "capacity"}`) for every `Resource` in
+`problem.resources` with `capacity < 1`, one diagnostic per invalid
+Resource in the problem's own authoritative order. The check is purely
+structural (`domain`-only, no `application`/SQLAlchemy/ORM/FastAPI
+import) and independent of `_check_references`/`UNKNOWN_RESOURCE`
+(proven by a dedicated non-interference test) -- it runs regardless of
+whether other reference errors are present. The application-layer
+`resource_rules.validate_capacity()` write-time rejection and the DB
+`CheckConstraint("capacity > 0")` structural backstop both remain
+unchanged; the three layers (write-time application validation,
+`SchedulingProblem` preflight, DB `CHECK`) are each still independently
+necessary and now all three are proven to work. Zero solver or verifier
+changes were needed or made -- preflight now rejects invalid Resource
+capacity before the solver ever runs, and the verifier's own
+`_check_resource_capacity()` (an unrelated, pre-existing, differently-
+named function checking final generated-schedule resource usage, not
+this one) is untouched. 7 new focused tests added to
+`tests/test_preflight.py` (capacity 0/negative/1/>1, multi-invalid
+deterministic ordering, `UNKNOWN_RESOURCE` non-interference, and a
+fixture-level regression guard), all passing.
+
+**Corrected forward guidance for a future Resources B (Reserved
+Activity resource integration):** any future work wiring `Resource`
+into `ReservedBlock` must enforce **aggregate Resource capacity**
+(a resource's total concurrent-occupation count across every slot,
+the same semantics `model_builder.py`'s existing HARD constraint #10
+already uses for ordinary `TeachingRequirement` resource use) -- never
+a pairwise `RESERVED_BLOCK_RESOURCE_SLOT_COLLISION`-style two-block
+exclusivity check. A pairwise check would silently under- or
+over-constrain any Resource whose `capacity != 1`.
+
+Explicitly deferred/out of scope for this slice: all frontend changes
+(zero -- Resources has no UI surface yet); `ReservedBlock.resource_id`
+(does not exist); Resource Availability; any write path from
+`TeachingRequirement` to a `resource_id` (TeachingRequirement's own
+`resource_requirement` remains read-only/deferred, per its own existing
+deferred-scope note); Owner Decision #39 (absent, not created);
+solver/verifier/migration changes (none needed).
+
+Tests added: 29 pure-application (`tests/test_resource_service.py`), 15
+repository/integration including the mandatory generation-race pair
+(`tests_web/test_resource_repository.py`), 27 HTTP contract
+(`tests_web/test_resource_api.py`), plus 7 focused preflight tests
+added during the pre-closure corrective pass (`tests/test_preflight.py`)
+-- 78 new tests total. Full regression after the corrective pass: core
+434 passed/5 deselected (398 + 29 + 7 new), `tests_web` 438 passed/zero
+skips (396 + 15 + 27, unchanged by the corrective pass since the new
+preflight tests are pure-Python with no database), frontend 403
+passed/25 files/zero skips (unchanged), build clean, Alembic
+`cae76cba3c58`/one head/no drift/no new migration file. Scope audit
+confirmed only backend Resources A files (`application/`,
+`persistence/`, `api/`, `tests/`, `tests_web/`) plus the corrective
+`validation/preflight.py`/`tests/test_preflight.py` change, plus these
+two docs files, changed -- zero frontend/Alembic/domain-redesign/
+solver/verifier/ReservedBlock/dependency/`uv.lock`/`dist` changes.
+
+**RESOURCES A BACKEND NOT CLOSED.** This is an implementation record
+pending technical review/pre-closure, sitting uncommitted on
+`feature/resource-catalog-backend` -- not a phase closure. No commit,
+merge, or push has been performed as part of this entry.

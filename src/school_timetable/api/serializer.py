@@ -50,8 +50,10 @@ from school_timetable.api.schemas import (
     ReservedActivitySpecialActivityOptionResponse,
     ReservedActivityTeacherOptionResponse,
     ReservedBlockResponse,
+    ResourceProjectionItemResponse,
     ResourceRequirementResponse,
     ResourceResponse,
+    ResourcesProjectionResponse,
     ScheduleEntryResponse,
     SchedulingConfigResponse,
     SchoolResponse,
@@ -90,6 +92,7 @@ from school_timetable.application.class_section_projection_models import ClassSe
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.application.reserved_activity_projection_models import ReservedActivitiesProjectionView
+from school_timetable.application.resource_projection_models import ResourcesProjectionView
 from school_timetable.application.special_activity_projection_models import SpecialActivitiesProjectionView
 from school_timetable.application.subject_projection_models import SubjectsProjectionView
 from school_timetable.application.teacher_availability_models import TeacherAvailabilityWriteResult
@@ -560,5 +563,20 @@ def teacher_availability_write_response_from_result(
         exceptions=tuple(
             TeacherAvailabilityWriteExceptionResponse(day_id=e.day_id, period_id=e.period_id, status=e.status)
             for e in result.exceptions
+        ),
+    )
+
+
+# -- Resource Catalog API (Resources Slice A). ------------------------------
+
+
+def resources_projection_response_from_view(view: ResourcesProjectionView) -> ResourcesProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- order
+    already resolved in `ResourceProjectionService` (persistence
+    ordinal order); this function never re-sorts anything."""
+    return ResourcesProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        resources=tuple(
+            ResourceProjectionItemResponse(id=r.id, name=r.name, capacity=r.capacity) for r in view.resources
         ),
     )

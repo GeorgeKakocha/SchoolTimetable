@@ -754,3 +754,88 @@ class NonSpecialActivityTargetError(Exception):
             f"activity {activity_id!r} is not a special activity, "
             f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
         )
+
+
+class InvalidResourceError(Exception):
+    """A `ResourceService` create/update request fails input validation
+    (Resources Slice A) -- a blank `name` after trimming, or a
+    `capacity` that is not a positive integer. Carries the validator's
+    own safe, structured diagnostics as an immutable tuple, exactly
+    like `InvalidSpecialActivityError`/`InvalidSubjectError`."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid resource for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class DuplicateResourceError(Exception):
+    """A `ResourceService` create/update request would produce a second
+    `Resource` sharing the identical (exact, case-sensitive, trimmed)
+    `name` within one academic year (Resources Slice A) -- mirrors
+    `DuplicateSpecialActivityError`'s own single-catalog-scoped
+    exclusion; an identically-named Subject/Teacher/Class/Special
+    Activity is never a conflict, since Resource is its own separate
+    catalog."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, name: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.name = name
+        super().__init__(
+            f"a resource named {name!r} already exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class ResourceNotFoundError(Exception):
+    """No `Resource` with this natural ID exists in this
+    school/academic-year's persisted configuration (Resources Slice A).
+    Carries only the natural identifiers already supplied -- no
+    persistence surrogate ID."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, resource_id: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.resource_id = resource_id
+        super().__init__(
+            f"no resource {resource_id!r} for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class ResourceInUseError(Exception):
+    """A `ResourceService.delete` request targets a `Resource` currently
+    referenced by a persisted `TeachingRequirement.resource_id`
+    (Resources Slice A) -- never cascade-deleted. `referenced_by` names
+    every referencing entity kind found (only ever
+    `TEACHING_REQUIREMENT` in Slice A -- `ReservedBlock` has no
+    `resource_id` yet; a future Resources B slice will extend this),
+    never a persistence surrogate ID."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        resource_id: str,
+        referenced_by: tuple[str, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.resource_id = resource_id
+        self.referenced_by = referenced_by
+        super().__init__(
+            f"resource {resource_id!r} is still referenced by {list(referenced_by)!r} "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )

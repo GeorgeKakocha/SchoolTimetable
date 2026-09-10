@@ -936,3 +936,63 @@ class InvalidTeacherAvailabilityErrorResponse(BaseModel):
     code: Literal["INVALID_TEACHER_AVAILABILITY"]
     detail: str
     errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+# -- Resource Catalog API (Resources Slice A). ------------------------------
+
+
+class ResourceProjectionItemResponse(BaseModel):
+    """`Resource` is the existing `domain.resources.Resource(id, name,
+    capacity)` -- not a new/redesigned entity. `capacity` means
+    "maximum number of simultaneous lesson/resource occupations,"
+    never student-seat/room-headcount capacity."""
+
+    id: str
+    name: str
+    capacity: int
+
+
+class ResourcesProjectionResponse(BaseModel):
+    configuration_locked: bool
+    resources: tuple[ResourceProjectionItemResponse, ...]
+
+
+class ResourceWriteRequest(BaseModel):
+    """POST/PUT request body -- maps 1:1 onto `ResourceFields`. The
+    natural ID is never accepted here -- always server-generated on
+    create and immutable on update (path parameter only)."""
+
+    name: str
+    capacity: int
+
+
+class ResourceWriteResponse(BaseModel):
+    """POST/PUT success body -- the written `Resource`'s own resolved
+    fields."""
+
+    id: str
+    name: str
+    capacity: int
+
+
+class ResourceDeleteResponse(BaseModel):
+    """DELETE success body."""
+
+    deleted_id: str
+
+
+class InvalidResourceErrorResponse(BaseModel):
+    code: Literal["INVALID_RESOURCE"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class DuplicateResourceErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_RESOURCE"]
+    detail: str
+
+
+class ResourceInUseErrorResponse(BaseModel):
+    code: Literal["RESOURCE_IN_USE"]
+    detail: str
+    referenced_by: tuple[str, ...]

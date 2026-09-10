@@ -9,7 +9,7 @@ from school_timetable.domain.requirements import (
     LessonBlockPolicy,
     TeachingRequirement,
 )
-from school_timetable.domain.resources import ResourceRequirement
+from school_timetable.domain.resources import Resource, ResourceRequirement
 from school_timetable.domain.school import School
 from school_timetable.fixtures.common import build_days, build_periods
 from school_timetable.fixtures.impossible_fixture import build_impossible_fixture
@@ -72,6 +72,80 @@ def test_unknown_resource_reference():
     )
     codes = {e.code for e in run_preflight(problem)}
     assert "UNKNOWN_RESOURCE" in codes
+
+
+def test_unknown_resource_reference_unaffected_by_resource_capacity_check():
+    """`UNKNOWN_RESOURCE` (a `TeachingRequirement` referencing a missing
+    `Resource`) and `INVALID_RESOURCE_CAPACITY` (a `Resource` entity's
+    own invalid capacity) are independent invariants -- this repeats
+    `test_unknown_resource_reference` with a well-formed `Resource`
+    present, proving the new capacity check neither suppresses nor
+    duplicates the pre-existing unknown-reference diagnostic."""
+    problem = _base_problem(
+        resources=(Resource(id="gym", name="Gym", capacity=1),),
+        teaching_requirements=(
+            TeachingRequirement(
+                id="r1", teacher_id="t1", activity_id="a1", participant_group_id="pg1",
+                weekly_periods=1, block_policy=FLEXIBLE,
+                resource_requirement=ResourceRequirement(resource_id="no-such-resource"),
+            ),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "UNKNOWN_RESOURCE" in codes
+    assert "INVALID_RESOURCE_CAPACITY" not in codes
+
+
+def test_resource_capacity_zero_rejected():
+    problem = _base_problem(resources=(Resource(id="gym", name="Gym", capacity=0),))
+    errors = run_preflight(problem)
+    codes = {e.code for e in errors}
+    assert "INVALID_RESOURCE_CAPACITY" in codes
+    invalid = next(e for e in errors if e.code == "INVALID_RESOURCE_CAPACITY")
+    assert invalid.context == {"resource_id": "gym", "capacity": 0}
+
+
+def test_resource_capacity_negative_rejected():
+    problem = _base_problem(resources=(Resource(id="gym", name="Gym", capacity=-3),))
+    errors = run_preflight(problem)
+    codes = {e.code for e in errors}
+    assert "INVALID_RESOURCE_CAPACITY" in codes
+    invalid = next(e for e in errors if e.code == "INVALID_RESOURCE_CAPACITY")
+    assert invalid.context == {"resource_id": "gym", "capacity": -3}
+
+
+def test_resource_capacity_one_produces_no_diagnostic():
+    problem = _base_problem(resources=(Resource(id="gym", name="Gym", capacity=1),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "INVALID_RESOURCE_CAPACITY" not in codes
+
+
+def test_resource_capacity_greater_than_one_produces_no_diagnostic():
+    problem = _base_problem(resources=(Resource(id="gym", name="Gym", capacity=5),))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "INVALID_RESOURCE_CAPACITY" not in codes
+
+
+def test_multiple_invalid_resources_produce_one_diagnostic_each_in_problem_order():
+    problem = _base_problem(
+        resources=(
+            Resource(id="r_bad_first", name="Bad First", capacity=0),
+            Resource(id="r_good", name="Good", capacity=1),
+            Resource(id="r_bad_second", name="Bad Second", capacity=-1),
+        ),
+    )
+    errors = [e for e in run_preflight(problem) if e.code == "INVALID_RESOURCE_CAPACITY"]
+    assert [e.context["resource_id"] for e in errors] == ["r_bad_first", "r_bad_second"]
+
+
+def test_valid_fixture_resource_capacity_produces_no_diagnostic():
+    """The fixture's own "Indoor Gym" (capacity=1) must never trip the
+    new check -- repeats the whole-fixture zero-errors guarantee
+    narrowly for this one code, so a future fixture edit that breaks it
+    fails loudly here rather than only via the broader
+    `test_valid_fixture_has_no_preflight_errors`."""
+    codes = {e.code for e in run_preflight(build_valid_fixture())}
+    assert "INVALID_RESOURCE_CAPACITY" not in codes
 
 
 def test_teaching_requirement_targeting_club_activity_is_rejected():

@@ -39,6 +39,8 @@ from school_timetable.application.generate_schedule_service import GenerateSched
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
 from school_timetable.application.reserved_activity_projection_service import ReservedActivityProjectionService
 from school_timetable.application.reserved_activity_service import ReservedActivityService
+from school_timetable.application.resource_projection_service import ResourceProjectionService
+from school_timetable.application.resource_service import ResourceService
 from school_timetable.application.special_activity_projection_service import SpecialActivityProjectionService
 from school_timetable.application.special_activity_service import SpecialActivityService
 from school_timetable.application.subject_projection_service import SubjectProjectionService
@@ -62,6 +64,7 @@ from school_timetable.persistence.problem_repository import (
     SqlAlchemySchedulingProblemRepository,
 )
 from school_timetable.persistence.reserved_activity_repository import SqlAlchemyReservedActivityRepository
+from school_timetable.persistence.resource_repository import SqlAlchemyResourceRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.persistence.special_activity_repository import SqlAlchemySpecialActivityRepository
 from school_timetable.persistence.teacher_availability_repository import (
@@ -233,6 +236,29 @@ def get_special_activity_service() -> SpecialActivityService:
     return SpecialActivityService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemySpecialActivityRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_resources_projection_service() -> ResourceProjectionService:
+    """Composes the same two session-factory-backed adapters
+    `SpecialActivityProjectionService` uses -- never a request-scoped
+    `Session` (Resources Slice A)."""
+    return ResourceProjectionService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_resource_service() -> ResourceService:
+    """Composes `ResourceService`'s three session-factory-backed
+    dependencies -- never a request-scoped `Session`, so
+    `SqlAlchemyResourceRepository`'s own short lock/reload/validate
+    transactions (Decision #36) stay entirely its own (Resources
+    Slice A)."""
+    return ResourceService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyResourceRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 

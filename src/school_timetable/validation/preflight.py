@@ -19,6 +19,7 @@ def run_preflight(problem: SchedulingProblem) -> list[ValidationError]:
     errors: list[ValidationError] = []
 
     errors.extend(_check_references(problem, index))
+    errors.extend(_check_resource_capacity(problem))
     # Further checks assume references resolve, so stop early if they don't
     # to avoid noisy KeyErrors cascading into unrelated messages.
     if errors:
@@ -145,6 +146,32 @@ def _check_references(problem: SchedulingProblem, index: ProblemIndex) -> list[V
                 {"fixed_placement_id": fp.id},
             ))
 
+    return errors
+
+
+def _check_resource_capacity(problem: SchedulingProblem) -> list[ValidationError]:
+    """Every `Resource.capacity` must be a positive integer (>= 1) --
+    "maximum simultaneous resource occupations," never student-seat/
+    room-headcount capacity. `ResourceService`'s own
+    `resource_rules.validate_capacity` already rejects this at
+    write-time, and the DB `CheckConstraint("capacity > 0")` is a
+    structural backstop -- this check exists only to catch an
+    already-invalid `Resource` reaching preflight by some other path
+    (legacy data, direct construction, future import/admin tooling)
+    before it can ever reach the solver. Independent of
+    `_check_references`/`ProblemIndex` -- a `Resource`'s own capacity
+    is never a reference to resolve, so this runs regardless of
+    whether other reference errors are present, and reports one
+    diagnostic per invalid `Resource` in `problem.resources`' own
+    authoritative order."""
+    errors: list[ValidationError] = []
+    for resource in problem.resources:
+        if resource.capacity < 1:
+            errors.append(ValidationError(
+                "INVALID_RESOURCE_CAPACITY",
+                f"Resource {resource.id!r} has capacity={resource.capacity}, but capacity must be at least 1",
+                {"resource_id": resource.id, "capacity": resource.capacity},
+            ))
     return errors
 
 
