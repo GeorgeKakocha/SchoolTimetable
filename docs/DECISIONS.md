@@ -3799,12 +3799,15 @@ Reserved Activities, multiple Teachers per block, recurrence, duration
 semantics, flexible/autoplaced special activities, and any
 `ReservedBlock` soft solver scoring.
 
-## Resources Slice A -- Resource catalog backend (pending technical review, NOT committed)
+## RESOURCES A -- RESOURCE CATALOG BACKEND CLOSED ON MAIN
 
-**Status: IMPLEMENTED on branch `feature/resource-catalog-backend`,
-pending technical review. NOT committed, NOT merged, NOT pushed.** Not
-a phase closure -- see `docs/PROJECT_STATE.md`'s matching entry for the
-full implementation record.
+**Status: CLOSED ON MAIN.** Implementation commit `6a90a28` ("feat: add
+resource catalog backend") -- fast-forward merged from
+`feature/resource-catalog-backend` (base `976b646`) onto `main`, with a
+separate docs closure commit recording this status. Not pushed to any
+remote. This closes Slice A only -- **the overall Resources phase is
+NOT closed**; see `docs/PROJECT_STATE.md`'s matching entry for the full
+implementation record and next-slice pointer.
 
 **Locked product decision, reused unchanged:** `Resource` is the
 existing `domain.resources.Resource(id, name, capacity=1)` entity --
@@ -3813,7 +3816,9 @@ new Room/ResourceType/ResourceCategory entity and never a domain
 redesign. `capacity` means "maximum number of simultaneous lesson/
 resource occupations" (the pre-existing solver semantics), never
 student-seat/room-headcount capacity -- that would be a different,
-separately-named future field.
+separately-named future field. A future frontend surface for this
+catalog is expected to be labeled "Rooms & Resources" in the UI --
+a presentation-layer naming decision only, not a domain/API rename.
 
 **Preflight capacity gap -- discovered during Resources A
 implementation review, resolved before closure.** `run_preflight()`
@@ -3849,6 +3854,12 @@ since `ReservedBlock.resource_id` does not exist yet. Owner Decision
 #39 remains NOT created. Zero frontend, solver, verifier, or migration
 changes in this slice (including the pre-closure preflight correction).
 
-**RESOURCES A BACKEND NOT CLOSED** -- implementation record pending
-technical review/pre-closure, left uncommitted on
-`feature/resource-catalog-backend`.
+**Final verified baselines (reconfirmed after the fast-forward merge to
+`main`):** core 434 passed/5 deselected, `tests_web` 438 passed/zero
+skips, frontend 403 passed/25 files/zero skips, build clean, Alembic
+`cae76cba3c58`/one head/no drift/zero migration.
+
+**RESOURCES A -- RESOURCE CATALOG BACKEND CLOSED ON MAIN** --
+implementation commit `6a90a28`. The overall Resources phase remains
+NOT closed. **Next slice: Resources B1 -- ordinary
+`TeachingRequirement` fixed-resource assignment contract.**

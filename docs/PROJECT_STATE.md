@@ -2756,12 +2756,16 @@ subgroups in Reserved Activities, multiple Teachers per block,
 recurrence, duration semantics, flexible/autoplaced special activities,
 `ReservedBlock` soft solver scoring.
 
-## Resources Slice A -- Resource catalog backend (pending technical review, NOT committed)
+## RESOURCES A -- RESOURCE CATALOG BACKEND CLOSED ON MAIN
 
-**Status: IMPLEMENTED on branch `feature/resource-catalog-backend`,
-pending technical review. NOT committed, NOT merged, NOT pushed.** This
-entry documents work sitting uncommitted on a feature branch, not a
-closed phase -- it must not be read as a phase closure.
+**Status: CLOSED ON MAIN.** Implementation commit `6a90a28` ("feat: add
+resource catalog backend") was fast-forward merged onto `main` (from
+`feature/resource-catalog-backend`, base `976b646`); the docs closure
+commit recording this status follows as its own separate commit. The
+feature branch has been deleted. Nothing has been pushed to any
+remote. **The overall Resources phase itself is NOT closed** -- this
+entry closes Slice A (the catalog backend) only; see "Next slice"
+below.
 
 Preceded by a read-only recon (concluded "A. RESOURCES RECON COMPLETE
 -- PRODUCT DECISIONS REQUIRED") that mapped pre-existing Resource
@@ -2773,7 +2777,11 @@ Scope: the narrow Resource catalog write surface (`GET/POST
 /schools/{school_id}/years/{year_id}/resources`, `PUT/DELETE
 .../resources/{resource_id}`) over the existing, unchanged
 `domain.resources.Resource(id, name, capacity=1)` entity -- no new
-Room/ResourceType/ResourceCategory entity, no domain redesign.
+Room/ResourceType/ResourceCategory entity, no domain redesign. (A
+future frontend surface for this catalog is expected to be labeled
+"Rooms & Resources" in the UI -- a presentation-layer naming decision
+only; the domain/API entity/field names above are unaffected and
+remain exactly as shipped.)
 `capacity` means "maximum number of simultaneous lesson/resource
 occupations" (already the pre-existing solver/verifier semantics via
 `model_builder.py::_add_resource_capacity()`), explicitly never
@@ -2864,19 +2872,43 @@ repository/integration including the mandatory generation-race pair
 (`tests_web/test_resource_repository.py`), 27 HTTP contract
 (`tests_web/test_resource_api.py`), plus 7 focused preflight tests
 added during the pre-closure corrective pass (`tests/test_preflight.py`)
--- 78 new tests total. Full regression after the corrective pass: core
-434 passed/5 deselected (398 + 29 + 7 new), `tests_web` 438 passed/zero
-skips (396 + 15 + 27, unchanged by the corrective pass since the new
-preflight tests are pure-Python with no database), frontend 403
-passed/25 files/zero skips (unchanged), build clean, Alembic
-`cae76cba3c58`/one head/no drift/no new migration file. Scope audit
-confirmed only backend Resources A files (`application/`,
-`persistence/`, `api/`, `tests/`, `tests_web/`) plus the corrective
-`validation/preflight.py`/`tests/test_preflight.py` change, plus these
-two docs files, changed -- zero frontend/Alembic/domain-redesign/
-solver/verifier/ReservedBlock/dependency/`uv.lock`/`dist` changes.
+-- 78 new tests total, all shipped in implementation commit `6a90a28`.
 
-**RESOURCES A BACKEND NOT CLOSED.** This is an implementation record
-pending technical review/pre-closure, sitting uncommitted on
-`feature/resource-catalog-backend` -- not a phase closure. No commit,
-merge, or push has been performed as part of this entry.
+**Final verified baselines, reconfirmed after the fast-forward merge to
+`main`:** core **434 passed / 5 deselected**; `tests_web` **438 passed /
+zero skips**; frontend **403 passed / 25 files / zero skips**; build
+**clean**; Alembic **`cae76cba3c58` / one head / no drift** (zero
+migration). Scope audit confirmed the implementation commit touched
+only backend Resources A files (`application/`, `persistence/`, `api/`,
+`tests/`, `tests_web/`) plus the corrective
+`validation/preflight.py`/`tests/test_preflight.py` change, plus the
+two pending-review docs entries carried into that same commit -- zero
+frontend/Alembic/domain-redesign/solver/verifier/ReservedBlock/
+dependency/`uv.lock`/`dist` changes.
+
+**Final shipped contract (Resources A):**
+- Existing `domain.resources.Resource(id, name, capacity)` reused unchanged -- no new entity, no domain redesign.
+- Future UI terminology for this catalog: "Rooms & Resources" (presentation-layer only).
+- `capacity` = maximum simultaneous resource occupations (never student-seat/room-headcount capacity); validated `>= 1`.
+- Server-generated `resource_<uuid4().hex>` natural IDs, never client-supplied.
+- Exact, trimmed, case-sensitive duplicate-name semantics, scoped solely to the Resource catalog.
+- Resource owns its own ordinal sequence, never shared with any other catalog.
+- `GET/POST /schools/{school_id}/years/{year_id}/resources`, `PUT/DELETE .../resources/{resource_id}` -- full catalog CRUD API.
+- `RESOURCE_IN_USE` delete blocker via `TeachingRequirement.resource_id` only.
+- Configuration-lock enforcement (409 `SCHEDULING_CONFIGURATION_LOCKED`), reusing existing infrastructure unchanged.
+- Owner-Decision-#36 generation-race safety, proven with a dedicated race test pair.
+- `/config` compatibility -- pre-existing read-only schemas untouched, Resource CRUD reflected immediately.
+- Preflight `INVALID_RESOURCE_CAPACITY` diagnostic (added in the pre-closure corrective pass).
+- Layered validation, all three now proven independently: application write-time validation + `SchedulingProblem` preflight + DB `CHECK` constraint.
+- Zero migration; zero solver change; zero verifier change; zero frontend change.
+- No `ReservedBlock.resource_id` yet.
+- No Resource Availability yet.
+- No ordinary `TeachingRequirement` resource-write surface yet (`resource_requirement` remains read-only/deferred).
+- Corrected forward guidance, locked: any future Reserved Activity resource integration must use **aggregate Resource capacity**, never pairwise `RESERVED_BLOCK_RESOURCE_SLOT_COLLISION`-style two-block exclusivity semantics.
+- Owner Decision #39 remains absent -- not created by this slice.
+
+**RESOURCES A -- RESOURCE CATALOG BACKEND CLOSED ON MAIN.** Implementation
+commit `6a90a28`. The overall Resources phase is **NOT** yet closed.
+
+**Next slice: Resources B1 -- ordinary `TeachingRequirement`
+fixed-resource assignment contract.**
