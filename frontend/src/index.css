@@ -92,6 +92,28 @@ body {
   outline-offset: 2px;
 }
 
+/* Narrow-width: the five flat nav links, laid out with `nowrap` by
+   default, are together wider than a narrow viewport -- with no wrap
+   and no clipping, that overflow was propagating all the way up to
+   `document.documentElement.scrollWidth`, causing page-level
+   horizontal scrolling (found during Reserved C's real-browser narrow
+   acceptance, reproduced identically on every page since `.app-nav`
+   is shared shell chrome, not Reserved-Activities-specific). Wrapping
+   is the minimal fix: every link stays fully visible and directly
+   reachable, in the same order, with no hidden/collapsed items, no
+   hamburger/dropdown, and no JS viewport listener -- only a plain
+   `@media` query, matching every other narrow-width override in this
+   file. A slightly tighter `gap` here (row and column independently)
+   just keeps the wrapped rows visually tidy; it does not change
+   behavior. Desktop layout/order/appearance are completely unaffected
+   above 640px. */
+@media (max-width: 640px) {
+  .app-nav {
+    flex-wrap: wrap;
+    gap: 0.6rem 1rem;
+  }
+}
+
 .app-main {
   padding-bottom: 2rem;
 }

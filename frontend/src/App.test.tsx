@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { getClassTimetable, getSchedulingConfigIndex } from "./api/client";
@@ -148,6 +148,17 @@ describe("App routing", () => {
     ]);
     expect(screen.getAllByRole("link", { name: "School Setup" })).toHaveLength(1);
     expect(screen.queryByRole("link", { name: "Special Activities" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the nav container's app-nav class (the narrow-width wrap CSS hook) and all five links inside it", async () => {
+    window.history.pushState({}, "", "/timetable");
+
+    render(<App />);
+
+    const nav = await screen.findByRole("navigation", { name: "Main" });
+    expect(nav.className).toContain("app-nav");
+    const linksInNav = within(nav).getAllByRole("link");
+    expect(linksInNav).toHaveLength(5);
   });
 
   it("renders the Teacher Availability page at /configuration/teacher-availability", async () => {
