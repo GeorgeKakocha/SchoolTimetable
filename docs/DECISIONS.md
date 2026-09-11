@@ -4341,3 +4341,57 @@ Resource Availability remains separately deferred.
 in this slice; every choice above was already locked by Calendar A's own
 contract or by an existing pattern (Resources C's tablist/table
 conventions, Owner Decision #36's lock discipline).
+
+## CALENDAR MVP REAL-BROWSER ACCEPTANCE COMPLETED
+
+Forward-only follow-up to Calendar B's "Real-browser acceptance:
+BLOCKED" note above -- that note was accurate for that session (the
+Claude in Chrome extension never connected). Claude in Chrome remained
+unavailable in this follow-up session too, so the human user completed
+the walkthrough manually against the same identified review dataset
+(`reserved-activity-review-school` / `ay-reserved-activity-review-2026`
+-- unlocked, zero `TimePreference` rows, 3 Days, 5 Periods including
+the legacy `is_instructional=false` "Lunch" row), operating a normal
+browser against a locally restarted `127.0.0.1:5173` Vite dev server
+proxying the existing `127.0.0.1:8000` backend, while this session
+prepared the dataset/environment and verified results directly against
+the database and API before and after.
+
+User-verified, all PASS: Working Days create (Saturday) / rename
+(Saturday Activities) / Move Up / Move Down / delete, with the original
+3-day set restored; Bell Schedule create (Acceptance Period, 16:10-
+16:50) / rename+retime (Acceptance Period Extended, 16:15-16:55) /
+`starts_new_block` toggle-on (block/break boundary display updated) /
+Move Up / Move Down / delete, with the original 5-period set restored;
+local HH:MM validation (only-Start, only-End, equal, reversed all
+rejected; valid Start<End accepted, no backend call for any invalid
+case); the legacy Lunch row visible, labeled Non-instructional, with no
+instructional-state toggle and no "Add lunch"/"Add break" control
+anywhere; and the ~375px narrow layout (no page-level horizontal
+overflow, tablist/Working Days/Bell Schedule/forms/time inputs/actions
+all usable).
+
+**Dataset restoration independently confirmed** (not merely taken on
+the user's word) via direct DB query and a `GET .../calendar` call
+after the session: exactly Monday/Tuesday/Wednesday at indexes 0-2, and
+exactly Period 1-4 (`morning`/`afternoon` blocks, all times still
+`NULL`) plus `Lunch` (`midday` block, `is_instructional=false`) at
+indexes 0-4 -- byte-for-byte the same as the pre-session baseline this
+session recorded. Zero `Schedule`/`ScheduleVersion`/`TimePreference`
+rows exist for this Academic Year; `configuration_locked` remains
+`false`. `frontend/.env.local` was restored to
+`VITE_SCHOOL_ID=synthetic-school`/`VITE_ACADEMIC_YEAR_ID=ay-2026` and
+Vite restarted against it.
+
+**No Calendar production-code change was required or made** -- this
+follow-up found zero defects. Focused frontend suites (`calendar.test.ts`,
+`CalendarBellSchedulePanel.test.tsx`, `SchoolSetupPage.test.tsx`): 87
+passed. Build clean. Alembic `e0f73eda567b`, one head, no drift --
+unchanged. Full backend/`tests_web` regression was not rerun for this
+docs-only follow-up (Calendar B's own baselines remain authoritative,
+since no backend code changed).
+
+**The previously outstanding acceptance gap is now satisfied. Calendar
+B is fully accepted. CALENDAR MVP IS FULLY ACCEPTED.** Deferred scope
+is unchanged from Calendar B's own list above. **Owner Decision #39
+remains absent.**

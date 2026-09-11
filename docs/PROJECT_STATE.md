@@ -3662,3 +3662,45 @@ Resources, the Calendar/Bell Schedule, schedule generation, and the
 class/teacher timetable display all already exist -- manual editing
 over a generated schedule is the natural next slice. Not implemented in
 this slice.
+
+## CALENDAR MVP REAL-BROWSER ACCEPTANCE COMPLETED
+
+Forward-only follow-up: the "Real-browser acceptance: BLOCKED" note
+above was accurate for that session (Claude in Chrome never connected).
+It remained unavailable in this follow-up too, so the human user
+completed the walkthrough manually against the same identified review
+dataset (`reserved-activity-review-school` /
+`ay-reserved-activity-review-2026`), operating a normal browser against
+a locally restarted Vite dev server proxying the existing backend,
+while this session prepared the dataset/environment and independently
+verified the results (not just the user's report) directly against the
+database and API before and after.
+
+User-verified, all PASS: Working Days create/rename/Move Up/Move
+Down/delete with the original 3-day set restored; Bell Schedule
+create/rename+retime/`starts_new_block` toggle/Move Up/Move Down/delete
+with the original 5-period set restored; local HH:MM validation
+(only-Start, only-End, equal, reversed all rejected; valid Start<End
+accepted); the legacy Lunch row visible and labeled Non-instructional
+with no instructional-state toggle and no "Add lunch"/"Add break"
+control; and the ~375px narrow layout with no page-level horizontal
+overflow and every control still usable.
+
+**Dataset restoration independently confirmed** via direct DB query and
+a live `GET .../calendar` call: exactly Monday/Tuesday/Wednesday at
+indexes 0-2 and exactly Period 1-4 + Lunch at indexes 0-4, byte-for-byte
+matching the pre-session baseline; zero `Schedule`/`ScheduleVersion`/
+`TimePreference` rows; `configuration_locked` still `false`.
+`frontend/.env.local` restored to `synthetic-school`/`ay-2026` and Vite
+restarted against it.
+
+**No Calendar production-code change was required.** Focused frontend
+suites (`calendar.test.ts`, `CalendarBellSchedulePanel.test.tsx`,
+`SchoolSetupPage.test.tsx`): 87 passed. Build clean. Alembic
+`e0f73eda567b`, one head, no drift -- unchanged. Full backend/
+`tests_web` regression was not rerun (docs-only follow-up, no backend
+code changed; Calendar B's own baselines remain authoritative).
+
+**The previously outstanding acceptance gap is now satisfied. Calendar
+B is fully accepted. CALENDAR MVP IS FULLY ACCEPTED.** Deferred scope
+is unchanged. **Owner Decision #39 remains absent.**
