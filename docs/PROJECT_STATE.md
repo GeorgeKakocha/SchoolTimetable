@@ -3289,3 +3289,197 @@ databases. Scope audit confirmed only the expected Reserved-Activity-
 scheduling/validation/frontend/test files changed, plus the one new
 migration file -- zero unrelated Resources-A/Teaching-Assignment/
 dependency changes.
+
+## RESOURCES C -- ROOMS & RESOURCES CATALOG FRONTEND CLOSED ON MAIN
+
+**Status: CLOSED ON MAIN.** Implementation commit `58e8b5c` ("feat: add
+rooms and resources setup UI") -- fast-forward merged from
+`feature/resources-catalog-frontend` (base `ec8a238`) onto `main`, with
+a separate docs closure commit recording this status. Nothing has been
+pushed to any remote. This closes Slice C -- a frontend-only slice, with
+**zero backend/migration/solver/verifier/domain production changes**.
+
+**Doc correction (forward-only, not a rewrite of the B2 entry above):**
+the RESOURCES B2 entry's "Resources MVP scope (A + B1 + B2) is now
+functionally complete" statement described the *backend/scheduling/
+resource-assignment* behavior only -- it did not yet ship any
+user-facing way for a school administrator to create, edit, or delete a
+Resource without API fixtures or database tooling. That gap is what
+this slice closes. Precisely: **A + B1 + B2 completed the backend,
+scheduling, and resource-assignment behavior; Resources C closes the
+missing user-facing catalog-management surface; Resource Availability
+remains explicitly deferred and was never an MVP blocker.** With this
+slice closed, the Resources MVP phase itself is now formally closed
+(see the declaration at the end of this entry).
+
+**Product/UI contract:** the internal/domain/API entity remains
+`Resource`; its user-facing label is **"Rooms & Resources"**, added as
+a fifth tab on the existing School Setup page (`SchoolSetupPage.tsx`),
+after Special Activities, in the exact same self-contained-panel
+architecture as the other four tabs (own independent GET on mount, no
+cross-tab cache, no change to the tab mechanism itself). Only the two
+already-shipped Resource fields are exposed -- `name` and `capacity` --
+never a natural ID, ordinal, or database surrogate ID. Capacity is
+presented to the admin as **"the maximum number of simultaneous uses"**
+(capacity 1: only one lesson/activity may use this Resource at a time;
+capacity 2: two simultaneous uses are allowed), never seat/headcount/
+room-occupancy language -- a small, visually-distinct tinted callout
+(`.capacity-hint`, deliberately different from the plain muted
+`.field-hint` text used elsewhere, so it reads as a separate explanatory
+note rather than blending into the editable field) carries this
+explanation next to the Capacity input on both the create form and the
+inline row-edit form. New Resources default to capacity 1; the capacity
+input is `type="number" min="1" step="1"`, with local validation
+(integer, >= 1) blocking submission before any request is sent --
+backend validation (`INVALID_RESOURCE_CAPACITY`, "capacity must be at
+least 1") remains the authoritative backstop and its message is still
+surfaced verbatim if ever reached.
+
+**Frontend API module:** `frontend/src/api/resources.ts`, a new,
+dedicated module following the `specialActivities.ts` "one module per
+page-domain" convention exactly (`getResources`/`createResource`/
+`updateResource`/`deleteResource`, thin one-line wrappers around
+`client.ts`'s shared `getJson`/`postJson`/`putJson`/`deleteJson`) --
+against the existing, unmodified Resources A backend endpoints
+(`GET/POST /schools/{school_id}/years/{year_id}/resources`,
+`PUT/DELETE .../resources/{resource_id}`). No generic CRUD engine was
+introduced.
+
+**Create/Edit/Delete:** `RoomsResourcesPanel.tsx` mirrors
+`SpecialActivitiesPanel.tsx`'s architecture precisely -- collapsible
+inline create form, row-inline edit, inline (non-modal, no
+`window.confirm`) delete confirmation, and an authoritative GET refetch
+after every successful write (never an optimistic local merge). Create
+and update both send the whole `{name, capacity}` representation
+(full-replacement, matching every other write endpoint in this
+codebase); no IDs are ever rendered.
+
+**Delete-in-use UX:** `RESOURCE_IN_USE` is mapped to a friendly message
+using the same `referenced_by`-to-label pattern already established by
+`SpecialActivitiesPanel` -- `TEACHING_REQUIREMENT` renders as "Teaching
+Assignments", `RESERVED_BLOCK` renders as "Reserved Activities"; when
+both apply, both labels are listed ("...used by: Teaching Assignments,
+Reserved Activities."). Raw backend vocabulary is never rendered to the
+user. No cascade or silent clearing -- delete is simply blocked with the
+friendly message, matching the backend's own `ResourceInUseError`
+semantics exactly (no backend change was needed here).
+
+**Configuration lock UX:** reuses the existing shared
+`configuration_locked`/lock-banner pattern verbatim -- when locked, the
+catalog remains fully visible, Add/Edit/Delete are disabled (not merely
+hidden, and not conveyed by color alone -- a real `disabled` attribute
+plus the existing lock banner text), and a write racing a fresh lock
+(`SCHEDULING_CONFIGURATION_LOCKED`) refetches into the now-locked
+authoritative state, matching every other School Setup tab's existing
+race-handling precedent. No Resource-specific locking behavior was
+invented.
+
+**Real-browser CRUD result:** confirmed live against the existing,
+unlocked `teacher-crud-review-school`/`ay-teacher-crud-2026` dataset
+(`.env.local` restored afterward): opened School Setup -> Rooms &
+Resources, confirmed the pre-existing "Indoor Gym" (capacity 1) Resource
+was visible; created "Science Lab" (capacity 1, the default), confirmed
+it appeared from the authoritative refresh; edited it to "Science Lab
+A" with capacity 2, confirmed both fields updated from the authoritative
+refresh; deleted it, confirmed it was removed. Then attempted to delete
+"Indoor Gym" itself, which this dataset's existing configuration
+references from **both** a Teaching Assignment (`sport_8a`/`dance_8a`/
+etc.) and a Reserved Activity (`club_chess`) -- confirmed the delete was
+blocked with "This resource can't be deleted because it is used by:
+Teaching Assignments, Reserved Activities." and cancelled the
+confirmation, leaving the dataset's shared fixture state untouched (only
+the newly-created-and-deleted "Science Lab A" ever left a trace, and it
+left none once deleted -- the dataset ends this task in the identical
+state it started, confirmed by direct query: exactly one Resource,
+"Indoor Gym"/capacity 1, zero `schedule_version` rows).
+
+**Narrow viewport result (~375px):** the Rooms & Resources tab, its
+create form, and its row-edit form all reflow correctly at 375px width
+(stacked labels/full-width inputs, matching the existing narrow-width
+`setup-table` card-stacking convention already shared by every School
+Setup tab). One real, narrow-width-only defect was found and fixed in
+this same task: the five-tab `.setup-tablist` (a plain flex row with no
+wrap/scroll handling) overflowed the page horizontally once a fifth tab
+was added -- confirmed via direct DOM measurement
+(`document.documentElement.scrollWidth` exceeding `clientWidth`) inside
+a same-origin iframe probe sized to 375px (the sandboxed browser
+environment's OS-level window could not itself be resized below its
+fixed display size, so this in-page iframe technique was used instead
+of a real window resize). Fixed by giving `.setup-tablist` its own
+contained horizontal scroll region at the existing narrow-width media
+query (`overflow-x: auto; max-width: 100%` on the tablist,
+`flex: 0 0 auto` on each tab) rather than letting the tab row force the
+whole page wider -- re-measured afterward with zero page-level overflow
+on every tab, including Rooms & Resources itself.
+
+**Accessibility:** the Name and Capacity inputs are both `<label>`-wrapped
+(no placeholder-only labeling); tab semantics (`role="tablist"`/`"tab"`/
+`"tabpanel"`, roving `tabIndex`, Arrow/Home/End activation) are
+unchanged and still correct with five tabs; Add/Edit/Delete disable via
+a real `disabled` attribute (never color-only) with the existing
+`aria-describedby` link to the lock banner text when locked; the inline
+delete confirmation and all inline errors use the existing
+`role="alert"`-based pattern already proven accessible by every other
+School Setup tab.
+
+**Tests added:** 8 frontend API tests
+(`frontend/src/api/resources.test.ts`), 21 panel tests
+(`frontend/src/components/setup/RoomsResourcesPanel.test.tsx` --
+covering tab-load/render/no-raw-IDs/empty-state/create-defaults/
+local-capacity-validation/create-success/backend-validation-message/
+duplicate-name-message/edit-name/edit-capacity/edit-cancel/
+delete-confirm-cancel/delete-success/RESOURCE_IN_USE via each reference
+kind and both together/locked-state/lock-race/stale-refresh/
+no-double-submit), and 4 new/updated `SchoolSetupPage.test.tsx` tests
+(fifth-tab load, five-tabs-in-order, Arrow/Home/End wrap now covering
+Rooms & Resources, `requestedTab: "rooms-resources"` navigation).
+
+**Full regression:** core 479 passed/5 deselected (unchanged -- zero
+backend production changes), `tests_web` 486 passed/zero skips
+(unchanged -- zero backend production changes), frontend 460 passed/27
+files/zero skips (428 + 32 new: 8 API + 21 panel + 3 net new
+`SchoolSetupPage` cases, after accounting for pre-existing cases whose
+assertions were extended in place), build clean, Alembic
+`9fbec2126831`/one head/no drift, **zero new migration**. One
+transient, order-dependent failure was observed in
+`TimetablePage.test.tsx` during one full-suite run (an unrelated file
+this slice never touched); confirmed to pass in isolation and to pass
+cleanly on repeated full-suite runs immediately before and after --
+treated as a pre-existing cross-file test-isolation flake, not a
+regression introduced by this slice, and left unmodified per the "zero
+backend/unrelated-frontend feature work" scope of this task. Scope audit
+confirmed only the expected `frontend/src/api/resources.*`,
+`frontend/src/components/setup/RoomsResourcesPanel.*`,
+`frontend/src/pages/SchoolSetupPage.{tsx,test.tsx}`, and
+`frontend/src/index.css` files changed -- zero backend files, zero
+migration files, zero unrelated frontend files.
+
+**Explicitly deferred/out of scope for C, and for the Resources MVP
+phase as a whole:** Resource Availability; eligible-Resource sets;
+Resource capabilities/categories; preferred Resource; solver-selected
+Resources; seat/headcount capacity semantics. None of these are treated
+as completeness blockers. Owner Decision #39 remains absent -- no
+genuine unresolved product fork appeared during this task.
+
+**RESOURCES C -- ROOMS & RESOURCES CATALOG FRONTEND CLOSED ON MAIN** --
+implementation commit `58e8b5c`.
+
+**RESOURCES MVP PHASE CLOSED.** With Slice C's catalog-management
+surface now shipped, the Resources MVP phase is formally closed. MVP
+shipped scope:
+1. Resource catalog backend CRUD (Resources A)
+2. Rooms & Resources catalog frontend CRUD (Resources C, this entry)
+3. Ordinary Teaching Assignment fixed Resource (Resources B1)
+4. Reserved Activity fixed Resource (Resources B2)
+5. Aggregate cross-source Resource capacity (Resources B2)
+6. Independent verification (Resources B2, zero production change
+   needed -- already generic)
+7. Configuration locking / generation race safety (reused across A/B1/
+   B2/C, unchanged)
+8. Timetable Resource display (Resources B1/B2)
+
+**Explicitly deferred beyond the MVP phase (not blockers, not
+scheduled):** Resource Availability; eligible Resource sets;
+capabilities/categories; preferred Resource; solver-selected Resources;
+seat/headcount capacity semantics. Owner Decision #39 remains absent
+unless a genuine new product fork appears.

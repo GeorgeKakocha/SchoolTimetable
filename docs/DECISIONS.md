@@ -4002,3 +4002,83 @@ MAIN** -- implementation commit `e8a3aaf`. **Resources MVP scope
 overall Resources phase is deliberately left to the next product step**
 -- Resource Availability remains an explicitly deferred, not-yet-scoped
 future concern, never a completeness blocker.
+
+## RESOURCES C -- ROOMS & RESOURCES CATALOG FRONTEND CLOSED ON MAIN
+
+**Status: CLOSED ON MAIN.** Implementation commit `58e8b5c` -- fast-
+forward merged from `feature/resources-catalog-frontend` (base
+`ec8a238`) onto `main`, with a separate docs closure commit recording
+this status. Not pushed to any remote. See `docs/PROJECT_STATE.md`'s
+matching entry for the full implementation record. **Zero backend/
+migration/solver/verifier/domain production changes** -- frontend only,
+against the existing, unmodified Resources A API.
+
+**Doc correction (forward-only):** the RESOURCES B2 entry above
+described the *backend/scheduling/resource-assignment* behavior as
+functionally complete -- it did not describe a user-facing way to
+manage the Resource catalog itself. That distinction stands as written;
+this entry does not rewrite it. Precisely: A + B1 + B2 completed the
+backend/scheduling/resource-assignment behavior; Resources C closes the
+missing user-facing catalog-management surface; Resource Availability
+remains explicitly deferred and was never an MVP blocker.
+
+**Locked UI contract:** `Resource` (domain/API, unchanged) is
+user-facing "Rooms & Resources" -- a fifth tab on the existing School
+Setup page, following the same self-contained-panel architecture as
+Teachers/Classes/Subjects/Special Activities. Exposes only `name` and
+`capacity` (never a natural/ordinal/surrogate ID); capacity is presented
+as "maximum number of simultaneous uses" via a small, visually-distinct
+tinted callout next to the field, never seat/headcount/solver language.
+Create defaults capacity to 1; local validation (integer, >= 1) blocks
+submission before any request, backend validation remains authoritative.
+Create/update send the full `{name, capacity}` representation
+(full-replacement, matching every other write endpoint). Delete reuses
+the inline (non-modal) confirmation pattern; `RESOURCE_IN_USE` maps
+`TEACHING_REQUIREMENT` -> "Teaching Assignments" and `RESERVED_BLOCK` ->
+"Reserved Activities" (both, when both apply), never raw backend
+vocabulary. Configuration lock reuses the existing shared
+`configuration_locked` pattern verbatim -- no Resource-specific locking
+was invented.
+
+**One real, narrow-width-only defect was found and fixed in this same
+task:** the five-tab `.setup-tablist` overflowed the page horizontally
+once a fifth tab was added (a pre-existing flex-row-with-no-wrap
+pattern that only became a problem at five tabs). Fixed by giving the
+tablist its own contained horizontal scroll region at the existing
+narrow-width media query, rather than letting it force the page wider.
+Confirmed via direct DOM measurement inside a same-origin iframe probe
+sized to 375px, since the sandboxed environment's window could not
+itself be resized below its fixed display size.
+
+**Real-browser result:** confirmed live against the existing, unlocked
+`teacher-crud-review-school` dataset -- full create/edit/delete cycle
+on a new "Science Lab" Resource (capacity 1 -> "Science Lab A"/capacity
+2 -> deleted), then confirmed delete is blocked on the dataset's
+existing "Indoor Gym" Resource, which is referenced by both a Teaching
+Assignment and a Reserved Activity, with the friendly "both" message.
+Dataset ends this task in the identical state it started (`.env.local`
+restored; the shared fixture untouched).
+
+**Final verified baselines:** core 479 passed/5 deselected (unchanged),
+`tests_web` 486 passed/zero skips (unchanged), frontend 460 passed/27
+files/zero skips (428 + 32 new), build clean, Alembic
+`9fbec2126831`/one head/no drift, zero new migration. A transient,
+order-dependent failure in an unrelated, untouched test file
+(`TimetablePage.test.tsx`) was observed once during a full-suite run,
+confirmed to pass in isolation and on repeated full-suite runs
+immediately before and after -- treated as a pre-existing test-isolation
+flake, not a regression from this slice.
+
+**RESOURCES C -- ROOMS & RESOURCES CATALOG FRONTEND CLOSED ON MAIN** --
+implementation commit `58e8b5c`.
+
+**RESOURCES MVP PHASE CLOSED.** MVP shipped scope: (1) Resource catalog
+backend CRUD, (2) Rooms & Resources catalog frontend CRUD, (3) ordinary
+Teaching Assignment fixed Resource, (4) Reserved Activity fixed
+Resource, (5) aggregate cross-source Resource capacity, (6) independent
+verification, (7) configuration locking / generation race safety, (8)
+timetable Resource display. **Explicitly deferred, not blockers:**
+Resource Availability; eligible Resource sets; capabilities/categories;
+preferred Resource; solver-selected Resources; seat/headcount capacity
+semantics. Owner Decision #39 remains absent unless a genuine new
+product fork appears.
