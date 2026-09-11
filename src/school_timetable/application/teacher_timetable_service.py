@@ -18,6 +18,8 @@ never by a caller (React) -- matching the exact architecture boundary
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from school_timetable.application.errors import TeacherNotFoundError
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
 from school_timetable.application.teacher_timetable_models import (
@@ -29,7 +31,9 @@ from school_timetable.application.teacher_timetable_models import (
     TeacherTimetableView,
 )
 from school_timetable.domain.groups import ParticipantGroup
-from school_timetable.domain.result import ScheduleEntry
+from school_timetable.domain.people import Teacher
+from school_timetable.domain.problem import SchedulingProblem
+from school_timetable.domain.result import ScheduleEntry, SolverStatus
 
 
 class TeacherTimetableService:
@@ -55,74 +59,131 @@ class TeacherTimetableService:
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
+        teacher = _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
 
-        # (2) Resolve the requested teacher from config -- a
-        # caller-supplied bad teacher ID is a distinct, narrower
-        # "not found" than an unknown school/year.
-        teacher = next((t for t in problem.teachers if t.id == teacher_id), None)
-        if teacher is None:
-            raise TeacherNotFoundError(school_natural_id, academic_year_natural_id, teacher_id)
-
-        # (3) Load the active schedule. None means "no Schedule has
-        # been generated yet" -- an ordinary, expected outcome, not an
-        # error.
+        # Load the active schedule. None means "no Schedule has been
+        # generated yet" -- an ordinary, expected outcome, not an error.
         active = self._schedule_repository.get_active_schedule(
             school_natural_id, academic_year_natural_id,
         )
         if active is None:
             return None
 
-        # (4) Build the view model purely in memory -- no further DB access.
-        days = tuple(
-            DayHeader(id=d.id, name=d.name) for d in sorted(problem.days, key=lambda d: d.index)
-        )
-        periods = sorted(
-            (p for p in problem.periods if p.is_instructional), key=lambda p: p.index,
+        return _build_view(
+            problem, teacher, active.entries, active.version_number, active.solver_status,
+            active.total_soft_penalty, active.created_at, is_active=True,
         )
 
-        activities_by_id = {a.id: a.name for a in problem.activities}
-        groups_by_id = {g.id: g for g in problem.participant_groups}
-        class_sections_by_id = {c.id: c.name for c in problem.class_sections}
+    def project_version(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        teacher_id: str,
+        version_number: int,
+    ) -> TeacherTimetableView | None:
+        """Historical sibling of `project`: projects one SPECIFIC,
+        possibly-inactive `ScheduleVersion` (schedule version history +
+        restore slice) instead of always the current active one -- the
+        exact same projection rules, never duplicated. Returns `None`
+        only if no `Schedule` exists at all yet for this school/year
+        (mirrors `project`'s own convention); raises `school_timetable.
+        application.errors.ScheduleVersionNotFoundError` if a `Schedule`
+        exists but this `version_number` does not."""
+        problem = self._problem_repository.load_by_school_and_year(
+            school_natural_id, academic_year_natural_id,
+        )
+        teacher = _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
 
-        cells: dict[tuple[str, str], list[TeacherTimetableEntry]] = {}
-        for entry in active.entries:
-            if entry.teacher_id != teacher_id:
-                continue
-            key = (entry.day_id, entry.period_id)
-            cells.setdefault(key, []).append(
-                _project_entry(entry, activities_by_id, groups_by_id, class_sections_by_id)
-            )
+        snapshot = self._schedule_repository.get_version(
+            school_natural_id, academic_year_natural_id, version_number,
+        )
+        if snapshot is None:
+            return None
 
-        rows = tuple(
-            TeacherTimetableRow(
-                period_id=period.id,
-                period_name=period.name,
-                cells=tuple(
-                    TeacherTimetableCell(
-                        day_id=day.id,
-                        entries=tuple(cells.get((day.id, period.id), ())),
-                    )
-                    for day in days
-                ),
-            )
-            for period in periods
+        return _build_view(
+            problem, teacher, snapshot.entries, snapshot.version_number, snapshot.solver_status,
+            snapshot.total_soft_penalty, snapshot.created_at, is_active=snapshot.is_active,
         )
 
-        return TeacherTimetableView(
-            school_id=problem.school.id,
-            school_name=problem.school.name,
-            academic_year_id=problem.academic_year.id,
-            academic_year_label=problem.academic_year.label,
-            teacher_id=teacher.id,
-            teacher_name=teacher.full_name,
-            version_number=active.version_number,
-            solver_status=active.solver_status,
-            total_soft_penalty=active.total_soft_penalty,
-            created_at=active.created_at,
-            is_active=True,
-            days=days,
-            rows=rows,
+
+def _resolve_teacher(
+    problem: SchedulingProblem,
+    school_natural_id: str,
+    academic_year_natural_id: str,
+    teacher_id: str,
+) -> Teacher:
+    """A caller-supplied bad teacher ID is a distinct, narrower "not
+    found" than an unknown school/year."""
+    teacher = next((t for t in problem.teachers if t.id == teacher_id), None)
+    if teacher is None:
+        raise TeacherNotFoundError(school_natural_id, academic_year_natural_id, teacher_id)
+    return teacher
+
+
+def _build_view(
+    problem: SchedulingProblem,
+    teacher: Teacher,
+    entries: tuple[ScheduleEntry, ...],
+    version_number: int,
+    solver_status: SolverStatus,
+    total_soft_penalty: int,
+    created_at: datetime,
+    *,
+    is_active: bool,
+) -> TeacherTimetableView:
+    """Builds the view model purely in memory -- no further DB access.
+    Shared by `project`/`project_version` so the actual projection rules
+    are never duplicated between the active and historical code paths."""
+    days = tuple(
+        DayHeader(id=d.id, name=d.name) for d in sorted(problem.days, key=lambda d: d.index)
+    )
+    periods = sorted(
+        (p for p in problem.periods if p.is_instructional), key=lambda p: p.index,
+    )
+
+    activities_by_id = {a.id: a.name for a in problem.activities}
+    groups_by_id = {g.id: g for g in problem.participant_groups}
+    class_sections_by_id = {c.id: c.name for c in problem.class_sections}
+
+    cells: dict[tuple[str, str], list[TeacherTimetableEntry]] = {}
+    for entry in entries:
+        if entry.teacher_id != teacher.id:
+            continue
+        key = (entry.day_id, entry.period_id)
+        cells.setdefault(key, []).append(
+            _project_entry(entry, activities_by_id, groups_by_id, class_sections_by_id)
         )
+
+    rows = tuple(
+        TeacherTimetableRow(
+            period_id=period.id,
+            period_name=period.name,
+            cells=tuple(
+                TeacherTimetableCell(
+                    day_id=day.id,
+                    entries=tuple(cells.get((day.id, period.id), ())),
+                )
+                for day in days
+            ),
+        )
+        for period in periods
+    )
+
+    return TeacherTimetableView(
+        school_id=problem.school.id,
+        school_name=problem.school.name,
+        academic_year_id=problem.academic_year.id,
+        academic_year_label=problem.academic_year.label,
+        teacher_id=teacher.id,
+        teacher_name=teacher.full_name,
+        version_number=version_number,
+        solver_status=solver_status,
+        total_soft_penalty=total_soft_penalty,
+        created_at=created_at,
+        is_active=is_active,
+        days=days,
+        rows=rows,
+    )
 
 
 def _project_entry(

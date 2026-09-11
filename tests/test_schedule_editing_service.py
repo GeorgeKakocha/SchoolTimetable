@@ -21,11 +21,14 @@ from school_timetable.application.errors import (
     MoveNotAllowedError,
     NoActiveScheduleError,
     ReoptimizationInfeasibleError,
+    RestoreVerificationFailedError,
+    ScheduleVersionNotFoundError,
     StaleScheduleVersionError,
+    VersionAlreadyActiveError,
 )
 from school_timetable.application.schedule_editing_service import ScheduleEditingService
 from school_timetable.application import schedule_editing_service as svc_mod
-from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.schedule_models import ActiveScheduleVersion, ScheduleVersionSnapshot
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.people import AvailabilityStatus, TeacherAvailability
 from school_timetable.domain.result import SchedulingResult, SolverStatus
@@ -66,9 +69,29 @@ class _FakeScheduleRepository:
         self.write_check_active = active
         self.persist_calls: list[dict] = []
         self._next_version_number = (active.version_number + 1) if active else 1
+        # Every version ever seen, keyed by version_number -- `None`
+        # entirely (no Schedule at all) is represented by an empty dict,
+        # matching `get_version`'s own "None means no Schedule yet"
+        # convention.
+        self._versions: dict[int, ScheduleVersionSnapshot] = {}
+        if active is not None:
+            self._versions[active.version_number] = ScheduleVersionSnapshot(
+                version_number=active.version_number, solver_status=active.solver_status,
+                total_soft_penalty=active.total_soft_penalty, wall_time_seconds=active.wall_time_seconds,
+                random_seed=active.random_seed, created_at=active.created_at,
+                is_active=True, parent_version_number=None,
+                entries=active.entries, locked_occurrences=active.locked_occurrences,
+            )
 
     def get_active_schedule(self, school_natural_id: str, academic_year_natural_id: str):
         return self.active
+
+    def get_version(self, school_natural_id: str, academic_year_natural_id: str, version_number: int):
+        if not self._versions:
+            return None
+        if version_number not in self._versions:
+            raise ScheduleVersionNotFoundError(school_natural_id, academic_year_natural_id, version_number)
+        return self._versions[version_number]
 
     def persist_edited_version(
         self, school_natural_id, academic_year_natural_id, base_version_number, candidate,
@@ -98,6 +121,16 @@ class _FakeScheduleRepository:
             "wall_time_seconds": wall_time_seconds,
             "random_seed": random_seed,
         })
+        self._versions = {
+            num: dataclasses.replace(snap, is_active=False) for num, snap in self._versions.items()
+        }
+        self._versions[new_version.version_number] = ScheduleVersionSnapshot(
+            version_number=new_version.version_number, solver_status=solver_status,
+            total_soft_penalty=total_soft_penalty, wall_time_seconds=wall_time_seconds,
+            random_seed=random_seed, created_at=_CREATED_AT,
+            is_active=True, parent_version_number=current.version_number,
+            entries=candidate.entries, locked_occurrences=candidate.locked_occurrences,
+        )
         self._next_version_number += 1
         self.active = new_version
         self.write_check_active = new_version
@@ -566,3 +599,147 @@ def test_preview_move_does_not_change_actual_move_behavior():
     assert v2.version_number == 2
     assert v2.entries != v1.entries
     assert len(schedule_repo.persist_calls) == 1
+
+
+# == G-S: schedule version history + restore =================================
+
+
+def _restore_setup():
+    """v1 (seeded) -> v2 (a real move) -> v3 (lock german_8a, which also
+    locks its split sibling russian_8a) -- v1 has zero locks, v3 has two,
+    so a v1-restore-while-v3-active proves locks come from the
+    HISTORICAL source, never inherited from the current active version."""
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+    index = ProblemIndex(problem)
+
+    r1, d1, p1, d2, p2 = _find_simple_move(problem, index, Schedule(entries=v1.entries))
+    v2 = service.move(_SCHOOL, _YEAR, 1, r1, d1, p1, d2, p2)
+
+    german_entry = next(e for e in v2.entries if e.requirement_id == "german_8a")
+    v3 = service.lock(_SCHOOL, _YEAR, 2, "german_8a", german_entry.day_id, german_entry.period_id)
+
+    return problem, problem_repo, schedule_repo, service, v1, v2, v3
+
+
+def test_restore_creates_a_new_version_copied_from_the_historical_source():
+    """G: restore v1 while v5(-equivalent, here v3) active creates a new
+    version. H: new version's parent is the previously-active version.
+    I: new version's entries exactly equal v1's. J: new version's locks
+    exactly equal v1's (here: v1 had none, proving locks are NOT
+    inherited from the active version's own two locks). K: source
+    metadata (solver_status/total_soft_penalty) preserved truthfully.
+    M: the new version becomes active."""
+    problem, problem_repo, schedule_repo, service, v1, v2, v3 = _restore_setup()
+    assert v1.locked_occurrences == frozenset()
+    assert {k.requirement_id for k in v3.locked_occurrences} == {"german_8a", "russian_8a"}
+
+    v4 = service.restore(_SCHOOL, _YEAR, 3, 1)
+
+    assert v4.version_number == 4  # G
+    assert schedule_repo.persist_calls[-1]["base_version_number"] == 3  # H (parent = previously active)
+    assert v4.entries == v1.entries  # I
+    assert v4.locked_occurrences == frozenset()  # J: v1's own locks (none), not v3's two
+    assert v4.solver_status == v1.solver_status  # K
+    assert v4.total_soft_penalty == v1.total_soft_penalty  # K
+    assert schedule_repo.active is v4  # M
+
+
+def test_restore_leaves_every_earlier_version_unchanged():
+    """L: v1-v3 remain unchanged after a restore creates v4."""
+    problem, problem_repo, schedule_repo, service, v1, v2, v3 = _restore_setup()
+
+    service.restore(_SCHOOL, _YEAR, 3, 1)
+
+    v1_reloaded = schedule_repo.get_version(_SCHOOL, _YEAR, 1)
+    assert v1_reloaded.entries == v1.entries
+    assert v1_reloaded.locked_occurrences == v1.locked_occurrences
+    v2_reloaded = schedule_repo.get_version(_SCHOOL, _YEAR, 2)
+    assert v2_reloaded.entries == v2.entries
+    v3_reloaded = schedule_repo.get_version(_SCHOOL, _YEAR, 3)
+    assert v3_reloaded.entries == v3.entries
+    assert v3_reloaded.locked_occurrences == v3.locked_occurrences
+
+
+def test_restore_with_stale_base_version_raises_and_persists_nothing():
+    """N: stale base -> 409 (StaleScheduleVersionError), zero writes."""
+    problem, problem_repo, schedule_repo, service, v1, v2, v3 = _restore_setup()
+    calls_before = len(schedule_repo.persist_calls)
+
+    with pytest.raises(StaleScheduleVersionError) as exc_info:
+        service.restore(_SCHOOL, _YEAR, 1, 1)  # active is actually 3
+
+    assert exc_info.value.expected_base_version_number == 1
+    assert exc_info.value.actual_active_version_number == 3
+    assert len(schedule_repo.persist_calls) == calls_before
+
+
+def test_restore_active_version_raises_version_already_active_and_persists_nothing():
+    """O: restoring the active version -> VersionAlreadyActiveError
+    (409), zero writes."""
+    problem, problem_repo, schedule_repo, service, v1, v2, v3 = _restore_setup()
+    calls_before = len(schedule_repo.persist_calls)
+
+    with pytest.raises(VersionAlreadyActiveError) as exc_info:
+        service.restore(_SCHOOL, _YEAR, 3, 3)
+
+    assert exc_info.value.version_number == 3
+    assert len(schedule_repo.persist_calls) == calls_before
+    assert schedule_repo.active is v3
+
+
+def test_restore_unknown_version_raises_schedule_version_not_found():
+    """P: unknown version -> ScheduleVersionNotFoundError (404)."""
+    problem, problem_repo, schedule_repo, service, v1, v2, v3 = _restore_setup()
+    calls_before = len(schedule_repo.persist_calls)
+
+    with pytest.raises(ScheduleVersionNotFoundError) as exc_info:
+        service.restore(_SCHOOL, _YEAR, 3, 999)
+
+    assert exc_info.value.version_number == 999
+    assert len(schedule_repo.persist_calls) == calls_before
+    assert schedule_repo.active is v3
+
+
+def test_restore_with_no_active_schedule_raises_no_active_schedule_error():
+    problem_repo = _FakeProblemRepository(build_valid_fixture())
+    schedule_repo = _FakeScheduleRepository(active=None)
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+
+    with pytest.raises(NoActiveScheduleError):
+        service.restore(_SCHOOL, _YEAR, 1, 1)
+
+
+def test_restore_failing_verification_raises_and_persists_nothing(monkeypatch):
+    """Q: verifier failure -> RestoreVerificationFailedError, zero
+    writes -- defense-in-depth, forced here via monkeypatch since the
+    real verifier cannot naturally fail on a genuinely valid historical
+    schedule."""
+    problem, problem_repo, schedule_repo, service, v1, v2, v3 = _restore_setup()
+    calls_before = len(schedule_repo.persist_calls)
+
+    fake_report = type("Report", (), {"passed": False, "violations": ("forced failure",)})()
+    monkeypatch.setattr(svc_mod, "verify", lambda problem, entries: fake_report)
+
+    with pytest.raises(RestoreVerificationFailedError) as exc_info:
+        service.restore(_SCHOOL, _YEAR, 3, 1)
+
+    assert exc_info.value.version_number == 1
+    assert len(schedule_repo.persist_calls) == calls_before
+    assert schedule_repo.active is v3
+
+
+def test_restore_does_not_disturb_a_subsequent_normal_move():
+    """S: subsequent normal Move/Lock/Reoptimize still works from the
+    restored active version."""
+    problem, problem_repo, schedule_repo, service, v1, v2, v3 = _restore_setup()
+    v4 = service.restore(_SCHOOL, _YEAR, 3, 1)
+
+    index = ProblemIndex(problem)
+    r1, d1, p1, d2, p2 = _find_simple_move(problem, index, Schedule(entries=v4.entries))
+    v5 = service.move(_SCHOOL, _YEAR, 4, r1, d1, p1, d2, p2)
+
+    assert v5.version_number == 5
+    assert v5.entries != v4.entries

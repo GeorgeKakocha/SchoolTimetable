@@ -20,13 +20,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from school_timetable.api.dependencies import (
+    get_class_timetable_service,
     get_generate_schedule_service,
     get_schedule_editing_service,
     get_schedule_version_repository,
+    get_teacher_timetable_service,
 )
 from school_timetable.api.main import app
+from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.schedule_editing_service import ScheduleEditingService
+from school_timetable.application.teacher_timetable_service import TeacherTimetableService
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.result import EntrySource, ScheduleEntry
 from school_timetable.domain.schedule import Schedule
@@ -71,9 +75,23 @@ def _client(session_factory) -> TestClient:
             SqlAlchemyScheduleVersionRepository(session_factory),
         )
 
+    def override_class_timetable_service():
+        return ClassTimetableService(
+            SessionFactorySchedulingProblemRepository(session_factory),
+            SqlAlchemyScheduleVersionRepository(session_factory),
+        )
+
+    def override_teacher_timetable_service():
+        return TeacherTimetableService(
+            SessionFactorySchedulingProblemRepository(session_factory),
+            SqlAlchemyScheduleVersionRepository(session_factory),
+        )
+
     app.dependency_overrides[get_schedule_version_repository] = override_schedule_repo
     app.dependency_overrides[get_generate_schedule_service] = override_generate_service
     app.dependency_overrides[get_schedule_editing_service] = override_editing_service
+    app.dependency_overrides[get_class_timetable_service] = override_class_timetable_service
+    app.dependency_overrides[get_teacher_timetable_service] = override_teacher_timetable_service
     return TestClient(app)
 
 
@@ -86,6 +104,8 @@ def client(db):
         app.dependency_overrides.pop(get_schedule_version_repository, None)
         app.dependency_overrides.pop(get_generate_schedule_service, None)
         app.dependency_overrides.pop(get_schedule_editing_service, None)
+        app.dependency_overrides.pop(get_class_timetable_service, None)
+        app.dependency_overrides.pop(get_teacher_timetable_service, None)
 
 
 def _seed_and_generate(client, session):
@@ -156,6 +176,20 @@ def _entries_from_body(body) -> tuple:
             requirement_id=e["requirement_id"], reserved_block_id=e["reserved_block_id"],
         )
         for e in body["entries"]
+    )
+
+
+def _flatten_class_timetable(body) -> frozenset[tuple[str, str, str | None, str | None]]:
+    """`ClassTimetableResponse`'s grid (`rows` -> `cells` -> `entries`)
+    flattened into one comparable, order-independent set of
+    `(day_id, period_id, requirement_id, reserved_block_id)` -- used to
+    compare two historical/active class projections for genuine equality
+    without depending on the grid's row/column ordering."""
+    return frozenset(
+        (cell["day_id"], row["period_id"], entry["requirement_id"], entry["reserved_block_id"])
+        for row in body["rows"]
+        for cell in row["cells"]
+        for entry in cell["entries"]
     )
 
 
@@ -545,3 +579,297 @@ def test_reoptimize_unknown_school_year_returns_404(client):
     )
     assert response.status_code == 404
     assert response.json() == {"detail": "Scheduling configuration not found"}
+
+
+# == schedule version history + restore ======================================
+
+
+def _seed_generate_move_lock(client, session):
+    """v1 (generated) -> v2 (a real move) -> v3 (lock german_8a, which
+    also locks split sibling russian_8a)."""
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    r1, d1, p1, d2, p2 = _find_move(problem, entries)
+
+    move_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move",
+        json={
+            "base_version_number": 1, "requirement_id": r1,
+            "source_day_id": d1, "source_period_id": p1,
+            "target_day_id": d2, "target_period_id": p2,
+        },
+    )
+    assert move_response.status_code == 200
+    v2_entries = _entries_from_body(move_response.json())
+    german_entry = next(e for e in v2_entries if e.requirement_id == "german_8a")
+
+    lock_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/lock",
+        json={
+            "base_version_number": 2, "requirement_id": "german_8a",
+            "day_id": german_entry.day_id, "period_id": german_entry.period_id,
+        },
+    )
+    assert lock_response.status_code == 200
+    return problem
+
+
+def test_history_endpoint_lists_newest_first_with_exactly_one_active(client, db):
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    response = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions")
+
+    assert response.status_code == 200
+    body = response.json()
+    versions = body["versions"]
+    assert [v["version_number"] for v in versions] == [3, 2, 1]
+    assert sum(1 for v in versions if v["is_active"]) == 1
+    assert next(v for v in versions if v["is_active"])["version_number"] == 3
+    by_number = {v["version_number"]: v for v in versions}
+    assert by_number[1]["parent_version_number"] is None
+    assert by_number[2]["parent_version_number"] == 1
+    assert by_number[3]["parent_version_number"] == 2
+
+
+def test_history_endpoint_unknown_school_year_returns_404(client):
+    response = client.get("/schools/no-such-school/years/no-such-year/schedule/versions")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Scheduling configuration not found"}
+
+
+def test_history_endpoint_no_schedule_returns_404_active_schedule_not_found(client, db):
+    session, _session_factory = db
+    problem = build_valid_fixture()
+    write_scheduling_problem(session, problem)
+    session.flush()
+
+    response = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Active schedule not found"}
+
+
+def test_historical_class_projection_reflects_that_version_not_current_active(client, db):
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    v1_view = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/classes/8a"
+    )
+    assert v1_view.status_code == 200
+    v1_body = v1_view.json()
+    assert v1_body["version_number"] == 1
+    assert v1_body["is_active"] is False
+
+    v3_view = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/3/classes/8a"
+    )
+    assert v3_view.status_code == 200
+    v3_body = v3_view.json()
+    assert v3_body["version_number"] == 3
+    assert v3_body["is_active"] is True
+    active_class_view = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/classes/8a"
+    ).json()
+    assert _flatten_class_timetable(v3_body) == _flatten_class_timetable(active_class_view)
+
+    # v1 and v3 genuinely differ -- proves this is not silently always
+    # projecting the active version regardless of the URL.
+    assert _flatten_class_timetable(v1_body) != _flatten_class_timetable(v3_body)
+
+
+def test_historical_class_projection_unknown_version_returns_404_with_stable_code(client, db):
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    response = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/999/classes/8a"
+    )
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "SCHEDULE_VERSION_NOT_FOUND"
+    assert body["version_number"] == 999
+
+
+def test_historical_class_projection_unknown_class_returns_404(client, db):
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    response = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/classes/no-such-class"
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Class section not found"}
+
+
+def test_historical_teacher_projection_reflects_that_version_not_current_active(client, db):
+    """F: historical teacher projection matches that version."""
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    v1_view = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/teachers/t_math"
+    )
+    assert v1_view.status_code == 200
+    assert v1_view.json()["is_active"] is False
+
+    v3_view = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/3/teachers/t_math"
+    )
+    assert v3_view.status_code == 200
+    assert v3_view.json()["is_active"] is True
+
+
+def test_restore_creates_new_version_copied_from_source_and_promotes_it(client, db):
+    """G/H/I/J/K/M: restore v1 while v3 active creates v4, parented from
+    v3, with v1's own entries/locks (v1 has none; v3 has two -- proving
+    locks come from the historical source, never the active version),
+    and its own truthful solver_status/total_soft_penalty; v4 becomes
+    active."""
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+    v1_view = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/classes/8a"
+    ).json()
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/restore",
+        json={"base_version_number": 3},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version_number"] == 4
+    assert body["is_active"] is True
+    assert body["locked_occurrences"] == []  # v1's own locks (none)
+
+    active_after = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    assert active_after["version_number"] == 4
+    v4_class_view = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/4/classes/8a"
+    ).json()
+    assert _flatten_class_timetable(v4_class_view) == _flatten_class_timetable(v1_view)  # I: entries exactly equal v1's
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 4
+
+
+def test_restore_leaves_earlier_versions_unchanged(client, db):
+    """L: v1-v3 remain unchanged after a restore creates v4."""
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+    v1_before = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/classes/8a"
+    ).json()
+    v3_before = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/3/classes/8a"
+    ).json()
+
+    restore_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/restore",
+        json={"base_version_number": 3},
+    )
+    assert restore_response.status_code == 200
+
+    v1_after = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/classes/8a"
+    ).json()
+    v3_after = client.get(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/3/classes/8a"
+    ).json()
+    assert _flatten_class_timetable(v1_after) == _flatten_class_timetable(v1_before)
+    assert _flatten_class_timetable(v3_after) == _flatten_class_timetable(v3_before)
+
+
+def test_restore_with_stale_base_version_returns_409(client, db):
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/restore",
+        json={"base_version_number": 999},
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["code"] == "STALE_SCHEDULE_VERSION"
+    assert body["expected_base_version_number"] == 999
+    assert body["actual_active_version_number"] == 3
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 3
+
+
+def test_restore_active_version_returns_409_version_already_active(client, db):
+    """O: restoring the currently active version is rejected cleanly,
+    zero writes."""
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/3/restore",
+        json={"base_version_number": 3},
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["code"] == "VERSION_ALREADY_ACTIVE"
+    assert body["version_number"] == 3
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 3
+
+
+def test_restore_unknown_version_returns_404(client, db):
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/999/restore",
+        json={"base_version_number": 3},
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "SCHEDULE_VERSION_NOT_FOUND"
+    assert body["version_number"] == 999
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 3
+
+
+def test_restore_unknown_school_year_returns_404(client):
+    response = client.post(
+        "/schools/no-such-school/years/no-such-year/schedule/versions/1/restore",
+        json={"base_version_number": 1},
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Scheduling configuration not found"}
+
+
+def test_restore_then_a_subsequent_normal_move_still_works(client, db):
+    """S: subsequent normal Move/Lock/Reoptimize still works from the
+    restored active version."""
+    session, _session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    restore_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/restore",
+        json={"base_version_number": 3},
+    )
+    assert restore_response.status_code == 200
+    v4 = restore_response.json()
+    entries = _entries_from_body(v4)
+    r1, d1, p1, d2, p2 = _find_move(problem, entries)
+
+    move_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move",
+        json={
+            "base_version_number": 4, "requirement_id": r1,
+            "source_day_id": d1, "source_period_id": p1,
+            "target_day_id": d2, "target_period_id": p2,
+        },
+    )
+    assert move_response.status_code == 200
+    assert move_response.json()["version_number"] == 5

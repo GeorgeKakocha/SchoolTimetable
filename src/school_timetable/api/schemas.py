@@ -382,6 +382,73 @@ class ReoptimizationInvalidInputErrorResponse(BaseModel):
     errors: tuple[ValidationDiagnosticResponse, ...]
 
 
+# -- Schedule version history + restore API. `GET .../schedule/versions`
+# lists metadata only (never entries/locks); the historical class/
+# teacher projections reuse `ClassTimetableResponse`/
+# `TeacherTimetableResponse` unchanged (their `is_active` field already
+# supports a non-active historical version). `POST .../schedule/
+# versions/{version_number}/restore` reuses `ActiveScheduleResponse`
+# unchanged too -- a restore's success body is indistinguishable from
+# any other mutating editing command's. -------------------------------
+
+
+class ScheduleVersionSummaryResponse(BaseModel):
+    """One row of the version history list -- metadata only."""
+
+    version_number: int
+    created_at: datetime
+    solver_status: Literal["OPTIMAL", "FEASIBLE"]
+    total_soft_penalty: int
+    is_active: bool
+    parent_version_number: int | None
+
+
+class ScheduleVersionHistoryResponse(BaseModel):
+    """`GET .../schedule/versions`'s success body -- newest
+    `version_number` first, exactly one item with `is_active: true`."""
+
+    versions: tuple[ScheduleVersionSummaryResponse, ...]
+
+
+class RestoreVersionRequest(BaseModel):
+    """`POST .../schedule/versions/{version_number}/restore`'s request
+    body -- the URL path's `version_number` is the historical SOURCE to
+    restore; `base_version_number` is the caller's believed-active
+    version, the same stale-version-protection field every other
+    mutating editing command already requires."""
+
+    base_version_number: int
+
+
+class ScheduleVersionNotFoundErrorResponse(BaseModel):
+    """404 body for `ScheduleVersionNotFoundError` -- a requested
+    historical `version_number` does not exist for this school/year's
+    `Schedule`. Distinct from the code-less `{"detail": "Active schedule
+    not found"}` body used when no `Schedule` exists at all."""
+
+    code: Literal["SCHEDULE_VERSION_NOT_FOUND"]
+    detail: str
+    version_number: int
+
+
+class VersionAlreadyActiveErrorResponse(BaseModel):
+    """409 body for `VersionAlreadyActiveError` -- a restore request
+    named the version that is already active."""
+
+    code: Literal["VERSION_ALREADY_ACTIVE"]
+    detail: str
+    version_number: int
+
+
+class RestoreVerificationFailedErrorResponse(BaseModel):
+    """409 body for `RestoreVerificationFailedError` -- defense-in-depth
+    only; expected never to occur in ordinary operation."""
+
+    code: Literal["RESTORE_VERIFICATION_FAILED"]
+    detail: str
+    version_number: int
+
+
 # -- Class-timetable projection API (Phase 3B.1, `docs/DECISIONS.md`
 # #32). ------------------------------------------------------------
 

@@ -16,8 +16,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from school_timetable.application.errors import SchedulingProblemNotFoundError, TeacherNotFoundError
-from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.errors import (
+    ScheduleVersionNotFoundError,
+    SchedulingProblemNotFoundError,
+    TeacherNotFoundError,
+)
+from school_timetable.application.schedule_models import ActiveScheduleVersion, ScheduleVersionSnapshot
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
 from school_timetable.domain.activities import Activity
 from school_timetable.domain.calendar import AcademicYear, Day, Period
@@ -69,6 +73,17 @@ def _entry(**overrides) -> ScheduleEntry:
     return ScheduleEntry(**defaults)
 
 
+def _snapshot(entries: tuple[ScheduleEntry, ...], **overrides) -> ScheduleVersionSnapshot:
+    defaults = dict(
+        version_number=1, solver_status=SolverStatus.OPTIMAL, total_soft_penalty=0,
+        wall_time_seconds=1.0, random_seed=None, created_at=_CREATED_AT,
+        is_active=False, parent_version_number=None,
+        entries=entries, locked_occurrences=frozenset(),
+    )
+    defaults.update(overrides)
+    return ScheduleVersionSnapshot(**defaults)
+
+
 class _FakeProblemRepository:
     def __init__(self, problem: SchedulingProblem | None = None, error: Exception | None = None):
         self._problem = problem
@@ -81,11 +96,23 @@ class _FakeProblemRepository:
 
 
 class _FakeScheduleRepository:
-    def __init__(self, active: ActiveScheduleVersion | None):
+    def __init__(
+        self,
+        active: ActiveScheduleVersion | None,
+        versions: dict[int, ScheduleVersionSnapshot] | None = None,
+    ):
         self._active = active
+        self._versions = versions or {}
 
     def get_active_schedule(self, school_natural_id: str, academic_year_natural_id: str):
         return self._active
+
+    def get_version(self, school_natural_id: str, academic_year_natural_id: str, version_number: int):
+        if self._active is None and not self._versions:
+            return None
+        if version_number not in self._versions:
+            raise ScheduleVersionNotFoundError(school_natural_id, academic_year_natural_id, version_number)
+        return self._versions[version_number]
 
     def persist_initial_version(self, *args, **kwargs):
         raise NotImplementedError("not used by TeacherTimetableService")
@@ -317,3 +344,74 @@ def test_strict_lookup_raises_on_missing_referenced_class_section():
 
     with pytest.raises(KeyError):
         service.project("school-1", "year-1", "t1")
+
+
+# == project_version (schedule version history + restore slice) ============
+
+
+def test_project_version_projects_the_requested_version_not_current_active():
+    """F: historical teacher projection matches that version, not
+    current active."""
+    problem = _problem()
+    historical_entry = _entry(requirement_id="req-historical", day_id="mon", period_id="p1")
+    active_entry = _entry(requirement_id="req-active", day_id="tue", period_id="p1")
+    active = _active((active_entry,), version_number=3)
+    snapshot = _snapshot((historical_entry,), version_number=1, is_active=False, parent_version_number=None)
+    service = TeacherTimetableService(
+        _FakeProblemRepository(problem), _FakeScheduleRepository(active, {1: snapshot}),
+    )
+
+    view = service.project_version("school-1", "year-1", "t1", 1)
+
+    assert view is not None
+    assert view.version_number == 1
+    assert view.is_active is False
+    all_requirement_ids = {e.requirement_id for row in view.rows for cell in row.cells for e in cell.entries}
+    assert all_requirement_ids == {"req-historical"}
+
+
+def test_project_version_marks_the_currently_active_version_as_active():
+    problem = _problem()
+    entry = _entry()
+    active = _active((entry,), version_number=1)
+    snapshot = _snapshot((entry,), version_number=1, is_active=True, parent_version_number=None)
+    service = TeacherTimetableService(
+        _FakeProblemRepository(problem), _FakeScheduleRepository(active, {1: snapshot}),
+    )
+
+    view = service.project_version("school-1", "year-1", "t1", 1)
+
+    assert view is not None
+    assert view.is_active is True
+
+
+def test_project_version_unknown_version_raises_schedule_version_not_found():
+    problem = _problem()
+    active = _active((_entry(),))
+    service = TeacherTimetableService(
+        _FakeProblemRepository(problem), _FakeScheduleRepository(active, {1: _snapshot((_entry(),))}),
+    )
+
+    with pytest.raises(ScheduleVersionNotFoundError) as exc_info:
+        service.project_version("school-1", "year-1", "t1", 999)
+
+    assert exc_info.value.version_number == 999
+
+
+def test_project_version_unknown_teacher_raises_teacher_not_found():
+    problem = _problem()
+    service = TeacherTimetableService(
+        _FakeProblemRepository(problem), _FakeScheduleRepository(active=None),
+    )
+
+    with pytest.raises(TeacherNotFoundError):
+        service.project_version("school-1", "year-1", "no-such-teacher", 1)
+
+
+def test_project_version_none_when_no_schedule_exists_at_all():
+    problem = _problem()
+    service = TeacherTimetableService(
+        _FakeProblemRepository(problem), _FakeScheduleRepository(active=None),
+    )
+
+    assert service.project_version("school-1", "year-1", "t1", 1) is None

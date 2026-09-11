@@ -64,6 +64,8 @@ from school_timetable.api.schemas import (
     ResourceResponse,
     ResourcesProjectionResponse,
     ScheduleEntryResponse,
+    ScheduleVersionHistoryResponse,
+    ScheduleVersionSummaryResponse,
     SchedulingConfigResponse,
     SchoolResponse,
     SpecialActivitiesProjectionResponse,
@@ -103,7 +105,7 @@ from school_timetable.application.calendar_projection_models import CalendarProj
 from school_timetable.application.class_section_projection_models import ClassSectionsProjectionView
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
 from school_timetable.application.errors import InvalidPeriodError
-from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.schedule_models import ActiveScheduleVersion, ScheduleVersionSummary
 from school_timetable.application.reserved_activity_projection_models import ReservedActivitiesProjectionView
 from school_timetable.application.resource_projection_models import ResourcesProjectionView
 from school_timetable.application.special_activity_projection_models import SpecialActivitiesProjectionView
@@ -305,6 +307,31 @@ def active_schedule_response_from_active_version(version: ActiveScheduleVersion)
                 key=lambda k: (k.requirement_id, k.day_id, k.anchor_period_id),
             )
         ),
+    )
+
+
+def schedule_version_summary_response_from_summary(
+    summary: ScheduleVersionSummary,
+) -> ScheduleVersionSummaryResponse:
+    return ScheduleVersionSummaryResponse(
+        version_number=summary.version_number,
+        created_at=summary.created_at,
+        solver_status=summary.solver_status.value,
+        total_soft_penalty=summary.total_soft_penalty,
+        is_active=summary.is_active,
+        parent_version_number=summary.parent_version_number,
+    )
+
+
+def schedule_version_history_response_from_summaries(
+    summaries: tuple[ScheduleVersionSummary, ...],
+) -> ScheduleVersionHistoryResponse:
+    """`GET .../schedule/versions`'s success body. `summaries` is already
+    newest-first (`ScheduleVersionRepository.list_versions`'s own
+    responsibility, already proven) -- this function preserves that
+    order verbatim, never re-sorting."""
+    return ScheduleVersionHistoryResponse(
+        versions=tuple(schedule_version_summary_response_from_summary(s) for s in summaries),
     )
 
 

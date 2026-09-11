@@ -251,6 +251,26 @@ export interface MovePreviewResponse {
   targets: MovePreviewTarget[];
 }
 
+// -- GET .../schedule/versions, .../schedule/versions/{version_number}/
+// {classes,teachers}/{id}, POST .../schedule/versions/{version_number}/
+// restore -- schedule version history + restore. The historical class/
+// teacher projections reuse `ClassTimetableResponse`/
+// `TeacherTimetableResponse` unchanged (`is_active` may now be `false`);
+// a successful restore reuses `ActiveScheduleResponse` unchanged too.
+
+export interface ScheduleVersionSummary {
+  version_number: number;
+  created_at: string;
+  solver_status: SolverStatus;
+  total_soft_penalty: number;
+  is_active: boolean;
+  parent_version_number: number | null;
+}
+
+export interface ScheduleVersionHistoryResponse {
+  versions: ScheduleVersionSummary[];
+}
+
 // -- GET /schools/{school_id}/years/{year_id}/teaching-assignments ------
 //
 // Mirrors Phase 3C.2b's `TeachingAssignmentsProjectionResponse` exactly

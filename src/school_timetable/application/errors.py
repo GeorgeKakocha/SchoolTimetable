@@ -1175,3 +1175,70 @@ class ReoptimizationInvalidInputError(Exception):
             f"academic_year={academic_year_natural_id!r}: "
             f"{[e.code for e in validation_errors]!r}"
         )
+
+
+class ScheduleVersionNotFoundError(Exception):
+    """A specific `version_number` was requested (historical class/
+    teacher timetable projection, or a restore command's source) but no
+    such `ScheduleVersion` exists for this school/year's `Schedule`.
+    Distinct from `NoActiveScheduleError`/`ScheduleVersionRepository.
+    get_version`/`list_versions` returning `None` (no `Schedule` at all
+    exists yet) -- this is the narrower "the container exists, this
+    specific item inside it does not" outcome, matching
+    `ClassSectionNotFoundError`/`TeacherNotFoundError`'s own style.
+    Never silently falls back to the active version. Carries only
+    natural IDs, never a persistence surrogate."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, version_number: int,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.version_number = version_number
+        super().__init__(
+            f"no ScheduleVersion {version_number!r} exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class VersionAlreadyActiveError(Exception):
+    """`ScheduleEditingService.restore` was asked to restore the
+    already-active version -- a pointless operation that would create an
+    identical duplicate `ScheduleVersion` for no reason. Nothing is
+    persisted; the active version is left exactly as it was. Carries
+    only natural IDs."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, version_number: int,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.version_number = version_number
+        super().__init__(
+            f"ScheduleVersion {version_number!r} is already active for school="
+            f"{school_natural_id!r}, academic_year={academic_year_natural_id!r}; nothing to restore"
+        )
+
+
+class RestoreVerificationFailedError(Exception):
+    """Defense-in-depth (`ScheduleEditingService.restore`): the
+    historical source version's own entries failed the independent
+    verifier when checked against the CURRENT `SchedulingProblem`.
+    Expected never to happen in ordinary operation -- the configuration
+    a restored version's entries depend on is not expected to change --
+    but restoring is refused rather than silently persisting a
+    known-invalid schedule as the new active version. Nothing is
+    persisted; the active version is left exactly as it was. Carries
+    only natural IDs."""
+
+    def __init__(
+        self, school_natural_id: str, academic_year_natural_id: str, version_number: int,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.version_number = version_number
+        super().__init__(
+            f"historical ScheduleVersion {version_number!r} failed independent verification "
+            f"against the current configuration for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}; restore refused"
+        )

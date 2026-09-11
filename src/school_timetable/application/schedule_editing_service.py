@@ -53,7 +53,9 @@ from school_timetable.application.errors import (
     NoActiveScheduleError,
     ReoptimizationInfeasibleError,
     ReoptimizationInvalidInputError,
+    RestoreVerificationFailedError,
     StaleScheduleVersionError,
+    VersionAlreadyActiveError,
 )
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
 from school_timetable.application.schedule_editing_models import MovePreviewResult, MovePreviewTarget
@@ -312,6 +314,73 @@ class ScheduleEditingService:
             school_natural_id, academic_year_natural_id, base_version_number, candidate,
             result.status, result.total_soft_penalty,
             wall_time_seconds=result.metadata["wall_time_seconds"], random_seed=options.random_seed,
+        )
+
+    def restore(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        base_version_number: int,
+        source_version_number: int,
+    ) -> ActiveScheduleVersion:
+        """Schedule version history + restore slice: restores a
+        historical `ScheduleVersion` by creating a NEW `ScheduleVersion`
+        copied from it -- never reactivating or mutating the historical
+        version itself, so history stays append-only. Mirrors move/
+        lock/unlock/reoptimize's own shape: a cheap early stale-version
+        check (`_load_active_for_edit`), a candidate built in memory
+        (here: an exact copy of the historical source's entries/locks,
+        not a domain transform of the active one), an independent
+        verifier pass, then persistence through the exact same
+        `persist_edited_version` port every other mutating command
+        already uses -- no second, restore-specific persistence
+        algorithm.
+
+        `source_version_number` (the URL path's historical version to
+        restore) is checked against `base_version_number` (the caller's
+        believed-active version) BEFORE loading the source at all:
+        restoring the version that is already active would create a
+        pointless duplicate and raises `VersionAlreadyActiveError`
+        instead. The verifier pass is defense-in-depth: the current
+        configuration is not expected to have changed since the source
+        version was created, so this should always pass; if it somehow
+        does not, `RestoreVerificationFailedError` is raised and nothing
+        is persisted, rather than promoting a known-invalid schedule."""
+        problem, _schedule, _index, _active = self._load_active_for_edit(
+            school_natural_id, academic_year_natural_id, base_version_number,
+        )
+
+        if source_version_number == base_version_number:
+            raise VersionAlreadyActiveError(
+                school_natural_id, academic_year_natural_id, source_version_number,
+            )
+
+        source = self._schedule_repository.get_version(
+            school_natural_id, academic_year_natural_id, source_version_number,
+        )
+        if source is None:
+            # Unreachable in practice: `_load_active_for_edit` above
+            # already proved a Schedule exists for this school/year, and
+            # ScheduleVersion rows are never deleted -- guarded rather
+            # than silently misreporting "no active schedule" for a
+            # school/year that plainly has one.
+            raise RuntimeError(
+                f"get_version returned None for school={school_natural_id!r}, "
+                f"academic_year={academic_year_natural_id!r} despite an active schedule "
+                "already confirmed to exist"
+            )
+
+        candidate = Schedule(entries=source.entries, locked_occurrences=source.locked_occurrences)
+
+        report = verify(problem, candidate.entries)
+        if not report.passed:
+            raise RestoreVerificationFailedError(
+                school_natural_id, academic_year_natural_id, source_version_number,
+            )
+
+        return self._schedule_repository.persist_edited_version(
+            school_natural_id, academic_year_natural_id, base_version_number, candidate,
+            source.solver_status, source.total_soft_penalty, wall_time_seconds=0.0, random_seed=None,
         )
 
     def _load_active_for_edit(

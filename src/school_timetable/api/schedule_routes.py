@@ -15,6 +15,16 @@ outcome for a given source occurrence, without persisting anything) --
 each a thin wrapper over `ScheduleEditingService`, documented in their
 own section near the bottom of this file.
 
+Also the schedule version history + restore slice: `GET .../schedule/
+versions` (history list), `GET .../schedule/versions/{version_number}/
+classes/{class_section_id}` and `.../teachers/{teacher_id}` (read-only
+historical projections, reusing the exact same projection logic and
+response shapes as the plain active-schedule routes above), and
+`POST .../schedule/versions/{version_number}/restore` (creates a NEW
+`ScheduleVersion` copied from a historical one and promotes it active --
+never reactivates or mutates the historical version itself) -- documented
+in their own section further below.
+
 Every route depends only on `application/` Protocols/services
 (`ScheduleVersionRepository`, `GenerateScheduleService`,
 `ClassTimetableService`, `TeacherTimetableService`,
@@ -108,14 +118,20 @@ from school_timetable.api.schemas import (
     ReoptimizationInfeasibleErrorResponse,
     ReoptimizationInvalidInputErrorResponse,
     ReoptimizeRequest,
+    RestoreVerificationFailedErrorResponse,
+    RestoreVersionRequest,
+    ScheduleVersionHistoryResponse,
+    ScheduleVersionNotFoundErrorResponse,
     StaleScheduleVersionErrorResponse,
     TeacherTimetableResponse,
     UnlockRequest,
+    VersionAlreadyActiveErrorResponse,
 )
 from school_timetable.api.serializer import (
     active_schedule_response_from_active_version,
     class_timetable_response_from_view,
     generate_response_from_active_version,
+    schedule_version_history_response_from_summaries,
     teacher_timetable_response_from_view,
     validation_diagnostic_response_from_error,
 )
@@ -129,11 +145,14 @@ from school_timetable.application.errors import (
     NoActiveScheduleError,
     ReoptimizationInfeasibleError,
     ReoptimizationInvalidInputError,
+    RestoreVerificationFailedError,
     ScheduleAlreadyExistsError,
     ScheduleInfeasibleError,
+    ScheduleVersionNotFoundError,
     SchedulingProblemNotFoundError,
     StaleScheduleVersionError,
     TeacherNotFoundError,
+    VersionAlreadyActiveError,
 )
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository
@@ -262,6 +281,166 @@ def get_teacher_timetable(
     if view is None:
         raise HTTPException(status_code=404, detail="Active schedule not found")
     return teacher_timetable_response_from_view(view)
+
+
+# -- Schedule version history + restore ------------------------------------
+#
+# `GET .../schedule/versions` lists every `ScheduleVersion` newest-first
+# (metadata only). `GET .../schedule/versions/{version_number}/classes/
+# {class_section_id}` and `.../teachers/{teacher_id}` are historical
+# siblings of the plain active-schedule projections above -- they reuse
+# `ClassTimetableResponse`/`TeacherTimetableResponse` unchanged, `is_active`
+# now possibly `false`. `POST .../schedule/versions/{version_number}/
+# restore` reuses `ActiveScheduleResponse` unchanged too.
+#
+# Error mapping, shared by all four routes below:
+# - `SchedulingProblemNotFoundError` -> 404 (same body as every other
+#   route in this file).
+# - `list_versions`/`project_version`/(restore's `_load_active_for_edit`)
+#   finding no `Schedule` at all -> 404, `{"detail": "Active schedule not
+#   found"}` -- the identical code-less body every other route in this
+#   file already uses for the same underlying state.
+# - (historical class projection only) `ClassSectionNotFoundError` -> 404,
+#   `{"detail": "Class section not found"}`.
+# - (historical teacher projection only) `TeacherNotFoundError` -> 404,
+#   `{"detail": "Teacher not found"}`.
+# - (historical class/teacher projection and restore) `ScheduleVersionNotFoundError`
+#   -> 404, `{"code": "SCHEDULE_VERSION_NOT_FOUND", "detail": "...",
+#   "version_number": ...}` -- the requested `version_number` does not
+#   exist for this school/year's `Schedule`; never silently falls back
+#   to the active version.
+# - (restore only) `StaleScheduleVersionError` -> 409, the same
+#   `STALE_SCHEDULE_VERSION` contract every mutating editing command uses.
+# - (restore only) `VersionAlreadyActiveError` -> 409, `{"code":
+#   "VERSION_ALREADY_ACTIVE", "detail": "...", "version_number": ...}` --
+#   the requested restore source is already the active version.
+# - (restore only) `RestoreVerificationFailedError` -> 409, `{"code":
+#   "RESTORE_VERIFICATION_FAILED", "detail": "...", "version_number":
+#   ...}` -- defense-in-depth only, expected never to occur in ordinary
+#   operation.
+# - A successful restore returns the exact same `ActiveScheduleResponse`
+#   shape every other mutating editing command does, for its newly-active
+#   version (a fresh copy of the historical source, never the historical
+#   version itself reactivated).
+
+
+@router.get(
+    "/schools/{school_id}/years/{year_id}/schedule/versions",
+    response_model=ScheduleVersionHistoryResponse,
+)
+def get_schedule_version_history(
+    school_id: str,
+    year_id: str,
+    repository: ScheduleVersionRepository = Depends(get_schedule_version_repository),
+) -> ScheduleVersionHistoryResponse:
+    try:
+        summaries = repository.list_versions(school_id, year_id)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    if summaries is None:
+        raise HTTPException(status_code=404, detail="Active schedule not found")
+    return schedule_version_history_response_from_summaries(summaries)
+
+
+@router.get(
+    "/schools/{school_id}/years/{year_id}/schedule/versions/{version_number}/classes/{class_section_id}",
+    response_model=ClassTimetableResponse,
+)
+def get_class_timetable_for_version(
+    school_id: str,
+    year_id: str,
+    version_number: int,
+    class_section_id: str,
+    service: ClassTimetableService = Depends(get_class_timetable_service),
+) -> ClassTimetableResponse:
+    try:
+        view = service.project_version(school_id, year_id, class_section_id, version_number)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except ClassSectionNotFoundError:
+        raise HTTPException(status_code=404, detail="Class section not found") from None
+    except ScheduleVersionNotFoundError as exc:
+        return JSONResponse(
+            status_code=404,
+            content=ScheduleVersionNotFoundErrorResponse(
+                code="SCHEDULE_VERSION_NOT_FOUND", detail=str(exc), version_number=version_number,
+            ).model_dump(),
+        )
+    if view is None:
+        raise HTTPException(status_code=404, detail="Active schedule not found")
+    return class_timetable_response_from_view(view)
+
+
+@router.get(
+    "/schools/{school_id}/years/{year_id}/schedule/versions/{version_number}/teachers/{teacher_id}",
+    response_model=TeacherTimetableResponse,
+)
+def get_teacher_timetable_for_version(
+    school_id: str,
+    year_id: str,
+    version_number: int,
+    teacher_id: str,
+    service: TeacherTimetableService = Depends(get_teacher_timetable_service),
+) -> TeacherTimetableResponse:
+    try:
+        view = service.project_version(school_id, year_id, teacher_id, version_number)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except TeacherNotFoundError:
+        raise HTTPException(status_code=404, detail="Teacher not found") from None
+    except ScheduleVersionNotFoundError as exc:
+        return JSONResponse(
+            status_code=404,
+            content=ScheduleVersionNotFoundErrorResponse(
+                code="SCHEDULE_VERSION_NOT_FOUND", detail=str(exc), version_number=version_number,
+            ).model_dump(),
+        )
+    if view is None:
+        raise HTTPException(status_code=404, detail="Active schedule not found")
+    return teacher_timetable_response_from_view(view)
+
+
+@router.post(
+    "/schools/{school_id}/years/{year_id}/schedule/versions/{version_number}/restore",
+    response_model=ActiveScheduleResponse,
+)
+def restore_schedule_version(
+    school_id: str,
+    year_id: str,
+    version_number: int,
+    body: RestoreVersionRequest,
+    service: ScheduleEditingService = Depends(get_schedule_editing_service),
+):
+    try:
+        active = service.restore(school_id, year_id, body.base_version_number, version_number)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except NoActiveScheduleError:
+        raise HTTPException(status_code=404, detail="Active schedule not found") from None
+    except StaleScheduleVersionError as exc:
+        return _stale_version_response(exc)
+    except VersionAlreadyActiveError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=VersionAlreadyActiveErrorResponse(
+                code="VERSION_ALREADY_ACTIVE", detail=str(exc), version_number=version_number,
+            ).model_dump(),
+        )
+    except ScheduleVersionNotFoundError as exc:
+        return JSONResponse(
+            status_code=404,
+            content=ScheduleVersionNotFoundErrorResponse(
+                code="SCHEDULE_VERSION_NOT_FOUND", detail=str(exc), version_number=version_number,
+            ).model_dump(),
+        )
+    except RestoreVerificationFailedError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=RestoreVerificationFailedErrorResponse(
+                code="RESTORE_VERIFICATION_FAILED", detail=str(exc), version_number=version_number,
+            ).model_dump(),
+        )
+    return active_schedule_response_from_active_version(active)
 
 
 # -- Manual timetable editing (ScheduleEditingService) --------------------

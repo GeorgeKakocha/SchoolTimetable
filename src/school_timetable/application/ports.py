@@ -57,7 +57,11 @@ from typing import Protocol
 
 from school_timetable.application.calendar_models import DayWriteResult, PeriodFields, PeriodWriteResult
 from school_timetable.application.reserved_activity_models import ReservedActivityFields, ReservedActivityWriteResult
-from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.schedule_models import (
+    ActiveScheduleVersion,
+    ScheduleVersionSnapshot,
+    ScheduleVersionSummary,
+)
 from school_timetable.application.teacher_availability_models import TeacherAvailabilityExceptionFields
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import ScheduleEntry, SolverStatus
@@ -199,6 +203,51 @@ class ScheduleVersionRepository(Protocol):
         `Schedule`/active version exists yet to edit at all -- this
         method is never the way a *first* `ScheduleVersion` is created
         (`persist_initial_version` is).
+        """
+        ...
+
+    def list_versions(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+    ) -> tuple[ScheduleVersionSummary, ...] | None:
+        """Schedule version history (schedule version history + restore
+        slice): every `ScheduleVersion` for this school/year's
+        `Schedule`, newest `version_number` first, metadata only -- never
+        `entries`/`locked_occurrences` (call `get_version` for a
+        specific version's full state). Exactly one item has
+        `is_active=True`.
+
+        Returns `None` if no `Schedule` has been generated yet for this
+        school/year -- the same "ordinary, expected outcome, not an
+        error" convention `get_active_schedule` already uses. Raises
+        `SchedulingProblemNotFoundError` if the school/year itself does
+        not resolve.
+        """
+        ...
+
+    def get_version(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        version_number: int,
+    ) -> ScheduleVersionSnapshot | None:
+        """One specific `ScheduleVersion`'s full state -- its own
+        `entries`/`locked_occurrences`, exactly as originally persisted,
+        regardless of whether it happens to be the currently active one
+        (`ScheduleVersionSnapshot.is_active` says which). Never mutates
+        anything; a read-only sibling to `get_active_schedule`, used by
+        historical class/teacher timetable projection and as a restore
+        command's copy source.
+
+        Returns `None` only if no `Schedule` exists at all yet for this
+        school/year (mirrors `get_active_schedule`'s own convention).
+        Raises `school_timetable.application.errors.
+        ScheduleVersionNotFoundError` if a `Schedule` exists but no
+        `ScheduleVersion` with this `version_number` does -- never
+        silently falls back to the active version. Raises
+        `SchedulingProblemNotFoundError` if the school/year itself does
+        not resolve.
         """
         ...
 

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from school_timetable.application.errors import (
     ScheduleAlreadyExistsError,
+    ScheduleVersionNotFoundError,
     SchedulingProblemNotFoundError,
     StaleScheduleVersionError,
 )
@@ -728,3 +729,166 @@ def test_persist_edited_version_raises_corrupt_state_when_no_active_schedule_exi
             problem.school.id, problem.academic_year.id, 1, Schedule(entries=()),
             SolverStatus.OPTIMAL, 0, 0.0, None,
         )
+
+
+# == list_versions / get_version (schedule version history + restore slice) ==
+
+
+def test_list_versions_none_when_no_schedule_exists_yet(db):
+    session, session_factory = db
+    problem, _ = _seed(session)
+    repo = SqlAlchemyScheduleVersionRepository(session_factory)
+
+    assert repo.list_versions(problem.school.id, problem.academic_year.id) is None
+
+
+def test_list_versions_raises_not_found_for_unknown_school_year(db):
+    _session, session_factory = db
+    repo = SqlAlchemyScheduleVersionRepository(session_factory)
+
+    with pytest.raises(SchedulingProblemNotFoundError):
+        repo.list_versions("no-such-school", "no-such-year")
+
+
+def test_list_versions_newest_first_with_exactly_one_active_and_correct_parents(db):
+    """A: newest-first. B: exactly one is_active. C: parent_version_number
+    correct."""
+    session, session_factory = db
+    problem, _result, repo, v1 = _seed_and_persist_v1(session, session_factory)
+    index = ProblemIndex(problem)
+
+    schedule1 = Schedule(entries=v1.entries)
+    move1 = _find_move(problem, index, schedule1)
+    v2 = repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 1, apply_move(problem, schedule1, move1),
+        v1.solver_status, v1.total_soft_penalty, 0.4, None,
+    )
+    schedule2 = Schedule(entries=v2.entries)
+    move2 = _find_move(problem, index, schedule2)
+    v3 = repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 2, apply_move(problem, schedule2, move2),
+        v1.solver_status, v1.total_soft_penalty, 0.4, None,
+    )
+
+    history = repo.list_versions(problem.school.id, problem.academic_year.id)
+
+    assert history is not None
+    assert [h.version_number for h in history] == [3, 2, 1]  # newest first
+    assert sum(1 for h in history if h.is_active) == 1
+    active = next(h for h in history if h.is_active)
+    assert active.version_number == v3.version_number
+
+    by_number = {h.version_number: h for h in history}
+    assert by_number[1].parent_version_number is None
+    assert by_number[2].parent_version_number == 1
+    assert by_number[3].parent_version_number == 2
+
+
+def test_get_version_none_when_no_schedule_exists_yet(db):
+    session, session_factory = db
+    problem, _ = _seed(session)
+    repo = SqlAlchemyScheduleVersionRepository(session_factory)
+
+    assert repo.get_version(problem.school.id, problem.academic_year.id, 1) is None
+
+
+def test_get_version_raises_not_found_for_unknown_school_year(db):
+    _session, session_factory = db
+    repo = SqlAlchemyScheduleVersionRepository(session_factory)
+
+    with pytest.raises(SchedulingProblemNotFoundError):
+        repo.get_version("no-such-school", "no-such-year", 1)
+
+
+def test_get_version_raises_schedule_version_not_found_for_unknown_version_number(db):
+    session, session_factory = db
+    problem, _result, repo, _v1 = _seed_and_persist_v1(session, session_factory)
+
+    with pytest.raises(ScheduleVersionNotFoundError) as exc_info:
+        repo.get_version(problem.school.id, problem.academic_year.id, 999)
+
+    assert exc_info.value.school_natural_id == problem.school.id
+    assert exc_info.value.academic_year_natural_id == problem.academic_year.id
+    assert exc_info.value.version_number == 999
+
+
+def test_get_version_loads_a_specific_non_active_version_in_full(db):
+    """D: a specific historical version can be loaded, entries/locks
+    included, distinct from whatever is currently active."""
+    session, session_factory = db
+    problem, _result, repo, v1 = _seed_and_persist_v1(session, session_factory)
+    index = ProblemIndex(problem)
+    schedule1 = Schedule(entries=v1.entries)
+    german_entry = next(e for e in v1.entries if e.requirement_id == "german_8a")
+    locked_schedule = lock_occurrence(
+        problem, schedule1, "german_8a", german_entry.day_id, german_entry.period_id, index=index,
+    )
+    v2 = repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 1, locked_schedule,
+        v1.solver_status, v1.total_soft_penalty, 0.1, None,
+    )
+    move2 = _find_move(problem, index, Schedule(entries=v2.entries, locked_occurrences=v2.locked_occurrences))
+    v3 = repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 2,
+        apply_move(problem, Schedule(entries=v2.entries, locked_occurrences=v2.locked_occurrences), move2),
+        v1.solver_status, v1.total_soft_penalty, 0.4, None,
+    )
+    assert v3.version_number == 3  # v3 is now active, not v2
+
+    snapshot_v2 = repo.get_version(problem.school.id, problem.academic_year.id, 2)
+
+    assert snapshot_v2 is not None
+    assert snapshot_v2.version_number == 2
+    assert snapshot_v2.is_active is False
+    assert snapshot_v2.parent_version_number == 1
+    assert snapshot_v2.entries == v2.entries
+    assert {k.requirement_id for k in snapshot_v2.locked_occurrences} == {"german_8a", "russian_8a"}
+
+    snapshot_v3 = repo.get_version(problem.school.id, problem.academic_year.id, 3)
+    assert snapshot_v3 is not None
+    assert snapshot_v3.is_active is True
+    assert snapshot_v3.parent_version_number == 2
+
+
+def test_restore_via_persist_edited_version_rolls_back_atomically_on_integrity_violation(db):
+    """R: restore's persistence step reuses `persist_edited_version`
+    unchanged (no second, restore-specific write path exists) -- this
+    replays exactly the sequence `ScheduleEditingService.restore` performs
+    (load a historical snapshot via `get_version`, then persist it as a
+    candidate) with a deliberately invalid `solver_status`, proving that
+    path still rolls back completely with zero partial rows, the same
+    guarantee `test_persist_edited_version_rolls_back_completely_on_integrity_violation`
+    already proves for the ordinary move/lock/unlock path."""
+    session, session_factory = db
+    problem, _result, repo, v1 = _seed_and_persist_v1(session, session_factory)
+    index = ProblemIndex(problem)
+    move1 = _find_move(problem, index, Schedule(entries=v1.entries))
+    v2 = repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 1, apply_move(problem, Schedule(entries=v1.entries), move1),
+        v1.solver_status, v1.total_soft_penalty, 0.4, None,
+    )
+
+    source = repo.get_version(problem.school.id, problem.academic_year.id, 1)
+    assert source is not None
+    candidate = Schedule(entries=source.entries, locked_occurrences=source.locked_occurrences)
+
+    year_id = session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+    before = _counts(session, year_id)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        repo.persist_edited_version(
+            problem.school.id, problem.academic_year.id, 2, candidate,
+            SolverStatus.INFEASIBLE,  # never a valid persisted status
+            source.total_soft_penalty, 0.0, None,
+        )
+    assert exc_info.value.orig.diag.constraint_name == "ck_schedule_version_solver_status"
+
+    assert _counts(session, year_id) == before  # no orphan version_3 row, no partial children
+    schedule_row = session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalar_one()
+    v2_row = _version_row(session, year_id, 2)
+    assert schedule_row.active_version_id == v2_row.id  # never repointed
+
+    reloaded = repo.get_active_schedule(problem.school.id, problem.academic_year.id)
+    assert reloaded == v2

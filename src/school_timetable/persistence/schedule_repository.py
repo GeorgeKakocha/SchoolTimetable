@@ -86,10 +86,15 @@ from sqlalchemy.orm import Session
 from school_timetable.application.errors import (
     ConfigurationChangedDuringGenerationError,
     ScheduleAlreadyExistsError,
+    ScheduleVersionNotFoundError,
     SchedulingProblemNotFoundError,
     StaleScheduleVersionError,
 )
-from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.application.schedule_models import (
+    ActiveScheduleVersion,
+    ScheduleVersionSnapshot,
+    ScheduleVersionSummary,
+)
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import EntrySource, ScheduleEntry, SolverStatus
 from school_timetable.domain.schedule import OccurrenceKey, Schedule
@@ -156,23 +161,9 @@ class SqlAlchemyScheduleVersionRepository:
                     "does not reference an existing schedule_version row"
                 )
 
-            entry_rows = list(
-                session.execute(
-                    select(orm.ScheduleEntry).where(orm.ScheduleEntry.schedule_version_id == version_row.id)
-                ).scalars()
+            entries, locked_occurrences = _load_version_payload(
+                session, school_natural_id, academic_year_natural_id, year_id, version_row,
             )
-            locked_rows = list(
-                session.execute(
-                    select(orm.LockedOccurrence).where(
-                        orm.LockedOccurrence.schedule_version_id == version_row.id
-                    )
-                ).scalars()
-            )
-
-            problem = SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
-                school_natural_id, academic_year_natural_id
-            )
-            entries, locked_occurrences = _resolve_entries(session, year_id, problem, entry_rows, locked_rows)
 
             return ActiveScheduleVersion(
                 version_number=version_row.version_number,
@@ -181,6 +172,93 @@ class SqlAlchemyScheduleVersionRepository:
                 wall_time_seconds=version_row.wall_time_seconds,
                 random_seed=version_row.random_seed,
                 created_at=version_row.created_at,
+                entries=entries,
+                locked_occurrences=locked_occurrences,
+            )
+        finally:
+            session.close()
+
+    def list_versions(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+    ) -> tuple[ScheduleVersionSummary, ...] | None:
+        session = self._session_factory()
+        try:
+            year_id = _resolve_year_id(session, school_natural_id, academic_year_natural_id)
+
+            schedule_row = session.execute(
+                select(orm.Schedule).where(orm.Schedule.academic_year_id == year_id)
+            ).scalar_one_or_none()
+            if schedule_row is None:
+                return None
+
+            version_rows = session.execute(
+                select(orm.ScheduleVersion)
+                .where(orm.ScheduleVersion.schedule_id == schedule_row.id)
+                .order_by(orm.ScheduleVersion.version_number.desc())
+            ).scalars().all()
+            version_number_by_id = {v.id: v.version_number for v in version_rows}
+
+            return tuple(
+                ScheduleVersionSummary(
+                    version_number=v.version_number,
+                    created_at=v.created_at,
+                    solver_status=SolverStatus(v.solver_status),
+                    total_soft_penalty=v.total_soft_penalty,
+                    is_active=(v.id == schedule_row.active_version_id),
+                    parent_version_number=(
+                        None if v.parent_version_id is None else version_number_by_id[v.parent_version_id]
+                    ),
+                )
+                for v in version_rows
+            )
+        finally:
+            session.close()
+
+    def get_version(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        version_number: int,
+    ) -> ScheduleVersionSnapshot | None:
+        session = self._session_factory()
+        try:
+            year_id = _resolve_year_id(session, school_natural_id, academic_year_natural_id)
+
+            schedule_row = session.execute(
+                select(orm.Schedule).where(orm.Schedule.academic_year_id == year_id)
+            ).scalar_one_or_none()
+            if schedule_row is None:
+                return None
+
+            version_row = session.execute(
+                select(orm.ScheduleVersion).where(
+                    orm.ScheduleVersion.schedule_id == schedule_row.id,
+                    orm.ScheduleVersion.version_number == version_number,
+                )
+            ).scalar_one_or_none()
+            if version_row is None:
+                raise ScheduleVersionNotFoundError(school_natural_id, academic_year_natural_id, version_number)
+
+            entries, locked_occurrences = _load_version_payload(
+                session, school_natural_id, academic_year_natural_id, year_id, version_row,
+            )
+
+            parent_version_number = None
+            if version_row.parent_version_id is not None:
+                parent_row = session.get(orm.ScheduleVersion, version_row.parent_version_id)
+                parent_version_number = None if parent_row is None else parent_row.version_number
+
+            return ScheduleVersionSnapshot(
+                version_number=version_row.version_number,
+                solver_status=SolverStatus(version_row.solver_status),
+                total_soft_penalty=version_row.total_soft_penalty,
+                wall_time_seconds=version_row.wall_time_seconds,
+                random_seed=version_row.random_seed,
+                created_at=version_row.created_at,
+                is_active=(schedule_row.active_version_id == version_row.id),
+                parent_version_number=parent_version_number,
                 entries=entries,
                 locked_occurrences=locked_occurrences,
             )
@@ -455,6 +533,33 @@ def _resolve_year_id(session: Session, school_natural_id: str, academic_year_nat
 def _natural_to_surrogate(session: Session, model: type, year_id: int) -> dict[str, int]:
     rows = session.execute(select(model).where(model.academic_year_id == year_id)).scalars().all()
     return {row.natural_id: row.id for row in rows}
+
+
+def _load_version_payload(
+    session: Session,
+    school_natural_id: str,
+    academic_year_natural_id: str,
+    year_id: int,
+    version_row: orm.ScheduleVersion,
+) -> tuple[tuple[ScheduleEntry, ...], frozenset[OccurrenceKey]]:
+    """Shared by `get_active_schedule`/`get_version`: loads one
+    `ScheduleVersion`'s own `ScheduleEntry`/`LockedOccurrence` rows and
+    resolves them to domain objects -- identical regardless of whether
+    the version in question happens to be the active one."""
+    entry_rows = list(
+        session.execute(
+            select(orm.ScheduleEntry).where(orm.ScheduleEntry.schedule_version_id == version_row.id)
+        ).scalars()
+    )
+    locked_rows = list(
+        session.execute(
+            select(orm.LockedOccurrence).where(orm.LockedOccurrence.schedule_version_id == version_row.id)
+        ).scalars()
+    )
+    problem = SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
+        school_natural_id, academic_year_natural_id
+    )
+    return _resolve_entries(session, year_id, problem, entry_rows, locked_rows)
 
 
 def _resolve_entries(

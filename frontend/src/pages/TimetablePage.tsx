@@ -3,6 +3,8 @@ import ClassSelector from "../components/ClassSelector";
 import ClassTimetableEditor from "../components/ClassTimetableEditor";
 import TeacherSelector from "../components/TeacherSelector";
 import TeacherTimetableGrid from "../components/TeacherTimetableGrid";
+import TimetableGrid from "../components/TimetableGrid";
+import VersionHistoryPanel from "../components/VersionHistoryPanel";
 import {
   ApiError,
   generateSchedule,
@@ -10,6 +12,11 @@ import {
   getSchedulingConfigIndex,
   getTeacherTimetable,
 } from "../api/client";
+import {
+  getClassTimetableForVersion,
+  getTeacherTimetableForVersion,
+  restoreScheduleVersion,
+} from "../api/scheduleVersions";
 import type {
   ClassTimetableResponse,
   SchedulingConfigIndexResponse,
@@ -96,6 +103,28 @@ type TeacherTimetableState =
 
 type TimetableMode = "class" | "teacher";
 
+/** Schedule version history + restore's own error mapping -- mirrors
+ * `ClassTimetableEditor.tsx`'s `describeEditingError` style: a safe,
+ * specific message per structured backend code, never a raw JSON dump. */
+function describeRestoreError(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return "Something went wrong. Please try again.";
+  }
+  if (error.code === "VERSION_ALREADY_ACTIVE") {
+    return "This version is already the active one -- there is nothing to restore.";
+  }
+  if (error.code === "SCHEDULE_VERSION_NOT_FOUND") {
+    return "That historical version could not be found.";
+  }
+  if (error.code === "RESTORE_VERIFICATION_FAILED") {
+    return "This historical version could not be restored against the current configuration.";
+  }
+  // STALE_SCHEDULE_VERSION is handled separately (its own notice, not a
+  // generic restore error); 404s and any other/unexpected structured
+  // error fall back to the backend's own safe `detail` string.
+  return error.detail;
+}
+
 function describeApiError(error: unknown): string {
   if (error instanceof ApiError) {
     // Known backend details (e.g. "Scheduling configuration not
@@ -171,6 +200,28 @@ function TimetablePage() {
   // second, hand-built display path.
   const [generationRefreshToken, setGenerationRefreshToken] = useState(0);
 
+  // Schedule version history + restore. `viewingVersionNumber === null`
+  // means "the current active version" -- the ordinary, pre-existing
+  // behavior, completely unchanged. A non-null value switches BOTH the
+  // class and teacher timetable-fetch effects below to the historical
+  // per-version projection endpoints instead of the live ones, for
+  // whichever class/teacher is currently selected -- the class/teacher
+  // selectors keep working exactly as before while viewing history.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
+  const [viewingVersionNumber, setViewingVersionNumber] = useState<number | null>(null);
+  // The live active version's own number -- captured from whichever
+  // live fetch (class or teacher) last succeeded, never from a
+  // historical fetch. This is the `base_version_number` a restore
+  // command needs, and what decides whether "Restore this version" is
+  // even offered for the version currently being viewed.
+  const [activeVersionNumber, setActiveVersionNumber] = useState<number | null>(null);
+  const [restoreConfirming, setRestoreConfirming] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreSuccessMessage, setRestoreSuccessMessage] = useState<string | null>(null);
+  const [versionStaleNotice, setVersionStaleNotice] = useState<string | null>(null);
+
   // Load the scheduling config index (for the class selector) once.
   useEffect(() => {
     if (!appConfigResult.ok) {
@@ -220,7 +271,18 @@ function TimetablePage() {
     const controller = new AbortController();
     setTimetableState({ status: "loading" });
 
-    getClassTimetable(appConfigResult.schoolId, appConfigResult.academicYearId, selectedClassId, controller.signal)
+    const request =
+      viewingVersionNumber === null
+        ? getClassTimetable(appConfigResult.schoolId, appConfigResult.academicYearId, selectedClassId, controller.signal)
+        : getClassTimetableForVersion(
+            appConfigResult.schoolId,
+            appConfigResult.academicYearId,
+            viewingVersionNumber,
+            selectedClassId,
+            controller.signal,
+          );
+
+    request
       .then((timetable) => {
         // Guard the success path too, not just rejections: a superseded
         // request must never overwrite a newer selection's state, even
@@ -231,6 +293,9 @@ function TimetablePage() {
           return;
         }
         setTimetableState({ status: "loaded", timetable });
+        if (viewingVersionNumber === null) {
+          setActiveVersionNumber(timetable.version_number);
+        }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) {
@@ -240,13 +305,17 @@ function TimetablePage() {
           setTimetableState({ status: "no-schedule" });
           return;
         }
+        if (error instanceof ApiError && error.code === "SCHEDULE_VERSION_NOT_FOUND") {
+          setViewingVersionNumber(null);
+          return;
+        }
         setTimetableState({ status: "error", message: describeApiError(error) });
       });
 
     return () => {
       controller.abort();
     };
-  }, [appConfigResult, configState.status, selectedClassId, generationRefreshToken]);
+  }, [appConfigResult, configState.status, selectedClassId, generationRefreshToken, viewingVersionNumber]);
 
   // Load the selected teacher's live timetable -- the Teacher mode
   // sibling of the class-timetable effect above, kept as a fully
@@ -265,12 +334,26 @@ function TimetablePage() {
     const controller = new AbortController();
     setTeacherTimetableState({ status: "loading" });
 
-    getTeacherTimetable(appConfigResult.schoolId, appConfigResult.academicYearId, selectedTeacherId, controller.signal)
+    const request =
+      viewingVersionNumber === null
+        ? getTeacherTimetable(appConfigResult.schoolId, appConfigResult.academicYearId, selectedTeacherId, controller.signal)
+        : getTeacherTimetableForVersion(
+            appConfigResult.schoolId,
+            appConfigResult.academicYearId,
+            viewingVersionNumber,
+            selectedTeacherId,
+            controller.signal,
+          );
+
+    request
       .then((timetable) => {
         if (controller.signal.aborted) {
           return;
         }
         setTeacherTimetableState({ status: "loaded", timetable });
+        if (viewingVersionNumber === null) {
+          setActiveVersionNumber(timetable.version_number);
+        }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) {
@@ -280,13 +363,17 @@ function TimetablePage() {
           setTeacherTimetableState({ status: "no-schedule" });
           return;
         }
+        if (error instanceof ApiError && error.code === "SCHEDULE_VERSION_NOT_FOUND") {
+          setViewingVersionNumber(null);
+          return;
+        }
         setTeacherTimetableState({ status: "error", message: describeApiError(error) });
       });
 
     return () => {
       controller.abort();
     };
-  }, [appConfigResult, configState.status, selectedTeacherId, generationRefreshToken]);
+  }, [appConfigResult, configState.status, selectedTeacherId, generationRefreshToken, viewingVersionNumber]);
 
   async function handleGenerateClick() {
     if (!appConfigResult.ok || generating) {
@@ -312,6 +399,53 @@ function TimetablePage() {
       }
     } finally {
       setGenerating(false);
+    }
+  }
+
+  function handleSelectVersion(versionNumber: number) {
+    setViewingVersionNumber(versionNumber);
+    setRestoreConfirming(false);
+    setRestoreError(null);
+  }
+
+  function handleBackToCurrentVersion() {
+    setViewingVersionNumber(null);
+    setRestoreConfirming(false);
+    setRestoreError(null);
+  }
+
+  async function handleConfirmRestore() {
+    if (!appConfigResult.ok || viewingVersionNumber === null || activeVersionNumber === null || restoreBusy) {
+      return;
+    }
+    setRestoreBusy(true);
+    setRestoreError(null);
+    const sourceVersionNumber = viewingVersionNumber;
+    try {
+      const result = await restoreScheduleVersion(appConfigResult.schoolId, appConfigResult.academicYearId, sourceVersionNumber, {
+        base_version_number: activeVersionNumber,
+      });
+      setRestoreConfirming(false);
+      setViewingVersionNumber(null); // back to current -- current now IS the restored copy
+      setRestoreSuccessMessage(`Version ${sourceVersionNumber} was restored as new Version ${result.version_number}.`);
+      setHistoryRefreshToken((token) => token + 1);
+      setGenerationRefreshToken((token) => token + 1);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "STALE_SCHEDULE_VERSION") {
+        setVersionStaleNotice(
+          "The active timetable changed since this page loaded. Review the current version, then try restoring again.",
+        );
+        setRestoreConfirming(false);
+        setHistoryRefreshToken((token) => token + 1);
+        return;
+      }
+      setRestoreConfirming(false);
+      if (error instanceof ApiError && error.code === "SCHEDULE_VERSION_NOT_FOUND") {
+        setViewingVersionNumber(null);
+      }
+      setRestoreError(describeRestoreError(error));
+    } finally {
+      setRestoreBusy(false);
     }
   }
 
@@ -343,7 +477,86 @@ function TimetablePage() {
             >
               Teacher
             </button>
+            <button
+              type="button"
+              className="action-button version-history-toggle"
+              aria-pressed={historyOpen}
+              onClick={() => {
+                setHistoryOpen((open) => !open);
+                setRestoreSuccessMessage(null);
+              }}
+            >
+              Version History
+            </button>
           </div>
+
+          {restoreSuccessMessage !== null && (
+            <div className="version-restore-success" role="status">
+              <p>{restoreSuccessMessage}</p>
+            </div>
+          )}
+          {versionStaleNotice !== null && (
+            <div className="stale-banner" role="alert">
+              <p>{versionStaleNotice}</p>
+            </div>
+          )}
+
+          {historyOpen && (
+            <VersionHistoryPanel
+              schoolId={appConfigResult.schoolId}
+              academicYearId={appConfigResult.academicYearId}
+              refreshToken={historyRefreshToken}
+              viewingVersionNumber={viewingVersionNumber}
+              onSelectVersion={handleSelectVersion}
+            />
+          )}
+
+          {viewingVersionNumber !== null && (
+            <div className="historical-version-banner" role="region" aria-label="Historical version view">
+              <p>
+                Viewing historical <strong>Version {viewingVersionNumber}</strong> — read only
+              </p>
+              <span className="lesson-edit-panel-actions">
+                <button type="button" onClick={handleBackToCurrentVersion} disabled={restoreBusy}>
+                  Back to current version
+                </button>
+                {activeVersionNumber !== null && viewingVersionNumber !== activeVersionNumber && !restoreConfirming && (
+                  <button
+                    type="button"
+                    className="action-button"
+                    onClick={() => {
+                      setRestoreConfirming(true);
+                      setRestoreError(null);
+                    }}
+                    disabled={restoreBusy}
+                  >
+                    Restore this version
+                  </button>
+                )}
+              </span>
+              {restoreConfirming && (
+                <div className="reoptimize-confirm">
+                  <p>
+                    This will not delete newer versions. A new version will be created from Version{" "}
+                    {viewingVersionNumber} and made active.
+                  </p>
+                  <span className="reoptimize-confirm-actions">
+                    <button type="button" className="btn-primary" onClick={handleConfirmRestore} disabled={restoreBusy}>
+                      {restoreBusy ? "Restoring…" : `Restore Version ${viewingVersionNumber}`}
+                    </button>
+                    <button type="button" onClick={() => setRestoreConfirming(false)} disabled={restoreBusy}>
+                      Cancel
+                    </button>
+                  </span>
+                </div>
+              )}
+              {restoreError !== null && (
+                <div role="alert" className="lesson-edit-panel-error">
+                  <p>{restoreError}</p>
+                </div>
+              )}
+            </div>
+          )}
 
           {mode === "class" ? (
             configState.config.class_sections.length === 0 ? (
@@ -384,12 +597,21 @@ function TimetablePage() {
                       {timetableState.timetable.class_section_name} · Version{" "}
                       {timetableState.timetable.version_number}
                     </p>
-                    <ClassTimetableEditor
-                      schoolId={appConfigResult.schoolId}
-                      academicYearId={appConfigResult.academicYearId}
-                      timetable={timetableState.timetable}
-                      onMutationSuccess={() => setGenerationRefreshToken((token) => token + 1)}
-                    />
+                    {viewingVersionNumber === null ? (
+                      <ClassTimetableEditor
+                        schoolId={appConfigResult.schoolId}
+                        academicYearId={appConfigResult.academicYearId}
+                        timetable={timetableState.timetable}
+                        onMutationSuccess={() => setGenerationRefreshToken((token) => token + 1)}
+                      />
+                    ) : (
+                      // Historical version: read-only, exactly like
+                      // `TimetableGrid` already renders when no
+                      // `editing` bundle is supplied -- Move/Lock/
+                      // Unlock/Re-optimize/preview are never available
+                      // for an immutable past version.
+                      <TimetableGrid timetable={timetableState.timetable} />
+                    )}
                   </>
                 )}
               </>
