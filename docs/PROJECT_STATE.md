@@ -3483,3 +3483,89 @@ scheduled):** Resource Availability; eligible Resource sets;
 capabilities/categories; preferred Resource; solver-selected Resources;
 seat/headcount capacity semantics. Owner Decision #39 remains absent
 unless a genuine new product fork appears.
+
+## CALENDAR A -- CALENDAR & BELL SCHEDULE BACKEND CLOSED ON MAIN
+
+**Status: CLOSED ON MAIN.** Implementation commit `a508023` ("feat: add
+calendar and bell schedule backend") -- fast-forward merged from
+`feature/calendar-backend` (base `695cf76`) onto `main`, with a separate
+docs closure commit. Not pushed to any remote. **Calendar phase is NOT
+closed** -- this slice ships the backend only; see `DECISIONS.md`'s
+matching entry for the full design rationale.
+
+**Scope shipped:**
+1. `domain.calendar.Period` gains optional `start_time`/`end_time`
+   (`datetime.time | None`) -- display/admin metadata only, never read
+   by the solver, `validation.preflight`, or the verifier.
+2. `domain.calendar` gains `clock_time_overlaps` (shared pure ordering
+   check, reused identically by write-time validation and preflight),
+   `derive_starts_new_block`/`recompute_block_ids` (the public
+   `starts_new_block` abstraction over the internal `block_id`
+   sequence -- raw `block_id` is never part of any public contract).
+3. Arbitrary Day/Period counts, free-text names, Day/Period Up/Down
+   move with contiguous `0..N-1` reindexing after every write, and a
+   minimum-calendar invariant (>= 1 Day, >= 1 instructional Period)
+   enforced in three independent layers (application `calendar_rules`,
+   `preflight._check_calendar_shape`, and the DB's own
+   `UNIQUE(academic_year_id, idx)` constraint).
+4. New Periods are always `is_instructional=True`; the field is absent
+   from the public write contract and never reassigned on update, so
+   legacy `is_instructional=False` fixture rows survive untouched.
+5. TimePreference index-drift safety: Period reorder is unconditionally
+   blocked whenever any `TimePreference` exists in the Academic Year;
+   Period delete is blocked precisely when it would retarget a stored
+   `preferred_periods` index (exact match, or any later index that
+   would shift down to fill the gap). Appending a new Period is always
+   safe. No preference index is ever silently rewritten.
+6. `GET .../calendar` (Day/Period projection, `configuration_locked`,
+   never a raw `block_id`) and `POST/PUT/DELETE .../calendar/days[/
+   {day_id}]` + `.../periods[/{period_id}]` plus `.../move` for both --
+   `application.calendar_service`/`calendar_projection_service`,
+   `persistence.calendar_repository` (two new SQLAlchemy adapters,
+   Owner Decision #36's lock/recheck discipline reused verbatim, no
+   new concurrency mechanism), `api.calendar_routes`.
+7. `GET .../config`'s existing `PeriodResponse` gained the same two
+   additive, nullable `start_time`/`end_time` `"HH:MM"` fields --
+   confirmed backward compatible.
+8. Migration `e0f73eda567b`: nullable `period.start_time`/`end_time`
+   (`TIME`), revising `9fbec2126831`, one head, no drift. All 71
+   pre-existing dev-database `period` rows confirmed to survive the
+   upgrade with both columns `NULL`.
+
+**Zero solver, verifier, or frontend production changes.** The School
+Setup "Calendar & Bell Schedule" tab itself is explicitly out of scope
+for this slice.
+
+**New test coverage (120 new backend tests, zero frontend changes):**
++11 `tests/test_domain.py` (clock-time overlap detection incl.
+touching-boundary-allowed/gap-allowed/reversed-overlap/missing-time-
+skip/block-boundary-independence; `derive_starts_new_block`/
+`recompute_block_ids` incl. marker-travels-with-identity-across-
+reorder), +9 `tests/test_preflight.py` (no-Days/no-instructional-
+Periods/minimum-valid-calendar/duplicate-or-non-contiguous-Day-and-
+Period-index/clock-time-overlap), +47 new
+`tests/test_calendar_service.py` (Day/Period create/update/delete/move
+orchestration and validation against in-memory fake repositories,
+mirroring `test_resource_service.py`'s discipline), +18
+`tests_web/test_calendar_repository.py` (real-PostgreSQL round-trip,
+reindex/block-recomputation, legacy `is_instructional=False`
+preservation, TimePreference-blocked-reorder proven under the real
+lock, Owner-Decision-#36 generation-vs-write race), +35
+`tests_web/test_calendar_api.py` (full HTTP contract incl. exact
+response shapes, HH:MM (de)serialization, `/config` backward-
+compatibility, all locked/duplicate/in-use/reorder-blocked error
+codes).
+
+**Final verified baselines:** core 546 passed/5 deselected (+120 new,
+described above), `tests_web` 539 passed/zero skips (+53 new: 18 + 35
+above), frontend 460 passed/27 files/zero skips (unchanged -- zero
+frontend changes in this slice), build clean, Alembic
+`e0f73eda567b`/one head/no drift.
+
+**CALENDAR A -- CALENDAR & BELL SCHEDULE BACKEND CLOSED ON MAIN** --
+implementation commit `a508023`. **Calendar phase remains NOT closed.**
+**Next slice: Calendar B -- School Setup "Calendar & Bell Schedule"
+frontend** (the tab itself: Day/Period list, create/rename/delete,
+Up/Down reorder, optional HH:MM bell times, lunch/break shown as a
+visual gap, all backed by the Calendar A API above). No manual
+timetable editing is in scope for Calendar B either.

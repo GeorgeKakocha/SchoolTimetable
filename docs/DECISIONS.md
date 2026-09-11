@@ -4082,3 +4082,120 @@ Resource Availability; eligible Resource sets; capabilities/categories;
 preferred Resource; solver-selected Resources; seat/headcount capacity
 semantics. Owner Decision #39 remains absent unless a genuine new
 product fork appears.
+
+## CALENDAR A -- CALENDAR & BELL SCHEDULE BACKEND CLOSED ON MAIN
+
+**Status: CLOSED ON MAIN.** Implementation commit `a508023` ("feat: add
+calendar and bell schedule backend") -- fast-forward merged from
+`feature/calendar-backend` (base `695cf76`) onto `main`, with a separate
+docs closure commit recording this status. Not pushed to any remote.
+This closes Slice A (backend) only -- the frontend "Calendar & Bell
+Schedule" tab is a deliberately separate future slice (Calendar B).
+
+**Locked product decision, reused unchanged:** `Day`/`Period` remain the
+existing `domain.calendar.Day`/`Period` entities -- this slice adds only
+the missing catalog write surface over them (create/update/delete/
+Up-Down-move for both), plus two new optional `Period.start_time`/
+`end_time` fields. Both fields are display/admin-only metadata; the
+solver, `validation.preflight`, and the verifier never read them. Either
+both are set or neither is; when both are set, `start_time` must be
+strictly before `end_time`. An arbitrary number of Days and Periods is
+supported, with free-text names (trimmed, non-blank, exact-case-
+sensitive-duplicate-blocked per Academic Year).
+
+**Lunch/break representation, locked:** no explicit Lunch/Break row is
+ever created. A break is represented purely as a clock-time gap plus a
+structural block boundary -- `starts_new_block: bool` is the only public
+write field; the client never sees or sends a raw `block_id`.
+`domain.calendar.derive_starts_new_block` derives the public marker from
+the internal `block_id` sequence on read; `recompute_block_ids`
+deterministically rebuilds `block_id` for the whole ordered Period
+sequence after every create/update/delete/move, so `block_id` values
+stay purely internal, never persisted-and-trusted client input. The
+first Period in the sequence always starts a new block regardless of
+its own stored marker.
+
+**`is_instructional` policy, locked:** every Calendar-A-created Period
+is inserted `is_instructional=True`; the field is absent from the public
+write contract entirely (`PeriodWriteRequest`/`PeriodFields` have no
+such field) and is never reassigned on update, so a legacy fixture-
+seeded `is_instructional=False` row survives every future Calendar A
+write untouched. It remains readable (never a normal write toggle) on
+the Calendar projection.
+
+**TimePreference index-drift safety, locked (the one genuinely hazardous
+area in this slice):** `TeachingRequirement.time_preferences` stores raw
+`Period.index` integers (`preferred_periods`), never `Period.id`
+references. Therefore: (1) Period reorder (`move`) is unconditionally
+blocked whenever *any* `TimePreference` exists anywhere in the Academic
+Year (`PeriodReorderBlockedError`, deliberately a blanket rule rather
+than a precise reachability check, per this slice's own instruction);
+(2) Period delete is blocked precisely -- unsafe iff the target's own
+index is named by some `TimePreference`, or any referenced index is
+strictly greater than the target's (since deleting it would shift every
+later Period's index down by one, silently redirecting that preference)
+-- implemented once in `calendar_rules.validate_period_delete` and
+covered by dedicated exact-index/shift/safe-because-later tests in both
+`tests/test_calendar_service.py` and `tests_web/test_calendar_repository.py`.
+Appending a new Period is always safe (no existing index moves) and is
+never subject to this check. No preference's stored indexes are ever
+silently rewritten by any Calendar A write.
+
+**Minimum-calendar and indexing invariants, enforced in three
+independent layers (write-time `calendar_rules`, `validation.preflight`'s
+new `_check_calendar_shape`, and the DB's own `UNIQUE(academic_year_id,
+idx)` constraint as a structural backstop):** at least one Day and at
+least one instructional Period must always remain; `Day.index`/
+`Period.index` stay contiguous `0..N-1` with no duplicates or gaps after
+every write. `preflight.run_preflight` now also reuses
+`domain.calendar.clock_time_overlaps` (the exact same pure function
+`calendar_rules.validate_period_clock_order` runs at write-time) so a
+write-time rejection and a preflight rejection can never disagree.
+
+**Configuration lock/race, reused verbatim:** `persistence.
+calendar_repository`'s two adapters follow Owner Decision #36's exact
+lock-acquire / reject-if-locked / reload-under-lock / validate /
+commit-or-rollback discipline (`configuration_write_lock.py`, unchanged)
+-- no new concurrency mechanism was invented. `idx` reassignment
+(Day delete-reindex; Period create/update/delete/move) uses a two-pass,
+negative-sentinel write so the `UNIQUE(academic_year_id, idx)`
+constraint is never transiently violated mid-reassignment.
+
+**API surface, matching `/config`'s existing wire conventions:** `GET
+.../calendar` (never exposing raw `block_id`), `POST/PUT/DELETE
+.../calendar/days[/{day_id}]` + `POST .../days/{day_id}/move`, and the
+Period equivalents. Clock times are always `"HH:MM"` strings on the
+wire (`api/serializer.py`'s `format_hhmm`/`parse_hhmm`), never seconds/
+ISO values; an invalid format is a safe 422 (`INVALID_PERIOD`/
+`INVALID_TIME_FORMAT`), never a raw 500. `GET .../config`'s existing
+`PeriodResponse` gained the same two additive, nullable `start_time`/
+`end_time` fields -- confirmed backward compatible (every pre-Calendar-A
+consumer already ignores unknown fields; no existing `/config` test
+needed to change).
+
+**Migration, one new revision:** `e0f73eda567b` ("add period bell
+times") adds nullable `period.start_time`/`period.end_time` (`TIME`),
+revising `9fbec2126831` -- no competing head was ever created. All 71
+pre-existing dev-database `period` rows were confirmed to survive the
+upgrade with both columns `NULL`. Zero DB `CHECK` constraint enforces
+the both-null-or-both-present pairing rule -- that remains an
+application-layer invariant only (`calendar_rules.validate_time_pair`),
+matching this slice's locked scope.
+
+**Zero solver, verifier, or frontend production changes.** The Calendar
+tab itself (`School Setup -> "Calendar & Bell Schedule"`) is explicitly
+out of scope for this slice -- see Calendar B.
+
+**Final verified baselines:** core 546 passed/5 deselected (+120 new:
++11 `tests/test_domain.py`, +9 `tests/test_preflight.py`, +47 new
+`tests/test_calendar_service.py`; the remainder split across the two
+`tests_web` files below), `tests_web` 539 passed/zero skips (+53 new: 18
+`tests_web/test_calendar_repository.py` + 35
+`tests_web/test_calendar_api.py`), frontend 460 passed/27 files/zero
+skips (unchanged -- zero frontend changes in this slice), build clean,
+Alembic `e0f73eda567b`/one head/no drift.
+
+**CALENDAR A -- CALENDAR & BELL SCHEDULE BACKEND CLOSED ON MAIN** --
+implementation commit `a508023`. **Calendar phase remains NOT closed.**
+**Next slice: Calendar B -- School Setup "Calendar & Bell Schedule"
+frontend.**
