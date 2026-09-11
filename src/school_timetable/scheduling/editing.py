@@ -79,6 +79,7 @@ from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import BlockPolicyMode, TeachingRequirement
 from school_timetable.domain.result import EntrySource, ScheduleEntry
 from school_timetable.domain.schedule import OccurrenceKey, Schedule
+from school_timetable.verification.verifier import _check_required_block_patterns
 from school_timetable.verification.verifier import verify as verify_schedule
 
 
@@ -551,9 +552,26 @@ def _check_swap_hard_rules(
                     f"({new_entry.day_id!r}, {new_entry.period_id!r}), capacity is {capacity}",
                 ))
 
+    # REQUIRED block-pattern integrity, for the whole hypothetical
+    # schedule -- not just the swapped occurrences' own footprints.
+    # `validate_move`'s earlier target-window/partial-overlap checks only
+    # ever look at the *target* window being swapped into; they cannot by
+    # themselves catch a swap that leaves a REQUIRED requirement's OTHER,
+    # untouched periods newly stacked onto the same day as the moved one
+    # (e.g. a single relocated onto the day that requirement's own
+    # REQUIRED double already occupies), which silently breaks that
+    # requirement's per-day-count/distinct-days pattern without
+    # violating any single-window check. Reused directly from the
+    # independent verifier -- the exact same pure check `reoptimize.py`
+    # already imports this way -- rather than duplicating its logic or
+    # running the full `verify()` (which would also re-check teacher/
+    # group/occupancy rules this function already covers itself).
+    hypothetical = rest + list(plan.added_entries)
+    for message in _check_required_block_patterns(problem, index, hypothetical):
+        violations.append(MoveViolation("REQUIRED_BLOCK_VIOLATION", message))
+
     # max_periods_per_day for every requirement involved in the swap, on
     # both of their new days.
-    hypothetical = rest + list(plan.added_entries)
     for occ in (source_occ, target_occ):
         for rid in occ.requirement_ids:
             req = index.requirements_by_id[rid]

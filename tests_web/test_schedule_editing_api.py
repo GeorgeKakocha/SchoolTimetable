@@ -34,8 +34,7 @@ from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
-from school_timetable.scheduling.editing import apply_move, find_logical_occurrence, validate_move
-from school_timetable.verification.verifier import verify
+from school_timetable.scheduling.editing import find_logical_occurrence, validate_move
 from tests_web.support.problem_writer import write_scheduling_problem
 
 
@@ -118,21 +117,11 @@ def _year_id(session: Session, academic_year_natural_id: str) -> int:
 
 
 def _find_move(problem, entries):
-    """Finds a move that is not merely `validate_move`-allowed but also
-    independently verifier-clean end to end. `validate_move`'s own HARD-
-    rule checks do not currently cover every REQUIRED-block-pattern
-    interaction a swap can create (a pre-existing gap in the unmodified
-    `scheduling.editing` module, out of scope for this slice to fix) --
-    since the solve behind this fixture uses no fixed random seed (the
-    real `POST .../schedule/generate` HTTP contract exposes none), a
-    different solved schedule shape on a different run can occasionally
-    expose it. This helper defensively re-verifies each `allowed`
-    candidate with the exact same `apply_move` + `verify` pipeline
-    `ScheduleEditingService.move` itself runs before ever persisting,
-    so this test proves the real happy path deterministically regardless
-    of which schedule the solver happens to produce -- exactly the same
-    safety net that protects production from ever persisting a bad
-    move."""
+    """Finds one valid manual move. `validate_move`'s own HARD-rule
+    checks (including REQUIRED-block-pattern integrity -- see the
+    "manual timetable editing correction slice" in
+    `docs/SCHEDULE_EDITING.md`) are trusted directly; no defensive
+    post-hoc re-verification is needed here."""
     index = ProblemIndex(problem)
     schedule = Schedule(entries=entries)
     simple_occs, seen = [], set()
@@ -154,10 +143,8 @@ def _find_move(problem, entries):
             swapped = {e.requirement_id for e in result.plan.removed_entries}
             if swapped != {r1, r2}:
                 continue
-            candidate = apply_move(problem, schedule, result, index=index)
-            if verify(problem, candidate.entries).passed:
-                return r1, d1, p1, d2, p2
-    raise AssertionError("expected at least one valid, verifier-clean move in this fixture")
+            return r1, d1, p1, d2, p2
+    raise AssertionError("expected at least one valid move in this fixture")
 
 
 def _entries_from_body(body) -> tuple:

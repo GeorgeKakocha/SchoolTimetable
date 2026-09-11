@@ -597,3 +597,261 @@ def test_applying_accepted_move_passes_independent_verification():
             break
 
     assert applied, "expected at least one valid swap to exist in the dense fixture"
+
+
+# ---------------------------------------------------------------------------
+# 15-21. REQUIRED-block-pattern-integrity correction (manual timetable
+# editing correction slice): `_check_swap_hard_rules` previously never
+# checked whether a swap leaves a REQUIRED requirement's OTHER, untouched
+# periods newly stacked onto a day one of its own moved periods lands on
+# -- silently breaking that requirement's per-day-count/distinct-days
+# pattern without violating any single-window check. `r1` below has a
+# REQUIRED (2, 1) pattern (a double plus one single, needing exactly 2
+# distinct days): the double sits on d1 (q1, q2); the single starts on
+# d2 (q3), swappable with `r2`'s single on d1 (q3) -- landing r1's single
+# on the SAME day its own double already occupies -- or with `r3`'s
+# single on the untouched d3 (q3), a genuinely fresh day.
+# ---------------------------------------------------------------------------
+
+def _required_two_day_pattern_problem():
+    return _problem(
+        teachers=(
+            Teacher(id="t1", first_name="T1", last_name=""),
+            Teacher(id="t2", first_name="T2", last_name=""),
+            Teacher(id="t3", first_name="T3", last_name=""),
+        ),
+        class_sections=(ClassSection("cx", "CX"),),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),),
+        activities=(Activity("math", "Math"), Activity("art", "Art"), Activity("science", "Science")),
+        teaching_requirements=(
+            TeachingRequirement(
+                "r1", "t1", "math", "pg1", 3, LessonBlockPolicy(BlockPolicyMode.REQUIRED, block_sizes=(2, 1)),
+            ),
+            TeachingRequirement("r2", "t2", "art", "pg1", 1, FLEXIBLE),
+            TeachingRequirement("r3", "t3", "science", "pg1", 1, FLEXIBLE),
+        ),
+    )
+
+
+def _required_two_day_pattern_entries():
+    return (
+        _entry("r1", "math", "d1", "q1", ("cx",), "t1", "pg1"),
+        _entry("r1", "math", "d1", "q2", ("cx",), "t1", "pg1"),
+        _entry("r1", "math", "d2", "q3", ("cx",), "t1", "pg1"),
+        _entry("r2", "art", "d1", "q3", ("cx",), "t2", "pg1"),
+        _entry("r3", "science", "d3", "q3", ("cx",), "t3", "pg1"),
+    )
+
+
+def test_required_block_swap_that_stacks_onto_same_day_rejected():
+    """A: the formerly-failing move -- swapping r1's single onto d1
+    (where r1's own double already sits) is now rejected by
+    `validate_move` itself, never merely by the independent verifier
+    after the fact."""
+    problem = _required_two_day_pattern_problem()
+    problem, schedule = _full(problem, _required_two_day_pattern_entries())
+
+    result = validate_move(problem, schedule, "r1", "d2", "q3", "d1", "q3")
+
+    assert not result.allowed
+    # B: a stable, block-related violation code.
+    codes = {v.code for v in result.violations}
+    assert "REQUIRED_BLOCK_VIOLATION" in codes
+    block_violations = [v for v in result.violations if v.code == "REQUIRED_BLOCK_VIOLATION"]
+    assert any("r1" in v.message and "pattern" in v.message for v in block_violations)
+
+
+def test_required_block_legitimate_move_to_a_fresh_day_still_accepted():
+    """C/D: swapping r1's single onto an entirely fresh day (d3, not
+    already used by r1) keeps the REQUIRED (2, 1) pattern valid -- still
+    2 distinct days, still one double plus one single -- and remains
+    allowed, producing a schedule the independent verifier accepts."""
+    from school_timetable.domain.indexing import ProblemIndex
+
+    problem = _required_two_day_pattern_problem()
+    problem, schedule = _full(problem, _required_two_day_pattern_entries())
+    index = ProblemIndex(problem)
+
+    result = validate_move(problem, schedule, "r1", "d2", "q3", "d3", "q3", index=index)
+    assert result.allowed, result.violations
+
+    new_schedule = apply_move(problem, schedule, result, index=index)
+    r1_periods = sorted(
+        (e.day_id, e.period_id) for e in new_schedule.entries if e.requirement_id == "r1"
+    )
+    assert r1_periods == [("d1", "q1"), ("d1", "q2"), ("d3", "q3")]
+
+    from school_timetable.verification.verifier import verify
+    report = verify(problem, new_schedule.entries)
+    assert report.passed, report.violations
+
+
+def test_required_block_split_group_move_still_expands_both_siblings():
+    """E: a split-group sibling that is itself REQUIRED-mode still moves
+    (and locks) together with its sibling exactly as before -- the new
+    REQUIRED-block check is evaluated per-requirement across the whole
+    hypothetical schedule and does not special-case (or interfere with)
+    split-group expansion."""
+    from school_timetable.domain.indexing import ProblemIndex
+
+    problem = _problem(
+        teachers=(
+            Teacher(id="t_de", first_name="DE", last_name=""),
+            Teacher(id="t_ru", first_name="RU", last_name=""),
+            Teacher(id="t3", first_name="T3", last_name=""),
+        ),
+        class_sections=(ClassSection("cx", "CX"),),
+        participant_groups=(
+            ParticipantGroup("pg_de", "DE branch", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pg_ru", "RU branch", ("cx",), ParticipantGroupRole.SUBGROUP),
+            ParticipantGroup("pg3", "PG3", ("cx",), ParticipantGroupRole.WHOLE_CLASS),
+        ),
+        activities=(Activity("german", "German"), Activity("russian", "Russian"), Activity("math", "Math")),
+        teaching_requirements=(
+            TeachingRequirement(
+                "german", "t_de", "german", "pg_de", 1,
+                LessonBlockPolicy(BlockPolicyMode.REQUIRED, block_sizes=(1,)), split_group_id="split1",
+            ),
+            TeachingRequirement(
+                "russian", "t_ru", "russian", "pg_ru", 1,
+                LessonBlockPolicy(BlockPolicyMode.REQUIRED, block_sizes=(1,)), split_group_id="split1",
+            ),
+            TeachingRequirement("r3", "t3", "math", "pg3", 1, FLEXIBLE),
+        ),
+    )
+    entries = (
+        _entry("german", "german", "d1", "q1", ("cx",), "t_de", "pg_de"),
+        _entry("russian", "russian", "d1", "q1", ("cx",), "t_ru", "pg_ru"),
+        _entry("r3", "math", "d2", "q1", ("cx",), "t3", "pg3"),
+    )
+    problem, schedule = _full(problem, entries)
+    index = ProblemIndex(problem)
+
+    result = validate_move(problem, schedule, "german", "d1", "q1", "d2", "q1", index=index)
+    assert result.allowed, result.violations
+    new_schedule = apply_move(problem, schedule, result, index=index)
+
+    german_slot = [(e.day_id, e.period_id) for e in new_schedule.entries if e.requirement_id == "german"]
+    russian_slot = [(e.day_id, e.period_id) for e in new_schedule.entries if e.requirement_id == "russian"]
+    assert german_slot == [("d2", "q1")]
+    assert russian_slot == [("d2", "q1")]
+
+    from school_timetable.verification.verifier import verify
+    report = verify(problem, new_schedule.entries)
+    assert report.passed, report.violations
+
+
+def test_required_block_merged_group_move_still_uses_both_classes():
+    """F: a merged-class requirement that is itself REQUIRED-mode still
+    moves correctly, covering both classes, unaffected by the new check."""
+    from school_timetable.domain.indexing import ProblemIndex
+
+    problem = _problem(
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
+        class_sections=(ClassSection("cx", "CX"), ClassSection("cy", "CY")),
+        participant_groups=(
+            ParticipantGroup("pg_merged", "Merged", ("cx", "cy"), ParticipantGroupRole.MERGED_CLASSES),
+            ParticipantGroup("pg2", "PG2", ("cx", "cy"), ParticipantGroupRole.MERGED_CLASSES),
+        ),
+        activities=(Activity("civics", "Civics"),),
+        teaching_requirements=(
+            TeachingRequirement(
+                "merged1", "t1", "civics", "pg_merged", 1,
+                LessonBlockPolicy(BlockPolicyMode.REQUIRED, block_sizes=(1,)),
+            ),
+            TeachingRequirement("merged2", "t2", "civics", "pg2", 1, FLEXIBLE),
+        ),
+    )
+    entries = (
+        _entry("merged1", "civics", "d1", "q1", ("cx", "cy"), "t1", "pg_merged"),
+        _entry("merged2", "civics", "d2", "q1", ("cx", "cy"), "t2", "pg2"),
+    )
+    problem, schedule = _full(problem, entries)
+    index = ProblemIndex(problem)
+
+    result = validate_move(problem, schedule, "merged1", "d1", "q1", "d2", "q1", index=index)
+    assert result.allowed, result.violations
+    new_schedule = apply_move(problem, schedule, result, index=index)
+    merged1_entry = next(e for e in new_schedule.entries if e.requirement_id == "merged1")
+    assert set(merged1_entry.class_sections) == {"cx", "cy"}
+    assert (merged1_entry.day_id, merged1_entry.period_id) == ("d2", "q1")
+
+    from school_timetable.verification.verifier import verify
+    report = verify(problem, new_schedule.entries)
+    assert report.passed, report.violations
+
+
+def test_ordinary_flexible_move_unaffected_by_required_block_check():
+    """G: a plain FLEXIBLE-vs-FLEXIBLE swap (no REQUIRED policy involved
+    at all) is completely unaffected by the new check."""
+    problem = _problem(
+        teachers=(Teacher(id="t1", first_name="T1", last_name=""), Teacher(id="t2", first_name="T2", last_name="")),
+        class_sections=(ClassSection("cx", "CX"),),
+        participant_groups=(ParticipantGroup("pg1", "PG1", ("cx",), ParticipantGroupRole.WHOLE_CLASS),),
+        activities=(Activity("math", "Math"), Activity("art", "Art")),
+        teaching_requirements=(
+            TeachingRequirement("r1", "t1", "math", "pg1", 1, FLEXIBLE),
+            TeachingRequirement("r2", "t2", "art", "pg1", 1, FLEXIBLE),
+        ),
+    )
+    entries = (
+        _entry("r1", "math", "d1", "q1", ("cx",), "t1", "pg1"),
+        _entry("r2", "art", "d2", "q1", ("cx",), "t2", "pg1"),
+    )
+    problem, schedule = _full(problem, entries)
+
+    result = validate_move(problem, schedule, "r1", "d1", "q1", "d2", "q1")
+    assert result.allowed, result.violations
+    new_schedule = apply_move(problem, schedule, result)
+
+    from school_timetable.verification.verifier import verify
+    report = verify(problem, new_schedule.entries)
+    assert report.passed, report.violations
+
+
+def test_every_allowed_move_in_dense_fixture_passes_independent_verification():
+    """H: exhaustively (not just "the first one found", unlike the
+    pre-existing `test_applying_accepted_move_passes_independent_
+    verification` above), every swap `validate_move` allows across the
+    dense real fixture, at several fixed seeds (including the seed that
+    originally reproduced the REQUIRED-block gap this slice fixes), must
+    produce a schedule the independent verifier accepts."""
+    from school_timetable.domain.indexing import ProblemIndex
+    from school_timetable.fixtures.valid_fixture import build_valid_fixture
+    from school_timetable.scheduling.editing import find_logical_occurrence
+    from school_timetable.scheduling.options import SolverOptions
+    from school_timetable.scheduling.solver import solve
+    from school_timetable.verification.verifier import verify
+
+    problem = build_valid_fixture()
+    checked_any = False
+    for seed in (5, 7, 11):
+        result = solve(problem, SolverOptions(random_seed=seed, num_search_workers=1))
+        assert result.status.value in ("OPTIMAL", "FEASIBLE")
+        schedule = Schedule(entries=result.entries)
+        index = ProblemIndex(problem)
+
+        simple_occs, seen = [], set()
+        for e in schedule.entries:
+            if e.requirement_id is None or (e.requirement_id, e.day_id, e.period_id) in seen:
+                continue
+            occ = find_logical_occurrence(problem, index, schedule, e.requirement_id, e.day_id, e.period_id)
+            if occ.length == 1 and len(occ.requirement_ids) == 1:
+                simple_occs.append((e.requirement_id, e.day_id, e.period_id))
+            seen.update((m.requirement_id, m.day_id, m.period_id) for m in occ.members)
+
+        for (r1, d1, p1) in simple_occs:
+            for (r2, d2, p2) in simple_occs:
+                if r1 == r2 or d1 == d2:
+                    continue
+                move_result = validate_move(problem, schedule, r1, d1, p1, d2, p2, index=index)
+                if not move_result.allowed:
+                    continue
+                if {e.requirement_id for e in move_result.plan.removed_entries} != {r1, r2}:
+                    continue
+                checked_any = True
+                new_schedule = apply_move(problem, schedule, move_result, index=index)
+                report = verify(problem, new_schedule.entries)
+                assert report.passed, (seed, r1, d1, p1, r2, d2, p2, report.violations)
+
+    assert checked_any, "expected at least one valid swap across the checked seeds"

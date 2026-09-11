@@ -49,7 +49,6 @@ from school_timetable.scheduling.editing import (
     validate_move,
 )
 from school_timetable.scheduling.solver import solve
-from school_timetable.verification.verifier import verify
 from tests_web.support.problem_writer import write_scheduling_problem
 
 
@@ -118,19 +117,11 @@ def _find_move(problem, index, schedule):
     """Finds one valid manual move in `schedule` -- same search strategy
     as `run_editing_demo.py` -- so tests exercise a genuine
     `validate_move`/`apply_move` round trip rather than a hand-built
-    candidate `Schedule`.
-
-    Also defensively re-verifies each `allowed` candidate with `verify`
-    before accepting it: `validate_move`'s own HARD-rule checks do not
-    currently cover every REQUIRED-block-pattern interaction a swap can
-    create (a pre-existing gap in the unmodified `scheduling.editing`
-    module, out of scope for this slice to fix) -- since `_seed` above
-    solves with no fixed random seed, a different solved schedule shape
-    on a different run can occasionally expose it. This mirrors the
-    exact safety net `ScheduleEditingService.move` itself runs before
-    ever persisting, so this helper always returns a move that is
-    genuinely safe to persist, regardless of which schedule the solver
-    happens to produce."""
+    candidate `Schedule`. `validate_move`'s own HARD-rule checks
+    (including REQUIRED-block-pattern integrity -- see the "manual
+    timetable editing correction slice" in `docs/SCHEDULE_EDITING.md`)
+    are trusted directly; no defensive post-hoc re-verification is
+    needed here."""
     simple_occs, seen = [], set()
     for e in schedule.entries:
         if e.requirement_id is None or (e.requirement_id, e.day_id, e.period_id) in seen:
@@ -149,9 +140,6 @@ def _find_move(problem, index, schedule):
                 continue
             swapped = {e.requirement_id for e in result.plan.removed_entries}
             if swapped != {r1, r2}:
-                continue
-            candidate = apply_move(problem, schedule, result, index=index)
-            if not verify(problem, candidate.entries).passed:
                 continue
             return result
     raise AssertionError("expected at least one valid move in this fixture")
