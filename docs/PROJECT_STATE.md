@@ -3894,3 +3894,88 @@ slice are: select a historical version, create a NEW immutable
 version, and promote the new version active, preserving append-only
 history and giving a safe Undo/Restore behavior. Not implemented in
 this task.
+
+## SCHEDULE VERSION HISTORY + RESTORE MVP END-TO-END ACCEPTANCE COMPLETED
+
+Closes the design slice the previous entry left open. Accepted
+behavior, proven both technically and by the user's own real-browser
+testing:
+
+- immutable `ScheduleVersion` history, listed newest-first, with a
+  clear active-version indicator
+- historical class timetable inspection at any specific past version
+- historical teacher timetable inspection at any specific past version
+- historical mode is strictly read-only -- no Move, Lock, Unlock, or
+  Re-optimize control is ever offered while viewing a past version
+- a safe restore confirmation that explains a NEW version will be
+  created (never phrased as "rolling back" or implying data loss)
+- Restore creates a NEW immutable `ScheduleVersion` -- the historical
+  source version is never reactivated in place and never mutated
+- the restored version's entries come exactly from the historical
+  source, never re-derived or re-solved
+- the restored version's locked occurrences come exactly from the
+  historical source, never inherited from whatever the version that was
+  active immediately before restoring happened to have locked
+- the new version's parent is the version that was active immediately
+  before the restore, preserving a genuine, unbroken lineage
+- stale-`base_version_number` protection, the same `409
+  STALE_SCHEDULE_VERSION` contract every other mutating editing command
+  already uses
+- the independent verifier re-checks the historical source's entries
+  against the current configuration before persisting (defense-in-depth)
+- every prior `ScheduleVersion` is preserved untouched -- restoring is
+  strictly additive, never destructive
+
+**Human real-browser acceptance (explicit, performed by the user):**
+Version History opened correctly; Version 9 was shown as ACTIVE;
+Version 1 opened in historical read-only mode, clearly labeled "Viewing
+historical Version 1 — read only"; Class and Teacher historical viewing
+both worked; every editing action was correctly unavailable in
+historical mode; "Restore this version" was offered and its
+confirmation shown; restoring Version 1 (while Version 9 was active)
+created a NEW Version 10, which became the active version; Version 1
+remained untouched historical data; success feedback was shown; the
+full history (Versions 1-9) remained preserved rather than rolled back
+or deleted.
+
+**Independent post-acceptance verification (read-only, no further
+mutation performed):** `editing-review-school`/`ay-editing-review-2026`
+now has 10 `ScheduleVersion` rows with exactly one active (Version 10);
+Version 10's `parent_version_number` is 9; Version 10's `entries`
+(160/160) and `locked_occurrences` (both empty) exactly equal Version
+1's; Versions 1-9 remain present and unchanged; the independent
+verifier passed against Version 10's entries with zero violations.
+
+**Concrete acceptance, stated plainly:** Version 1 restored while
+Version 9 was active -> NEW Version 10 created -> Version 10 became
+active -> Version 1 remained historical and immutable -> Versions 2-9
+remained preserved.
+
+**THE SCHEDULE VERSION HISTORY + RESTORE MVP IS NOW END-TO-END
+ACCEPTED.**
+
+**Dataset status:** `generation-review-school`/`ay-generation-review-2026`
+remains untouched (still exactly `ScheduleVersion` 1, `OPTIMAL`, penalty
+0). `synthetic-school`/`ay-2026` remains at its already-reclassified
+state (version 7, no longer the pristine baseline), unchanged by this
+closure. `editing-review-school`/`ay-editing-review-2026` now reflects
+the accepted restore (10 versions, Version 10 active) -- this is the
+dataset's expected, intentional disposable-acceptance state, not a
+defect.
+
+**SCHEDULE VERSION HISTORY + RESTORE MVP ACCEPTANCE CLOSED ON MAIN** --
+docs-only, zero production-code change, no migration.
+
+**Next major product area: safe configuration changes after schedule
+generation.** The system currently locks scheduling configuration
+outright once a `Schedule` exists (Add Teacher, Add Class, Add Subject,
+Add Assignment, availability/resource changes, etc. all become
+disabled) -- safe for data integrity, but real schools need to change
+configuration after a timetable has already been generated. The next
+product/design slice should define a safe workflow: configuration
+locked -> admin explicitly chooses "Edit scheduling configuration" ->
+the current timetable/history remain preserved -> configuration changes
+are made under a controlled mode -> the existing active schedule
+becomes clearly stale/out-of-date -> the admin must regenerate/
+re-optimize against the new configuration -> no silent mutation of any
+historical `ScheduleVersion`. Not implemented in this task.

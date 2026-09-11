@@ -4633,3 +4633,78 @@ historical version -> create a NEW immutable `ScheduleVersion` copied
 from it -> parent it from the currently-active version -> promote the
 new version active, preserving append-only history and giving a safe
 Undo/Restore behavior. Not implemented in this task.
+
+## SCHEDULE VERSION HISTORY + RESTORE MVP END-TO-END ACCEPTANCE COMPLETED
+
+Closes the design slice the previous entry left open, implemented in
+commit `7fa6241` ("feat: add schedule version history and restore").
+
+**Accepted behavior:** immutable `ScheduleVersion` history listed
+newest-first with a clear active-version indicator; historical class
+and teacher timetable inspection at any specific past version; strictly
+read-only historical mode (Move/Lock/Unlock/Re-optimize never offered
+against a past version); a restore confirmation that explicitly states
+a NEW version will be created (never phrased to suggest data loss);
+Restore creates a NEW immutable `ScheduleVersion` -- the historical
+source is never reactivated or mutated; the restored version's entries
+and locked occurrences come exactly from the historical source, never
+re-derived and never inherited from whatever was active immediately
+before restoring; the new version's parent is that previously-active
+version; the same `409 STALE_SCHEDULE_VERSION` protection every other
+mutating editing command already uses; the independent verifier
+re-checks the historical source against the current configuration
+before persisting (defense-in-depth); every prior version is preserved
+untouched -- restoring is strictly additive, never destructive.
+
+**Human real-browser acceptance (explicit, performed by the user) on
+`editing-review-school`/`ay-editing-review-2026`:** Version History
+opened correctly; Version 9 was shown as ACTIVE; Version 1 opened in
+historical read-only mode, clearly labeled "Viewing historical Version
+1 — read only"; Class and Teacher historical viewing both worked; every
+editing action was correctly unavailable in historical mode; "Restore
+this version" was offered with its confirmation shown; restoring
+Version 1 while Version 9 was active created a NEW Version 10, which
+became active; Version 1 remained untouched historical data; success
+feedback was shown; the full history (Versions 1-9) remained preserved.
+
+**Independent post-acceptance verification (read-only, no further
+mutation performed):** 10 `ScheduleVersion` rows now exist for
+`editing-review-school`, exactly one active (Version 10);
+`parent_version_number` of Version 10 is 9; Version 10's `entries`
+(160/160) and `locked_occurrences` (both empty) exactly equal Version
+1's, loaded independently via `ScheduleVersionRepository.get_version`;
+Versions 1-9 remain present and unchanged; the independent verifier
+passed against Version 10's entries with zero violations.
+
+**Concrete acceptance, stated plainly:** Version 1 restored while
+Version 9 was active -> NEW Version 10 created -> Version 10 became
+active -> Version 1 remained historical and immutable -> Versions 2-9
+remained preserved.
+
+**THE SCHEDULE VERSION HISTORY + RESTORE MVP IS NOW END-TO-END
+ACCEPTED.**
+
+**Dataset status:** `generation-review-school`/`ay-generation-review-2026`
+remains untouched (`ScheduleVersion` 1, `OPTIMAL`, penalty 0).
+`synthetic-school`/`ay-2026` remains at its already-reclassified state
+(version 7), unchanged by this closure. `editing-review-school`/
+`ay-editing-review-2026` now reflects the accepted restore (10
+versions, Version 10 active) -- the dataset's expected, intentional
+disposable-acceptance state, not a defect.
+
+**SCHEDULE VERSION HISTORY + RESTORE MVP ACCEPTANCE CLOSED ON MAIN** --
+docs-only, zero production-code change, no migration.
+
+**Next major product area: safe configuration changes after schedule
+generation.** The system currently locks scheduling configuration
+outright once a `Schedule` exists (Add Teacher, Add Class, Add Subject,
+Add Assignment, availability/resource changes, etc. all become
+disabled) -- safe for data integrity, but real schools need to change
+configuration after a timetable has already been generated. The next
+product/design slice should define a safe workflow: configuration
+locked -> admin explicitly chooses "Edit scheduling configuration" ->
+the current timetable/history remain preserved -> configuration changes
+are made under a controlled mode -> the existing active schedule
+becomes clearly stale/out-of-date -> the admin must regenerate/
+re-optimize against the new configuration -> no silent mutation of any
+historical `ScheduleVersion`. Not implemented in this task.
