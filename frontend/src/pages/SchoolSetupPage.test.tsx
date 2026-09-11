@@ -6,9 +6,11 @@ import { getTeachers } from "../api/teachers";
 import { getClasses } from "../api/classes";
 import { getSubjects } from "../api/subjects";
 import { getSpecialActivities } from "../api/specialActivities";
+import { getResources } from "../api/resources";
 import { loadAppConfig } from "../config/appConfig";
 import type { ClassesProjectionResponse, SubjectsProjectionResponse, TeachersProjectionResponse } from "../api/types";
 import type { SpecialActivitiesProjectionResponse } from "../api/specialActivities";
+import type { ResourcesProjectionResponse } from "../api/resources";
 
 vi.mock("../api/teachers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/teachers")>();
@@ -26,6 +28,10 @@ vi.mock("../api/specialActivities", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/specialActivities")>();
   return { ...actual, getSpecialActivities: vi.fn() };
 });
+vi.mock("../api/resources", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/resources")>();
+  return { ...actual, getResources: vi.fn() };
+});
 vi.mock("../config/appConfig", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/appConfig")>();
   return { ...actual, loadAppConfig: vi.fn() };
@@ -35,6 +41,7 @@ const mockedGetTeachers = vi.mocked(getTeachers);
 const mockedGetClasses = vi.mocked(getClasses);
 const mockedGetSubjects = vi.mocked(getSubjects);
 const mockedGetSpecialActivities = vi.mocked(getSpecialActivities);
+const mockedGetResources = vi.mocked(getResources);
 const mockedLoadAppConfig = vi.mocked(loadAppConfig);
 
 const TEACHERS_PROJECTION: TeachersProjectionResponse = {
@@ -50,6 +57,10 @@ const SPECIAL_ACTIVITIES_PROJECTION: SpecialActivitiesProjectionResponse = {
   configuration_locked: false,
   special_activities: [{ id: "club_debate", name: "Debate Club" }],
 };
+const RESOURCES_PROJECTION: ResourcesProjectionResponse = {
+  configuration_locked: false,
+  resources: [{ id: "resource_gym", name: "Gym", capacity: 1 }],
+};
 
 beforeEach(() => {
   mockedLoadAppConfig.mockReturnValue({ schoolId: "s1", academicYearId: "y1" });
@@ -57,6 +68,7 @@ beforeEach(() => {
   mockedGetClasses.mockResolvedValue(CLASSES_PROJECTION);
   mockedGetSubjects.mockResolvedValue(SUBJECTS_PROJECTION);
   mockedGetSpecialActivities.mockResolvedValue(SPECIAL_ACTIVITIES_PROJECTION);
+  mockedGetResources.mockResolvedValue(RESOURCES_PROJECTION);
 });
 
 afterEach(() => {
@@ -114,6 +126,7 @@ describe("SchoolSetupPage", () => {
     expect(mockedGetClasses).not.toHaveBeenCalled();
     expect(mockedGetSubjects).not.toHaveBeenCalled();
     expect(mockedGetSpecialActivities).not.toHaveBeenCalled();
+    expect(mockedGetResources).not.toHaveBeenCalled();
   });
 
   it("switching to Classes loads the Classes projection only at that point, not on initial mount", async () => {
@@ -147,12 +160,28 @@ describe("SchoolSetupPage", () => {
     expect(mockedGetSpecialActivities).toHaveBeenCalledTimes(1);
   });
 
-  it("shows exactly four tabs in the exact order Teachers, Classes, Subjects, Special Activities", async () => {
+  it("switching to Rooms & Resources loads the Resources projection", async () => {
+    renderPage();
+    await screen.findByText("Ada Lovelace");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Rooms & Resources" }));
+
+    await screen.findByText("Gym");
+    expect(mockedGetResources).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows exactly five tabs in the exact order Teachers, Classes, Subjects, Special Activities, Rooms & Resources", async () => {
     renderPage();
     await screen.findByText("Ada Lovelace");
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Teachers", "Classes", "Subjects", "Special Activities"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "Teachers",
+      "Classes",
+      "Subjects",
+      "Special Activities",
+      "Rooms & Resources",
+    ]);
   });
 
   it("the inactive panel's content is not present in the document", async () => {
@@ -161,6 +190,7 @@ describe("SchoolSetupPage", () => {
     expect(screen.queryByText("8-A")).not.toBeInTheDocument();
     expect(screen.queryByText("Mathematics")).not.toBeInTheDocument();
     expect(screen.queryByText("Debate Club")).not.toBeInTheDocument();
+    expect(screen.queryByText("Gym")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Classes" }));
     await screen.findByText("8-A");
@@ -199,6 +229,7 @@ describe("SchoolSetupPage", () => {
     const classesTab = screen.getByRole("tab", { name: "Classes" });
     const subjectsTab = screen.getByRole("tab", { name: "Subjects" });
     const specialActivitiesTab = screen.getByRole("tab", { name: "Special Activities" });
+    const roomsResourcesTab = screen.getByRole("tab", { name: "Rooms & Resources" });
 
     teachersTab.focus();
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
@@ -215,13 +246,17 @@ describe("SchoolSetupPage", () => {
     expect(specialActivitiesTab).toHaveAttribute("aria-selected", "true");
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    await screen.findByText("Gym");
+    expect(roomsResourcesTab).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
     await screen.findByText("Ada Lovelace");
     expect(teachersTab).toHaveAttribute("aria-selected", "true");
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowLeft" });
-    await screen.findByText("Debate Club");
-    expect(specialActivitiesTab).toHaveAttribute("aria-selected", "true");
-    expect(document.activeElement).toBe(specialActivitiesTab);
+    await screen.findByText("Gym");
+    expect(roomsResourcesTab).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(roomsResourcesTab);
   });
 
   it("Home/End jump to the first/last tab", async () => {
@@ -229,13 +264,13 @@ describe("SchoolSetupPage", () => {
     await screen.findByText("Ada Lovelace");
 
     const teachersTab = screen.getByRole("tab", { name: "Teachers" });
-    const specialActivitiesTab = screen.getByRole("tab", { name: "Special Activities" });
+    const roomsResourcesTab = screen.getByRole("tab", { name: "Rooms & Resources" });
 
     teachersTab.focus();
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "End" });
-    await screen.findByText("Debate Club");
-    expect(specialActivitiesTab).toHaveAttribute("aria-selected", "true");
-    expect(document.activeElement).toBe(specialActivitiesTab);
+    await screen.findByText("Gym");
+    expect(roomsResourcesTab).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(roomsResourcesTab);
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "Home" });
     await screen.findByText("Ada Lovelace");
@@ -285,6 +320,13 @@ describe("SchoolSetupPage", () => {
       renderPage({ requestedTab: "special-activities" });
       await screen.findByText("Debate Club");
       expect(screen.getByRole("tab", { name: "Special Activities" })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("requestedTab: 'rooms-resources' opens on the Rooms & Resources tab", async () => {
+      renderPage({ requestedTab: "rooms-resources" });
+      await screen.findByText("Gym");
+      expect(screen.getByRole("tab", { name: "Rooms & Resources" })).toHaveAttribute("aria-selected", "true");
+      expect(mockedGetTeachers).not.toHaveBeenCalled();
     });
 
     it("an invalid requestedTab value falls back safely to Teachers", async () => {

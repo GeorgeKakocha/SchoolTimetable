@@ -4,6 +4,7 @@ import TeachersPanel from "../components/setup/TeachersPanel";
 import ClassesPanel from "../components/setup/ClassesPanel";
 import SubjectsPanel from "../components/setup/SubjectsPanel";
 import SpecialActivitiesPanel from "../components/setup/SpecialActivitiesPanel";
+import RoomsResourcesPanel from "../components/setup/RoomsResourcesPanel";
 
 /**
  * Real-School Setup MVP Slice E: `/configuration/setup`, the School
@@ -12,6 +13,11 @@ import SpecialActivitiesPanel from "../components/setup/SpecialActivitiesPanel";
  * tabs -- no nested tab routes (`/configuration/setup/teachers` etc.),
  * matching the locked design-gate contract that tabs are page state
  * only, not router state.
+ *
+ * Resources C adds a fifth tab, "Rooms & Resources" (the user-facing
+ * label for the existing `Resource` catalog), following the exact
+ * same self-contained-panel architecture as the other four -- no
+ * change to the tab mechanism itself.
  *
  * Only the active tab's panel is ever mounted: the tabpanel below
  * renders exactly one panel component per render, so switching tabs
@@ -44,13 +50,19 @@ import SpecialActivitiesPanel from "../components/setup/SpecialActivitiesPanel";
  * and default/stay on "teachers"/whatever tab is locally active.
  */
 
-export type TabKey = "teachers" | "classes" | "subjects" | "special-activities";
+export type TabKey = "teachers" | "classes" | "subjects" | "special-activities" | "rooms-resources";
 
 export interface SchoolSetupNavigationState {
   requestedTab?: TabKey;
 }
 
-const VALID_TAB_KEYS: readonly TabKey[] = ["teachers", "classes", "subjects", "special-activities"];
+const VALID_TAB_KEYS: readonly TabKey[] = [
+  "teachers",
+  "classes",
+  "subjects",
+  "special-activities",
+  "rooms-resources",
+];
 
 export function isSchoolSetupTabKey(value: unknown): value is TabKey {
   return typeof value === "string" && (VALID_TAB_KEYS as readonly string[]).includes(value);
@@ -66,6 +78,7 @@ const TABS: readonly TabDefinition[] = [
   { key: "classes", label: "Classes" },
   { key: "subjects", label: "Subjects" },
   { key: "special-activities", label: "Special Activities" },
+  { key: "rooms-resources", label: "Rooms & Resources" },
 ];
 
 function tabId(key: TabKey): string {
@@ -178,6 +191,7 @@ function SchoolSetupPage() {
         {activeTab === "classes" && <ClassesPanel />}
         {activeTab === "subjects" && <SubjectsPanel />}
         {activeTab === "special-activities" && <SpecialActivitiesPanel />}
+        {activeTab === "rooms-resources" && <RoomsResourcesPanel />}
       </div>
     </div>
   );

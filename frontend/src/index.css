@@ -1000,6 +1000,27 @@ select:focus-visible {
   width: 18%;
 }
 
+.col-setup-capacity {
+  width: 16%;
+}
+
+/* Resources C: a small, visually-distinct explanatory note -- a tinted,
+   bordered callout, deliberately different from `.field-hint`'s plain
+   muted text, so the "what does capacity mean" explanation reads as a
+   separate callout rather than blending into the editable field above
+   it. */
+.capacity-hint {
+  margin: -0.35rem 0 0.75rem;
+  padding: 0.45rem 0.65rem;
+  background-color: #eef4fb;
+  border: 1px solid #cddced;
+  border-left: 3px solid #3a72c4;
+  border-radius: 3px;
+  color: #2c4b73;
+  font-size: 0.8em;
+  line-height: 1.35;
+}
+
 .row-edit-form label {
   display: block;
   margin: 0 0 0.5rem;
@@ -1031,6 +1052,14 @@ select:focus-visible {
 @media (max-width: 640px) {
   .setup-tablist {
     gap: 1rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .setup-tab {
+    flex: 0 0 auto;
   }
 
   .setup-table,
