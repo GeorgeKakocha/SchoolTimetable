@@ -839,3 +839,192 @@ class ResourceInUseError(Exception):
             f"resource {resource_id!r} is still referenced by {list(referenced_by)!r} "
             f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
         )
+
+
+class InvalidDayError(Exception):
+    """A `CalendarService` Day create/update/delete/move request fails
+    input validation (Calendar A) -- a blank `name`, the final Day
+    (`NO_CALENDAR_DAYS`), or a move request at the top/bottom edge.
+    Carries the validator's own safe, structured diagnostics as an
+    immutable tuple, exactly like `InvalidResourceError`."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid day operation for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class DuplicateDayError(Exception):
+    """A `CalendarService` Day create/update request would produce a
+    second Day sharing the identical (exact, case-sensitive, trimmed)
+    `name` within one academic year (Calendar A)."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, name: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.name = name
+        super().__init__(
+            f"a day named {name!r} already exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class DayNotFoundError(Exception):
+    """No Day with this natural ID exists in this school/academic-year's
+    persisted configuration (Calendar A). Carries only the natural
+    identifiers already supplied -- no persistence surrogate ID."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, day_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.day_id = day_id
+        super().__init__(
+            f"no day {day_id!r} for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class DayInUseError(Exception):
+    """A `CalendarService.day_delete` request targets a Day currently
+    referenced by a persisted `TeacherAvailability`, `ReservedBlock`
+    slot, or `FixedPlacement` (Calendar A) -- never cascade-deleted.
+    `referenced_by` names every referencing entity kind found, never a
+    persistence surrogate ID. Historical `ScheduleEntry`/
+    `LockedOccurrence` references are never checked here -- once any
+    Schedule exists, every Calendar write is already rejected by
+    `ConfigurationLockedError` (Decision #35/#36), so this check can
+    never even be reached in that state."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        day_id: str,
+        referenced_by: tuple[str, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.day_id = day_id
+        self.referenced_by = referenced_by
+        super().__init__(
+            f"day {day_id!r} is still referenced by {list(referenced_by)!r} "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )
+
+
+class InvalidPeriodError(Exception):
+    """A `CalendarService` Period create/update/delete/move request
+    fails input validation (Calendar A) -- a blank `name`, an
+    only-one-of `start_time`/`end_time`, `start_time >= end_time`, a
+    clock-time overlap with a neighboring Period, the final
+    instructional Period (`NO_INSTRUCTIONAL_PERIODS`), or a move
+    request at the top/bottom edge. Carries the validator's own safe,
+    structured diagnostics as an immutable tuple, exactly like
+    `InvalidResourceError`."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"invalid period operation for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {[e.code for e in validation_errors]!r}"
+        )
+
+
+class DuplicatePeriodError(Exception):
+    """A `CalendarService` Period create/update request would produce a
+    second Period sharing the identical (exact, case-sensitive,
+    trimmed) `name` within one academic year (Calendar A)."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, name: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.name = name
+        super().__init__(
+            f"a period named {name!r} already exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class PeriodNotFoundError(Exception):
+    """No Period with this natural ID exists in this school/academic-
+    year's persisted configuration (Calendar A). Carries only the
+    natural identifiers already supplied -- no persistence surrogate
+    ID."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, period_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.period_id = period_id
+        super().__init__(
+            f"no period {period_id!r} for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class PeriodInUseError(Exception):
+    """A `CalendarService.period_delete` request targets a Period
+    currently referenced by a persisted `TeacherAvailability`,
+    `ReservedBlock` slot, or `FixedPlacement` (`referenced_by` includes
+    the matching entries among `TEACHER_AVAILABILITY`/`RESERVED_BLOCK`/
+    `FIXED_PLACEMENT`) -- OR by a `TeachingRequirement.time_preferences`
+    entry whose `preferred_period_indexes` would silently change
+    meaning if this delete proceeded (`referenced_by` then includes
+    `TIME_PREFERENCE`; see `calendar_rules.validate_period_delete`'s
+    own docstring for the exact index-drift-safety rule). Never
+    cascade-deleted. Historical `ScheduleEntry`/`LockedOccurrence`
+    references are never checked here, for the same reason
+    `DayInUseError` never checks them."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        period_id: str,
+        referenced_by: tuple[str, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.period_id = period_id
+        self.referenced_by = referenced_by
+        super().__init__(
+            f"period {period_id!r} is still referenced by {list(referenced_by)!r} "
+            f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )
+
+
+class PeriodReorderBlockedError(Exception):
+    """A `CalendarService.period_move` request is rejected outright
+    (Calendar A, section 12's TimePreference index-drift safety rule)
+    because at least one `TeachingRequirement` in this academic year
+    carries a `TimePreference`/`preferred_period_indexes` entry --
+    `TimePreference` stores raw `Period.index` integers, not `Period.id`
+    references, so *any* reorder could silently redirect an existing
+    preference to a different Period with no structural error. A blanket
+    block (rather than a precise reachability check, which `period_delete`
+    does use) is the deliberately simpler, safer rule for reorder,
+    matching the task's own explicit instruction."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str, period_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.period_id = period_id
+        super().__init__(
+            f"period {period_id!r} cannot be reordered while teaching requirements contain time "
+            f"preferences, for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )

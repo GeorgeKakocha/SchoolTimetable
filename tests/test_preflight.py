@@ -1,6 +1,9 @@
+from dataclasses import replace
+from datetime import time
+
 from school_timetable.domain.activities import Activity, ActivityKind
 from school_timetable.domain.blocks import FixedPlacement, ReservedBlock
-from school_timetable.domain.calendar import Period, TimeSlot, AcademicYear
+from school_timetable.domain.calendar import Day, Period, TimeSlot, AcademicYear
 from school_timetable.domain.groups import ClassSection, ParticipantGroup, ParticipantGroupRole
 from school_timetable.domain.people import AvailabilityStatus, Teacher, TeacherAvailability
 from school_timetable.domain.problem import SchedulingProblem
@@ -45,6 +48,88 @@ def test_impossible_fixture_flags_teacher_overload():
     errors = run_preflight(build_impossible_fixture())
     codes = {e.code for e in errors}
     assert "TEACHER_OVERLOADED" in codes
+
+
+# -- Calendar A: calendar shape (section 3/13) -------------------------------
+
+
+def test_no_days_rejected():
+    problem = _base_problem(days=())
+    codes = {e.code for e in run_preflight(problem)}
+    assert "NO_CALENDAR_DAYS" in codes
+
+
+def test_no_instructional_periods_rejected():
+    periods = tuple(replace(p, is_instructional=False) for p in build_periods())
+    problem = _base_problem(periods=periods)
+    codes = {e.code for e in run_preflight(problem)}
+    assert "NO_INSTRUCTIONAL_PERIODS" in codes
+
+
+def test_single_day_single_instructional_period_is_the_minimum_valid_calendar():
+    # No CLASS_OCCUPANCY_MISMATCH-style unrelated diagnostic is asserted
+    # away here (that check needs a fully declared workload, orthogonal
+    # to calendar shape) -- only that the calendar-shape checks
+    # themselves accept the minimum-valid-calendar case.
+    problem = _base_problem(
+        days=(Day(id="d1", name="Day 1", index=0),),
+        periods=(Period(id="p1", name="P1", index=0, block_id="block_0"),),
+        class_sections=(), participant_groups=(),
+    )
+    assert run_preflight(problem) == []
+
+
+def test_duplicate_day_index_rejected():
+    problem = _base_problem(days=(Day(id="d1", name="D1", index=0), Day(id="d2", name="D2", index=0)))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "DUPLICATE_DAY_INDEX" in codes
+
+
+def test_non_contiguous_day_index_rejected():
+    problem = _base_problem(days=(Day(id="d1", name="D1", index=0), Day(id="d2", name="D2", index=2)))
+    codes = {e.code for e in run_preflight(problem)}
+    assert "NON_CONTIGUOUS_DAY_INDEX" in codes
+
+
+def test_duplicate_period_index_rejected():
+    problem = _base_problem(
+        periods=(
+            Period(id="p1", name="P1", index=0, block_id="block_0"),
+            Period(id="p2", name="P2", index=0, block_id="block_0"),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "DUPLICATE_PERIOD_INDEX" in codes
+
+
+def test_non_contiguous_period_index_rejected():
+    problem = _base_problem(
+        periods=(
+            Period(id="p1", name="P1", index=0, block_id="block_0"),
+            Period(id="p2", name="P2", index=2, block_id="block_0"),
+        ),
+    )
+    codes = {e.code for e in run_preflight(problem)}
+    assert "NON_CONTIGUOUS_PERIOD_INDEX" in codes
+
+
+# -- Calendar A: period clock-time ordering ----------------------------------
+
+
+def test_period_clock_time_overlap_rejected():
+    periods = (
+        Period(id="p1", name="P1", index=0, block_id="block_0", start_time=time(9, 0), end_time=time(10, 0)),
+        Period(id="p2", name="P2", index=1, block_id="block_0", start_time=time(9, 30), end_time=time(10, 30)),
+    )
+    problem = _base_problem(periods=periods)
+    codes = {e.code for e in run_preflight(problem)}
+    assert "PERIOD_CLOCK_TIME_OVERLAP" in codes
+
+
+def test_period_clock_times_null_produces_no_overlap_diagnostic():
+    # Solver/preflight must never require clock times -- purely optional
+    # display metadata.
+    assert run_preflight(build_valid_fixture()) == []
 
 
 def test_unknown_participant_group_reference():

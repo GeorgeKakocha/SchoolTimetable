@@ -49,6 +49,7 @@ def write_scheduling_problem(session: Session, problem: SchedulingProblem) -> No
         row = orm.Period(
             academic_year_id=year_id, natural_id=period.id, name=period.name, idx=period.index,
             block_id=period.block_id, is_instructional=period.is_instructional,
+            start_time=period.start_time, end_time=period.end_time,
         )
         session.add(row)
         session.flush()

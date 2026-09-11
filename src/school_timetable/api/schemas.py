@@ -44,6 +44,10 @@ class PeriodResponse(BaseModel):
     index: int
     block_id: str
     is_instructional: bool
+    start_time: str | None = None
+    """Calendar A: `"HH:MM"`, or `null` when unset. Additive -- every
+    pre-Calendar-A `/config` consumer already ignores unknown fields."""
+    end_time: str | None = None
 
 
 class ClassSectionResponse(BaseModel):
@@ -1043,3 +1047,136 @@ class ResourceInUseErrorResponse(BaseModel):
     code: Literal["RESOURCE_IN_USE"]
     detail: str
     referenced_by: tuple[str, ...]
+
+
+# -- Calendar A (`GET/POST/PUT/DELETE .../calendar/...`). ------------------
+# `start_time`/`end_time` are always `"HH:MM"` strings (never a raw
+# `datetime.time`/ISO value with seconds) -- a plain `str | None` field
+# is the simplest wire shape needing zero custom Pydantic (de)serializer
+# plumbing; parsing/formatting lives in `api/serializer.py`. Raw
+# `block_id` is never part of this public contract -- `starts_new_block`
+# is the only block-boundary field a client ever sees or sends.
+
+
+class CalendarDayResponse(BaseModel):
+    id: str
+    name: str
+    index: int
+
+
+class CalendarPeriodResponse(BaseModel):
+    id: str
+    name: str
+    index: int
+    start_time: str | None
+    end_time: str | None
+    starts_new_block: bool
+    is_instructional: bool
+
+
+class CalendarProjectionResponse(BaseModel):
+    configuration_locked: bool
+    days: tuple[CalendarDayResponse, ...]
+    periods: tuple[CalendarPeriodResponse, ...]
+
+
+class DayWriteRequest(BaseModel):
+    """POST/PUT request body. The natural ID is never accepted here --
+    always server-generated on create and immutable on update. Raw
+    numeric `index` is never accepted here either -- ordering changes
+    only via `POST .../days/{day_id}/move`."""
+
+    name: str
+
+
+class DayWriteResponse(BaseModel):
+    """POST/PUT success body -- the written Day's own resolved fields."""
+
+    id: str
+    name: str
+    index: int
+
+
+class DayDeleteResponse(BaseModel):
+    """DELETE success body."""
+
+    deleted_id: str
+
+
+class DayMoveRequest(BaseModel):
+    direction: Literal["up", "down"]
+
+
+class PeriodWriteRequest(BaseModel):
+    """POST/PUT request body. The natural ID is never accepted here.
+    `is_instructional` is deliberately absent (locked policy) -- new
+    Periods are always instructional, and an existing legacy
+    `is_instructional=False` row's own flag is preserved unchanged
+    regardless of this request body."""
+
+    name: str
+    start_time: str | None = None
+    end_time: str | None = None
+    starts_new_block: bool = False
+
+
+class PeriodWriteResponse(BaseModel):
+    """POST/PUT success body -- the written Period's own resolved
+    fields."""
+
+    id: str
+    name: str
+    index: int
+    start_time: str | None
+    end_time: str | None
+    starts_new_block: bool
+    is_instructional: bool
+
+
+class PeriodDeleteResponse(BaseModel):
+    """DELETE success body."""
+
+    deleted_id: str
+
+
+class PeriodMoveRequest(BaseModel):
+    direction: Literal["up", "down"]
+
+
+class InvalidDayErrorResponse(BaseModel):
+    code: Literal["INVALID_DAY"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class DuplicateDayErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_DAY"]
+    detail: str
+
+
+class DayInUseErrorResponse(BaseModel):
+    code: Literal["DAY_IN_USE"]
+    detail: str
+    referenced_by: tuple[str, ...]
+
+
+class InvalidPeriodErrorResponse(BaseModel):
+    code: Literal["INVALID_PERIOD"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class DuplicatePeriodErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_PERIOD"]
+    detail: str
+
+
+class PeriodInUseErrorResponse(BaseModel):
+    code: Literal["PERIOD_IN_USE"]
+    detail: str
+    referenced_by: tuple[str, ...]
+
+
+class PeriodReorderBlockedErrorResponse(BaseModel):
+    code: Literal["PERIOD_REORDER_BLOCKED_BY_TIME_PREFERENCES"]
+    detail: str

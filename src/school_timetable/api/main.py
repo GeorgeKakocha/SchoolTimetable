@@ -31,6 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from school_timetable.api.calendar_routes import router as calendar_router
 from school_timetable.api.class_section_routes import router as class_section_router
 from school_timetable.api.config_routes import router as config_router
 from school_timetable.api.reserved_activity_routes import router as reserved_activity_router
@@ -54,6 +55,7 @@ app.include_router(teacher_availability_router)
 app.include_router(special_activity_router)
 app.include_router(reserved_activity_router)
 app.include_router(resource_router)
+app.include_router(calendar_router)
 
 
 class HealthResponse(BaseModel):

@@ -155,6 +155,8 @@ def period_to_domain(row: orm.Period) -> Period:
         index=row.idx,
         block_id=row.block_id,
         is_instructional=row.is_instructional,
+        start_time=row.start_time,
+        end_time=row.end_time,
     )
 
 

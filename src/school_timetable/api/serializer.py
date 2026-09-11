@@ -21,11 +21,16 @@ carries every field a `ScheduleEntryResponse` needs, fully resolved.
 """
 from __future__ import annotations
 
+from datetime import time
+
 from school_timetable.api.schemas import (
     AcademicYearResponse,
     ActiveScheduleResponse,
     ActivityOptionResponse,
     ActivityResponse,
+    CalendarDayResponse,
+    CalendarPeriodResponse,
+    CalendarProjectionResponse,
     ClassSectionProjectionItemResponse,
     ClassSectionResponse,
     ClassSectionsProjectionResponse,
@@ -35,12 +40,14 @@ from school_timetable.api.schemas import (
     ClassTimetableRowResponse,
     DayHeaderResponse,
     DayResponse,
+    DayWriteResponse,
     DistributionPolicyResponse,
     FixedPlacementResponse,
     GenerateScheduleResponse,
     LessonBlockPolicyResponse,
     ParticipantGroupResponse,
     PeriodResponse,
+    PeriodWriteResponse,
     ReservedActivitiesProjectionResponse,
     ReservedActivityClassSectionOptionResponse,
     ReservedActivityDayOptionResponse,
@@ -90,8 +97,11 @@ from school_timetable.api.schemas import (
     ValidationDiagnosticResponse,
     WholeClassTargetResponse,
 )
+from school_timetable.application.calendar_models import DayWriteResult, PeriodWriteResult
+from school_timetable.application.calendar_projection_models import CalendarProjectionView
 from school_timetable.application.class_section_projection_models import ClassSectionsProjectionView
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
+from school_timetable.application.errors import InvalidPeriodError
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.application.reserved_activity_projection_models import ReservedActivitiesProjectionView
 from school_timetable.application.resource_projection_models import ResourcesProjectionView
@@ -111,6 +121,34 @@ from school_timetable.domain.result import ScheduleEntry
 from school_timetable.validation.errors import ValidationError
 
 
+def format_hhmm(value: time | None) -> str | None:
+    """Calendar A: the one, stable public wire format for a clock time --
+    `"HH:MM"`, never seconds/microseconds/an ISO value. `None` stays
+    `None` (an unset bell time)."""
+    if value is None:
+        return None
+    return f"{value.hour:02d}:{value.minute:02d}"
+
+
+def parse_hhmm(
+    text: str | None, school_natural_id: str, academic_year_natural_id: str,
+) -> time | None:
+    """The inverse of `format_hhmm` -- `None` stays `None`; anything not
+    matching `HH:MM` (00-23, 00-59) raises `InvalidPeriodError` (a safe,
+    structured 422) rather than a raw `ValueError`/500."""
+    if text is None:
+        return None
+    parts = text.split(":")
+    if len(parts) == 2 and all(part.isdigit() and len(part) == 2 for part in parts):
+        hour, minute = int(parts[0]), int(parts[1])
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return time(hour=hour, minute=minute)
+    raise InvalidPeriodError(
+        school_natural_id, academic_year_natural_id,
+        (ValidationError("INVALID_TIME_FORMAT", f"{text!r} is not a valid HH:MM time"),),
+    )
+
+
 def config_response_from_problem(problem: SchedulingProblem) -> SchedulingConfigResponse:
     return SchedulingConfigResponse(
         school=SchoolResponse(id=problem.school.id, name=problem.school.name),
@@ -120,6 +158,7 @@ def config_response_from_problem(problem: SchedulingProblem) -> SchedulingConfig
             PeriodResponse(
                 id=p.id, name=p.name, index=p.index, block_id=p.block_id,
                 is_instructional=p.is_instructional,
+                start_time=format_hhmm(p.start_time), end_time=format_hhmm(p.end_time),
             )
             for p in problem.periods
         ),
@@ -592,4 +631,37 @@ def resources_projection_response_from_view(view: ResourcesProjectionView) -> Re
         resources=tuple(
             ResourceProjectionItemResponse(id=r.id, name=r.name, capacity=r.capacity) for r in view.resources
         ),
+    )
+
+
+# -- Calendar A. -------------------------------------------------------------
+
+
+def calendar_projection_response_from_view(view: CalendarProjectionView) -> CalendarProjectionResponse:
+    """Pure application-view-model -> Pydantic conversion only -- order
+    already resolved in `CalendarProjectionService` (`idx` order); this
+    function never re-sorts anything."""
+    return CalendarProjectionResponse(
+        configuration_locked=view.configuration_locked,
+        days=tuple(CalendarDayResponse(id=d.id, name=d.name, index=d.index) for d in view.days),
+        periods=tuple(
+            CalendarPeriodResponse(
+                id=p.id, name=p.name, index=p.index, start_time=format_hhmm(p.start_time),
+                end_time=format_hhmm(p.end_time), starts_new_block=p.starts_new_block,
+                is_instructional=p.is_instructional,
+            )
+            for p in view.periods
+        ),
+    )
+
+
+def day_write_response_from_result(result: DayWriteResult) -> DayWriteResponse:
+    return DayWriteResponse(id=result.id, name=result.name, index=result.index)
+
+
+def period_write_response_from_result(result: PeriodWriteResult) -> PeriodWriteResponse:
+    return PeriodWriteResponse(
+        id=result.id, name=result.name, index=result.index, start_time=format_hhmm(result.start_time),
+        end_time=format_hhmm(result.end_time), starts_new_block=result.starts_new_block,
+        is_instructional=result.is_instructional,
     )

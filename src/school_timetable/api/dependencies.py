@@ -32,6 +32,8 @@ from __future__ import annotations
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from school_timetable.application.calendar_projection_service import CalendarProjectionService
+from school_timetable.application.calendar_service import CalendarService
 from school_timetable.application.class_section_projection_service import ClassSectionProjectionService
 from school_timetable.application.class_section_service import ClassSectionService
 from school_timetable.application.class_timetable_service import ClassTimetableService
@@ -62,6 +64,10 @@ from school_timetable.persistence.db import SessionLocal, get_session
 from school_timetable.persistence.problem_repository import (
     SessionFactorySchedulingProblemRepository,
     SqlAlchemySchedulingProblemRepository,
+)
+from school_timetable.persistence.calendar_repository import (
+    SqlAlchemyCalendarDayRepository,
+    SqlAlchemyCalendarPeriodRepository,
 )
 from school_timetable.persistence.reserved_activity_repository import SqlAlchemyReservedActivityRepository
 from school_timetable.persistence.resource_repository import SqlAlchemyResourceRepository
@@ -259,6 +265,30 @@ def get_resource_service() -> ResourceService:
     return ResourceService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyResourceRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_calendar_projection_service() -> CalendarProjectionService:
+    """Composes the same two session-factory-backed adapters
+    `ResourceProjectionService` uses -- never a request-scoped
+    `Session` (Calendar A)."""
+    return CalendarProjectionService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_calendar_service() -> CalendarService:
+    """Composes `CalendarService`'s four session-factory-backed
+    dependencies -- never a request-scoped `Session`, so
+    `SqlAlchemyCalendarDayRepository`/`SqlAlchemyCalendarPeriodRepository`'s
+    own short lock/reload/validate transactions (Decision #36) stay
+    entirely their own (Calendar A)."""
+    return CalendarService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyCalendarDayRepository(SessionLocal),
+        SqlAlchemyCalendarPeriodRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 

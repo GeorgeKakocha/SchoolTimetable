@@ -5,7 +5,7 @@ reasons about the plain domain objects.
 from __future__ import annotations
 
 from school_timetable.domain.activities import ActivityKind
-from school_timetable.domain.calendar import period_windows
+from school_timetable.domain.calendar import clock_time_overlaps, period_windows
 from school_timetable.domain.groups import ParticipantGroupRole
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.people import AvailabilityStatus
@@ -15,11 +15,21 @@ from school_timetable.validation.errors import ValidationError
 
 
 def run_preflight(problem: SchedulingProblem) -> list[ValidationError]:
-    index = ProblemIndex(problem)
     errors: list[ValidationError] = []
+
+    # Calendar A: the calendar's own basic shape must be sound before
+    # anything else is even worth checking -- `ProblemIndex.__post_init__`
+    # and every later check assume `problem.days`/`problem.periods` are a
+    # non-empty, contiguously-indexed sequence.
+    errors.extend(_check_calendar_shape(problem))
+    if errors:
+        return errors
+
+    index = ProblemIndex(problem)
 
     errors.extend(_check_references(problem, index))
     errors.extend(_check_resource_capacity(problem))
+    errors.extend(_check_period_clock_order(problem))
     # Further checks assume references resolve, so stop early if they don't
     # to avoid noisy KeyErrors cascading into unrelated messages.
     if errors:
@@ -153,6 +163,66 @@ def _check_references(problem: SchedulingProblem, index: ProblemIndex) -> list[V
                 {"fixed_placement_id": fp.id},
             ))
 
+    return errors
+
+
+def _check_calendar_shape(problem: SchedulingProblem) -> list[ValidationError]:
+    """Calendar A: the Academic Year's basic calendar shape must be
+    structurally sound before anything else is checked. Independent
+    defense-in-depth against a directly-constructed/imported
+    `SchedulingProblem` -- `CalendarService`'s own write-time
+    `calendar_rules` validation, and the fact that no write path ever
+    exposes raw `index` as an editable field, already make these
+    conditions unreachable through the normal Calendar A write API."""
+    errors: list[ValidationError] = []
+    if not problem.days:
+        errors.append(ValidationError(
+            "NO_CALENDAR_DAYS", "the Academic Year has no Days configured",
+        ))
+    if not any(period.is_instructional for period in problem.periods):
+        errors.append(ValidationError(
+            "NO_INSTRUCTIONAL_PERIODS", "the Academic Year has no instructional Periods configured",
+        ))
+    errors.extend(_check_day_index_contiguous(problem))
+    errors.extend(_check_period_index_contiguous(problem))
+    return errors
+
+
+def _check_day_index_contiguous(problem: SchedulingProblem) -> list[ValidationError]:
+    indexes = [d.index for d in problem.days]
+    if len(indexes) != len(set(indexes)):
+        return [ValidationError("DUPLICATE_DAY_INDEX", "two or more Days share the same index")]
+    if sorted(indexes) != list(range(len(indexes))):
+        return [ValidationError(
+            "NON_CONTIGUOUS_DAY_INDEX", "Day indexes are not contiguous starting at 0",
+        )]
+    return []
+
+
+def _check_period_index_contiguous(problem: SchedulingProblem) -> list[ValidationError]:
+    indexes = [p.index for p in problem.periods]
+    if len(indexes) != len(set(indexes)):
+        return [ValidationError("DUPLICATE_PERIOD_INDEX", "two or more Periods share the same index")]
+    if sorted(indexes) != list(range(len(indexes))):
+        return [ValidationError(
+            "NON_CONTIGUOUS_PERIOD_INDEX", "Period indexes are not contiguous starting at 0",
+        )]
+    return []
+
+
+def _check_period_clock_order(problem: SchedulingProblem) -> list[ValidationError]:
+    """Calendar A: reuses `domain.calendar.clock_time_overlaps` -- the
+    exact same pure check `calendar_rules.validate_period_clock_order`
+    runs at write-time -- so a preflight rejection and a write-time
+    rejection can never disagree. Clock time is display-only metadata;
+    this never feeds the solver."""
+    errors: list[ValidationError] = []
+    for a, b in clock_time_overlaps(problem.periods):
+        errors.append(ValidationError(
+            "PERIOD_CLOCK_TIME_OVERLAP",
+            f"Period {a.id!r} ends at {a.end_time} which is after Period {b.id!r} starts at {b.start_time}",
+            {"period_id": a.id, "next_period_id": b.id},
+        ))
     return errors
 
 

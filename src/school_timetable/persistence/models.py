@@ -36,7 +36,7 @@ id)` -- every table that is a valid FK target additionally carries
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 
 from sqlalchemy import (
     BigInteger,
@@ -51,6 +51,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     SmallInteger,
     Text,
+    Time,
     UniqueConstraint,
     text,
 )
@@ -125,6 +126,11 @@ class Period(Base):
     idx: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     block_id: Mapped[str] = mapped_column(Text, nullable=False)
     is_instructional: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    """Calendar A: optional bell-clock metadata. Either both `start_time`
+    and `end_time` are set, or neither is -- enforced at the application
+    layer (`calendar_rules`), not by a DB CHECK constraint."""
+    end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("academic_year_id", "natural_id", name="uq_period_ay_natural_id"),

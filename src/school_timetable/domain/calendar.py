@@ -7,6 +7,7 @@ supplied by a concrete ``SchedulingProblem`` instance.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import time
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,12 @@ class Period:
     index: int
     block_id: str
     is_instructional: bool = True
+    start_time: time | None = None
+    """Calendar A: optional bell-clock metadata, display-only -- the
+    solver/preflight/verifier never read this field. Either both
+    `start_time` and `end_time` are set, or neither is (enforced by
+    `calendar_rules`, not by this dataclass itself)."""
+    end_time: time | None = None
 
 
 @dataclass(frozen=True)
@@ -107,3 +114,62 @@ def period_windows(periods: tuple[Period, ...], length: int) -> list[tuple[Perio
         for start in range(0, len(run) - length + 1):
             windows.append(run[start:start + length])
     return windows
+
+
+def clock_time_overlaps(periods: tuple[Period, ...]) -> list[tuple[Period, Period]]:
+    """Calendar A: every pair of Periods that are adjacent *by index*
+    (regardless of ``block_id`` -- clock time spans the whole day, not
+    just one structural block) whose bell times are out of order or
+    overlapping. For consecutive ``A`` then ``B``, ``A.end_time <=
+    B.start_time`` is required whenever *both* carry clock times. A
+    Period missing either ``start_time``/``end_time`` is never used to
+    infer ordering against its neighbor -- that pair is simply skipped,
+    never flagged. Pure and reused by both `validation.preflight` (the
+    authoritative structural check) and `application.calendar_rules`
+    (the write-time fast precheck), so the two can never diverge.
+    """
+    by_index = sorted(periods, key=lambda p: p.index)
+    violations: list[tuple[Period, Period]] = []
+    for a, b in zip(by_index, by_index[1:]):
+        if a.start_time is None or a.end_time is None or b.start_time is None or b.end_time is None:
+            continue
+        if a.end_time > b.start_time:
+            violations.append((a, b))
+    return violations
+
+
+def derive_starts_new_block(periods_sorted_by_index: tuple[Period, ...]) -> dict[str, bool]:
+    """Calendar A: the read-side derivation of the public
+    ``starts_new_block`` field (never a raw ``block_id``) -- the first
+    Period always starts a new block; a later one does iff its
+    ``block_id`` differs from the immediately preceding Period's. Also
+    reused write-side (`calendar_service`/`calendar_repository`) to
+    recover each *other*, untouched Period's own current marker before
+    recomputing the whole sequence's block assignment."""
+    markers: dict[str, bool] = {}
+    previous_block_id: str | None = None
+    for period in periods_sorted_by_index:
+        markers[period.id] = previous_block_id is None or period.block_id != previous_block_id
+        previous_block_id = period.block_id
+    return markers
+
+
+def recompute_block_ids(ordered_period_ids: list[str], marker_by_id: dict[str, bool]) -> dict[str, str]:
+    """Calendar A: the single, deterministic function that recomputes
+    every Period's internal ``block_id`` from an ordered list of Period
+    ids plus each one's own ``starts_new_block`` marker (see
+    ``derive_starts_new_block``) -- shared by create/update/delete/move
+    so block segmentation is recomputed identically after every kind of
+    mutation. The first id in the list always starts ``block_0``
+    regardless of its own marker value (the first Period always starts
+    a new block); canonical labels are internal-only
+    (``block_0``, ``block_1``, ...), never exposed on any public API.
+    """
+    block_ids: dict[str, str] = {}
+    current_block_number = -1
+    for position, period_id in enumerate(ordered_period_ids):
+        starts_new_block = True if position == 0 else marker_by_id.get(period_id, False)
+        if starts_new_block:
+            current_block_number += 1
+        block_ids[period_id] = f"block_{current_block_number}"
+    return block_ids
