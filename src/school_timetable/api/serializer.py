@@ -45,6 +45,7 @@ from school_timetable.api.schemas import (
     FixedPlacementResponse,
     GenerateScheduleResponse,
     LessonBlockPolicyResponse,
+    LockedOccurrenceResponse,
     ParticipantGroupResponse,
     PeriodResponse,
     PeriodWriteResponse,
@@ -118,6 +119,7 @@ from school_timetable.application.teaching_assignments_projection_models import 
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.requirements import TeachingRequirement
 from school_timetable.domain.result import ScheduleEntry
+from school_timetable.domain.schedule import OccurrenceKey
 from school_timetable.validation.errors import ValidationError
 
 
@@ -271,11 +273,24 @@ def schedule_entry_response_from_entry(entry: ScheduleEntry) -> ScheduleEntryRes
     )
 
 
+def locked_occurrence_response_from_key(key: OccurrenceKey) -> LockedOccurrenceResponse:
+    return LockedOccurrenceResponse(
+        requirement_id=key.requirement_id,
+        day_id=key.day_id,
+        anchor_period_id=key.anchor_period_id,
+    )
+
+
 def active_schedule_response_from_active_version(version: ActiveScheduleVersion) -> ActiveScheduleResponse:
-    """`GET .../schedule/active`'s success body. `version.entries` is
-    already in exact persisted `ordinal` order (`ScheduleVersionRepository`'s
-    responsibility, already proven) -- this function preserves that
-    order verbatim, never re-sorting."""
+    """`GET .../schedule/active`'s success body, and every mutating
+    editing command's own success body for its newly-active version.
+    `version.entries` is already in exact persisted `ordinal` order
+    (`ScheduleVersionRepository`'s responsibility, already proven) --
+    this function preserves that order verbatim, never re-sorting.
+    `locked_occurrences` is a `frozenset` (no persisted order to
+    preserve) -- sorted here into one deterministic order so the JSON
+    response is stable across calls, never database-return-order-
+    dependent."""
     return ActiveScheduleResponse(
         version_number=version.version_number,
         solver_status=version.solver_status.value,
@@ -283,6 +298,13 @@ def active_schedule_response_from_active_version(version: ActiveScheduleVersion)
         created_at=version.created_at,
         is_active=True,
         entries=tuple(schedule_entry_response_from_entry(e) for e in version.entries),
+        locked_occurrences=tuple(
+            locked_occurrence_response_from_key(k)
+            for k in sorted(
+                version.locked_occurrences,
+                key=lambda k: (k.requirement_id, k.day_id, k.anchor_period_id),
+            )
+        ),
     )
 
 

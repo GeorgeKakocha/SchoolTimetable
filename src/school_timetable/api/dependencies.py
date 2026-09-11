@@ -38,6 +38,7 @@ from school_timetable.application.class_section_projection_service import ClassS
 from school_timetable.application.class_section_service import ClassSectionService
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
+from school_timetable.application.schedule_editing_service import ScheduleEditingService
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
 from school_timetable.application.reserved_activity_projection_service import ReservedActivityProjectionService
 from school_timetable.application.reserved_activity_service import ReservedActivityService
@@ -104,6 +105,17 @@ def get_generate_schedule_service() -> GenerateScheduleService:
     `GenerateScheduleService` needs -- never a request-scoped `Session`
     -- so preflight/solve/verify run with no DB connection held open."""
     return GenerateScheduleService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_schedule_editing_service() -> ScheduleEditingService:
+    """Composes the exact same two session-factory-backed adapters
+    `GenerateScheduleService` uses -- never a request-scoped `Session`,
+    so a re-optimization's CP-SAT solve runs with no DB connection held
+    open either."""
+    return ScheduleEditingService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

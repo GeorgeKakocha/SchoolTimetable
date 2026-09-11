@@ -6,14 +6,18 @@
 `GET /schools/{school_id}/years/{year_id}/schedule/active/teachers/{teacher_id}`
 (next product slice after Phase 3C.3, no new phase number -- the
 sibling teacher-timetable projection, same architecture/error
-conventions as the class-timetable route directly below it).
+conventions as the class-timetable route directly below it), and the
+manual-timetable-editing backend slice's four thin commands --
+`POST .../schedule/active/move`, `.../lock`, `.../unlock`, and
+`.../reoptimize` -- each a thin wrapper over `ScheduleEditingService`,
+documented in their own section near the bottom of this file.
 
-All four routes depend only on `application/` Protocols/services
+Every route depends only on `application/` Protocols/services
 (`ScheduleVersionRepository`, `GenerateScheduleService`,
-`ClassTimetableService`, `TeacherTimetableService`), never on a
-concrete `persistence/` class -- the composition root wiring those
-concrete, session-factory-backed adapters lives entirely in
-`api/dependencies.py`.
+`ClassTimetableService`, `TeacherTimetableService`,
+`ScheduleEditingService`), never on a concrete `persistence/` class --
+the composition root wiring those concrete, session-factory-backed
+adapters lives entirely in `api/dependencies.py`.
 
 `school_id`/`year_id` are natural/domain IDs, never surrogate ones,
 matching `/config`'s existing convention exactly.
@@ -80,6 +84,7 @@ from fastapi.responses import JSONResponse
 from school_timetable.api.dependencies import (
     get_class_timetable_service,
     get_generate_schedule_service,
+    get_schedule_editing_service,
     get_schedule_version_repository,
     get_teacher_timetable_service,
 )
@@ -89,7 +94,17 @@ from school_timetable.api.schemas import (
     GenerateScheduleResponse,
     GenerationErrorResponse,
     InvalidConfigurationResponse,
+    InvalidEditTargetErrorResponse,
+    LockRequest,
+    MoveNotAllowedErrorResponse,
+    MoveRequest,
+    MoveViolationResponse,
+    ReoptimizationInfeasibleErrorResponse,
+    ReoptimizationInvalidInputErrorResponse,
+    ReoptimizeRequest,
+    StaleScheduleVersionErrorResponse,
     TeacherTimetableResponse,
+    UnlockRequest,
 )
 from school_timetable.api.serializer import (
     active_schedule_response_from_active_version,
@@ -102,17 +117,36 @@ from school_timetable.application.class_timetable_service import ClassTimetableS
 from school_timetable.application.errors import (
     ClassSectionNotFoundError,
     ConfigurationChangedDuringGenerationError,
+    InvalidEditTargetError,
     InvalidSchedulingConfigurationError,
+    MoveNotAllowedError,
+    NoActiveScheduleError,
+    ReoptimizationInfeasibleError,
+    ReoptimizationInvalidInputError,
     ScheduleAlreadyExistsError,
     ScheduleInfeasibleError,
     SchedulingProblemNotFoundError,
+    StaleScheduleVersionError,
     TeacherNotFoundError,
 )
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.ports import ScheduleVersionRepository
+from school_timetable.application.schedule_editing_service import ScheduleEditingService
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
 
 router = APIRouter()
+
+
+def _stale_version_response(exc: StaleScheduleVersionError) -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=StaleScheduleVersionErrorResponse(
+            code="STALE_SCHEDULE_VERSION",
+            detail=str(exc),
+            expected_base_version_number=exc.expected_base_version_number,
+            actual_active_version_number=exc.actual_active_version_number,
+        ).model_dump(),
+    )
 
 
 @router.get("/schools/{school_id}/years/{year_id}/schedule/active", response_model=ActiveScheduleResponse)
@@ -222,3 +256,171 @@ def get_teacher_timetable(
     if view is None:
         raise HTTPException(status_code=404, detail="Active schedule not found")
     return teacher_timetable_response_from_view(view)
+
+
+# -- Manual timetable editing (ScheduleEditingService) --------------------
+#
+# Error mapping, shared by all four routes below:
+# - `SchedulingProblemNotFoundError` -> 404 (same body as every other
+#   route in this file).
+# - `NoActiveScheduleError` -> 404, `{"detail": "Active schedule not
+#   found"}` -- the identical code-less body `GET .../schedule/active`
+#   already uses for the same underlying state.
+# - `StaleScheduleVersionError` -> 409, `{"code":
+#   "STALE_SCHEDULE_VERSION", "detail": "...", "expected_base_version_
+#   number": ..., "actual_active_version_number": ...}`.
+# - (move only) `MoveNotAllowedError` -> 409, `{"code":
+#   "MOVE_NOT_ALLOWED", "detail": "...", "violations": [{"code": ...,
+#   "message": ...}, ...]}` -- every `MoveViolation`, in order, never
+#   flattened to a generic message.
+# - (move/lock/unlock only) `InvalidEditTargetError` -> 422, `{"code":
+#   "INVALID_EDIT_TARGET", "detail": "..."}`.
+# - (reoptimize only) `ReoptimizationInfeasibleError` -> 409, `{"code":
+#   "REOPTIMIZATION_INFEASIBLE", "detail": "..."}`; `ReoptimizationInvalid
+#   InputError` -> 422, `{"code": "REOPTIMIZATION_INVALID_INPUT",
+#   "detail": "...", "errors": [...]}` (the same diagnostic shape
+#   `InvalidConfigurationResponse` already uses).
+# - Every successful command returns the exact same `ActiveScheduleResponse`
+#   shape `GET .../schedule/active` does, for its newly-active version --
+#   no second GET is ever required to refresh the projection.
+# - Deliberately NOT caught, by design (an internal defect, left to
+#   FastAPI's normal unhandled-exception/generic-500 behavior): `schedule_
+#   editing_service.EditVerificationFailedError`/`ReoptimizationError`,
+#   and any other unexpected exception.
+
+
+@router.post(
+    "/schools/{school_id}/years/{year_id}/schedule/active/move",
+    response_model=ActiveScheduleResponse,
+)
+def move_schedule_entry(
+    school_id: str,
+    year_id: str,
+    body: MoveRequest,
+    service: ScheduleEditingService = Depends(get_schedule_editing_service),
+):
+    try:
+        active = service.move(
+            school_id, year_id, body.base_version_number,
+            body.requirement_id, body.source_day_id, body.source_period_id,
+            body.target_day_id, body.target_period_id,
+        )
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except NoActiveScheduleError:
+        raise HTTPException(status_code=404, detail="Active schedule not found") from None
+    except StaleScheduleVersionError as exc:
+        return _stale_version_response(exc)
+    except MoveNotAllowedError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=MoveNotAllowedErrorResponse(
+                code="MOVE_NOT_ALLOWED",
+                detail=str(exc),
+                violations=tuple(MoveViolationResponse(code=c, message=m) for c, m in exc.violations),
+            ).model_dump(),
+        )
+    except InvalidEditTargetError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=InvalidEditTargetErrorResponse(code="INVALID_EDIT_TARGET", detail=str(exc)).model_dump(),
+        )
+    return active_schedule_response_from_active_version(active)
+
+
+@router.post(
+    "/schools/{school_id}/years/{year_id}/schedule/active/lock",
+    response_model=ActiveScheduleResponse,
+)
+def lock_schedule_occurrence(
+    school_id: str,
+    year_id: str,
+    body: LockRequest,
+    service: ScheduleEditingService = Depends(get_schedule_editing_service),
+):
+    try:
+        active = service.lock(
+            school_id, year_id, body.base_version_number,
+            body.requirement_id, body.day_id, body.period_id,
+        )
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except NoActiveScheduleError:
+        raise HTTPException(status_code=404, detail="Active schedule not found") from None
+    except StaleScheduleVersionError as exc:
+        return _stale_version_response(exc)
+    except InvalidEditTargetError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=InvalidEditTargetErrorResponse(code="INVALID_EDIT_TARGET", detail=str(exc)).model_dump(),
+        )
+    return active_schedule_response_from_active_version(active)
+
+
+@router.post(
+    "/schools/{school_id}/years/{year_id}/schedule/active/unlock",
+    response_model=ActiveScheduleResponse,
+)
+def unlock_schedule_occurrence(
+    school_id: str,
+    year_id: str,
+    body: UnlockRequest,
+    service: ScheduleEditingService = Depends(get_schedule_editing_service),
+):
+    try:
+        active = service.unlock(
+            school_id, year_id, body.base_version_number,
+            body.requirement_id, body.day_id, body.period_id,
+        )
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except NoActiveScheduleError:
+        raise HTTPException(status_code=404, detail="Active schedule not found") from None
+    except StaleScheduleVersionError as exc:
+        return _stale_version_response(exc)
+    except InvalidEditTargetError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=InvalidEditTargetErrorResponse(code="INVALID_EDIT_TARGET", detail=str(exc)).model_dump(),
+        )
+    return active_schedule_response_from_active_version(active)
+
+
+@router.post(
+    "/schools/{school_id}/years/{year_id}/schedule/active/reoptimize",
+    response_model=ActiveScheduleResponse,
+)
+def reoptimize_schedule(
+    school_id: str,
+    year_id: str,
+    body: ReoptimizeRequest,
+    service: ScheduleEditingService = Depends(get_schedule_editing_service),
+):
+    try:
+        active = service.reoptimize(school_id, year_id, body.base_version_number)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except NoActiveScheduleError:
+        raise HTTPException(status_code=404, detail="Active schedule not found") from None
+    except StaleScheduleVersionError as exc:
+        return _stale_version_response(exc)
+    except ReoptimizationInfeasibleError:
+        return JSONResponse(
+            status_code=409,
+            content=ReoptimizationInfeasibleErrorResponse(
+                code="REOPTIMIZATION_INFEASIBLE",
+                detail="No feasible re-optimized schedule exists given the current locks/configuration",
+            ).model_dump(),
+        )
+    except ReoptimizationInvalidInputError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=ReoptimizationInvalidInputErrorResponse(
+                code="REOPTIMIZATION_INVALID_INPUT",
+                detail="Re-optimization input is invalid",
+                errors=tuple(
+                    validation_diagnostic_response_from_error(e) for e in exc.validation_errors
+                ),
+            ).model_dump(),
+        )
+    return active_schedule_response_from_active_version(active)

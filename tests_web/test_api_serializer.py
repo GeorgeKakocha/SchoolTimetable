@@ -14,6 +14,7 @@ from school_timetable.api.serializer import (
     class_timetable_response_from_view,
     config_response_from_problem,
     generate_response_from_active_version,
+    locked_occurrence_response_from_key,
     schedule_entry_response_from_entry,
     validation_diagnostic_response_from_error,
 )
@@ -26,6 +27,7 @@ from school_timetable.application.class_timetable_models import (
 )
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.result import EntrySource, ScheduleEntry, SolverStatus
+from school_timetable.domain.schedule import OccurrenceKey
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.validation.errors import ValidationError
 
@@ -170,15 +172,46 @@ def test_active_schedule_response_preserves_exact_entry_order_and_metadata():
     dumped = response.model_dump(mode="json")
     assert set(dumped.keys()) == {
         "version_number", "solver_status", "total_soft_penalty", "created_at", "is_active", "entries",
+        "locked_occurrences",
     }
     assert dumped["is_active"] is True
     assert "wall_time_seconds" not in dumped
     assert "random_seed" not in dumped
+    assert dumped["locked_occurrences"] == []
 
     # Order-sensitive proof, not a set/membership comparison.
     assert [e.requirement_id for e in response.entries] == ["req1", None, "req2"]
     assert [e.reserved_block_id for e in response.entries] == [None, "block1", None]
     assert list(reversed(response.entries)) != list(response.entries)
+
+
+def test_active_schedule_response_includes_locked_occurrences_in_deterministic_order():
+    version = ActiveScheduleVersion(
+        version_number=2, solver_status=SolverStatus.FEASIBLE, total_soft_penalty=0,
+        wall_time_seconds=1.0, random_seed=None, created_at=_CREATED_AT,
+        entries=(),
+        locked_occurrences=frozenset({
+            OccurrenceKey("russian_8a", "tue", "p6"),
+            OccurrenceKey("german_8a", "tue", "p6"),
+        }),
+    )
+
+    response = active_schedule_response_from_active_version(version)
+
+    # A frozenset has no inherent order -- the response must still be
+    # stable/deterministic (sorted), not database/hash-order-dependent.
+    assert [(k.requirement_id, k.day_id, k.anchor_period_id) for k in response.locked_occurrences] == [
+        ("german_8a", "tue", "p6"),
+        ("russian_8a", "tue", "p6"),
+    ]
+
+
+def test_locked_occurrence_response_from_key_maps_natural_ids_verbatim():
+    key = OccurrenceKey(requirement_id="german_8a", day_id="tue", anchor_period_id="p6")
+    response = locked_occurrence_response_from_key(key)
+    assert response.requirement_id == "german_8a"
+    assert response.day_id == "tue"
+    assert response.anchor_period_id == "p6"
 
 
 def test_schedule_entry_response_preserves_source_identity_and_optionals():

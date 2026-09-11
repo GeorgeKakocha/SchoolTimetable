@@ -189,11 +189,30 @@ class ScheduleEntryResponse(BaseModel):
     class_sections: tuple[str, ...]
 
 
+class LockedOccurrenceResponse(BaseModel):
+    """One locked logical occurrence (manual timetable editing backend
+    slice) -- exactly `domain.schedule.OccurrenceKey`'s three natural-ID
+    fields, never a persistence surrogate ID. A split-group lock always
+    appears as one entry per sibling requirement (never collapsed),
+    matching `lock_occurrence`'s own "lock every sibling together"
+    domain semantics."""
+
+    requirement_id: str
+    day_id: str
+    anchor_period_id: str
+
+
 class ActiveScheduleResponse(BaseModel):
     """`GET .../schedule/active`'s success body: the same public
     version-summary fields as `GenerateScheduleResponse`, plus `entries`
     -- ordered exactly by the persisted `schedule_entry.ordinal`, which
-    is itself never exposed."""
+    is itself never exposed -- and `locked_occurrences` (manual timetable
+    editing backend slice; empty for a freshly generated version, since
+    `persist_initial_version` never creates one). Every mutating editing
+    command (`move`/`lock`/`unlock`/`reoptimize`) returns this exact same
+    shape for its newly-active version, so a caller never needs a second
+    GET to refresh the active timetable projection after a successful
+    edit."""
 
     version_number: int
     solver_status: Literal["OPTIMAL", "FEASIBLE"]
@@ -201,6 +220,7 @@ class ActiveScheduleResponse(BaseModel):
     created_at: datetime
     is_active: bool
     entries: tuple[ScheduleEntryResponse, ...]
+    locked_occurrences: tuple[LockedOccurrenceResponse, ...]
 
 
 class ValidationDiagnosticResponse(BaseModel):
@@ -231,6 +251,100 @@ class GenerationErrorResponse(BaseModel):
 
     code: str
     detail: str
+
+
+# -- Manual timetable editing (ScheduleEditingService) -------------------
+
+
+class MoveRequest(BaseModel):
+    """`POST .../schedule/active/move`'s request body. The client never
+    resolves split siblings or the swap target's own occupant itself --
+    `scheduling.editing.validate_move`/`apply_move` do that -- it only
+    ever names the one occurrence it wants moved and the one target slot
+    it wants moved to."""
+
+    base_version_number: int
+    requirement_id: str
+    source_day_id: str
+    source_period_id: str
+    target_day_id: str
+    target_period_id: str
+
+
+class LockRequest(BaseModel):
+    """`POST .../schedule/active/lock`'s request body. Naming any one
+    member of a split group locks every sibling together -- the domain
+    layer decides the complete logical occurrence, never the client."""
+
+    base_version_number: int
+    requirement_id: str
+    day_id: str
+    period_id: str
+
+
+class UnlockRequest(BaseModel):
+    """`POST .../schedule/active/unlock`'s request body -- the exact
+    same targeting contract as `LockRequest`."""
+
+    base_version_number: int
+    requirement_id: str
+    day_id: str
+    period_id: str
+
+
+class ReoptimizeRequest(BaseModel):
+    """`POST .../schedule/active/reoptimize`'s request body. No solver-
+    options fields are exposed -- re-optimization always uses the
+    server's own default `SolverOptions`, matching this slice's locked
+    "do not invent a large solver-options API" scope."""
+
+    base_version_number: int
+
+
+class StaleScheduleVersionErrorResponse(BaseModel):
+    """409 body for `StaleScheduleVersionError` -- returned by every
+    mutating editing command when the caller's `base_version_number` no
+    longer matches the current active version."""
+
+    code: Literal["STALE_SCHEDULE_VERSION"]
+    detail: str
+    expected_base_version_number: int
+    actual_active_version_number: int
+
+
+class MoveViolationResponse(BaseModel):
+    code: str
+    message: str
+
+
+class MoveNotAllowedErrorResponse(BaseModel):
+    """409 body for `MoveNotAllowedError` -- every `MoveViolation` the
+    domain layer produced, in order, never flattened to a single generic
+    message."""
+
+    code: Literal["MOVE_NOT_ALLOWED"]
+    detail: str
+    violations: tuple[MoveViolationResponse, ...]
+
+
+class InvalidEditTargetErrorResponse(BaseModel):
+    """422 body for `InvalidEditTargetError` -- a move/lock/unlock
+    request that named a (requirement, day, period) the domain layer
+    could not even resolve into a valid logical occurrence."""
+
+    code: Literal["INVALID_EDIT_TARGET"]
+    detail: str
+
+
+class ReoptimizationInfeasibleErrorResponse(BaseModel):
+    code: Literal["REOPTIMIZATION_INFEASIBLE"]
+    detail: str
+
+
+class ReoptimizationInvalidInputErrorResponse(BaseModel):
+    code: Literal["REOPTIMIZATION_INVALID_INPUT"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
 
 
 # -- Class-timetable projection API (Phase 3B.1, `docs/DECISIONS.md`

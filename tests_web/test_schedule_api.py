@@ -294,11 +294,13 @@ def test_get_active_success_full_contract(client, db):
 
     assert set(body.keys()) == {
         "version_number", "solver_status", "total_soft_penalty", "created_at", "is_active", "entries",
+        "locked_occurrences",
     }
     assert body["version_number"] == 1
     assert body["is_active"] is True
     assert "wall_time_seconds" not in body
     assert "random_seed" not in body
+    assert body["locked_occurrences"] == []  # a freshly generated version has no locks
     expected_count = _expected_entry_count(problem)
     assert len(body["entries"]) == expected_count
 

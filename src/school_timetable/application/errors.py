@@ -1063,3 +1063,115 @@ class PeriodReorderBlockedError(Exception):
             f"period {period_id!r} cannot be reordered while teaching requirements contain time "
             f"preferences, for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
         )
+
+
+# == Manual timetable editing (ScheduleEditingService) =======================
+
+
+class NoActiveScheduleError(Exception):
+    """A move/lock/unlock/reoptimize command was issued for a school/year
+    that has no active `Schedule` at all yet -- distinct from
+    `ScheduleInfeasibleError` (a schedule was attempted and failed) and
+    from `persistence.schedule_repository.CorruptScheduleStateError`
+    (persisted state exists but is malformed). There is nothing to edit
+    until `POST .../schedule/generate` succeeds at least once."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        super().__init__(
+            f"no active schedule exists yet for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r} to edit; generate one first"
+        )
+
+
+class MoveNotAllowedError(Exception):
+    """`scheduling.editing.validate_move` rejected a well-formed manual
+    move request -- a HARD-rule violation (locked/fixed occurrence,
+    conflicting target, teacher/group/resource conflict, etc.), not a
+    malformed request. Carries every `MoveViolation` as `(code, message)`
+    pairs, in order, so a caller can preserve the specific reason rather
+    than flattening it to a generic rejection -- never a persistence
+    surrogate ID or SQLAlchemy detail."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        violations: tuple[tuple[str, str], ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.violations = violations
+        reasons = "; ".join(f"{code}: {message}" for code, message in violations)
+        super().__init__(
+            f"move not allowed for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {reasons}"
+        )
+
+
+class InvalidEditTargetError(Exception):
+    """A move/lock/unlock request named a (requirement, day, period) that
+    `scheduling.editing` could not even resolve into a valid logical
+    occurrence to act on -- an unknown requirement, or a schedule that is
+    not itself HARD-valid (`scheduling.editing.EditingError`, whose own
+    `code` is carried through verbatim: e.g. `OCCURRENCE_NOT_FOUND`,
+    `INVALID_SCHEDULE`). Distinct from `MoveNotAllowedError`, which is a
+    well-formed request a HARD rule rejects."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        code: str | None,
+        message: str,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.code = code
+        super().__init__(
+            f"invalid edit target for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: {message}"
+        )
+
+
+class ReoptimizationInfeasibleError(Exception):
+    """`scheduling.reoptimize.reoptimize` proved `SolverStatus.INFEASIBLE`
+    for the current problem plus the active schedule's locked occurrences
+    -- e.g. a lock now directly contradicts a new HARD condition. Nothing
+    is persisted; the active version is left exactly as it was. Carries
+    only the natural school/year IDs."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        super().__init__(
+            f"no feasible re-optimized schedule exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r} given the current locks/configuration"
+        )
+
+
+class ReoptimizationInvalidInputError(Exception):
+    """`scheduling.reoptimize.reoptimize` returned `SolverStatus.
+    INVALID_INPUT` -- either the current `SchedulingProblem` itself fails
+    preflight, or the active version's own entries fail the reference
+    schedule's structural/topology check (`_reference_schedule_
+    structural_violations`) -- both mean re-optimization could not even
+    be attempted. Nothing is persisted. Carries the same safe, structured
+    `ValidationError` diagnostics `InvalidSchedulingConfigurationError`
+    does."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        validation_errors: tuple[ValidationError, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.validation_errors = validation_errors
+        super().__init__(
+            f"re-optimization input invalid for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: "
+            f"{[e.code for e in validation_errors]!r}"
+        )
