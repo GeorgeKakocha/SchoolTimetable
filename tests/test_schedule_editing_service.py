@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import pytest
 
 from school_timetable.application.errors import (
+    InvalidEditTargetError,
     MoveNotAllowedError,
     NoActiveScheduleError,
     ReoptimizationInfeasibleError,
@@ -367,3 +368,201 @@ def test_move_with_a_race_between_read_and_persist_is_still_rejected():
     # `get_active_schedule` (what the service's cheap check saw) is left
     # exactly as it was -- still v1 -- proving nothing was promoted.
     assert schedule_repo.active is v1
+
+
+# == A-J: move-target preview =================================================
+
+
+def test_preview_move_reports_every_other_instructional_slot_exactly_once():
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    index = ProblemIndex(problem)
+    entry = next(e for e in v1.entries if e.requirement_id == "math_8a")
+
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+    preview = service.preview_move(_SCHOOL, _YEAR, 1, "math_8a", entry.day_id, entry.period_id)
+
+    expected_slots = {
+        (d.id, p.id)
+        for d in index.days_sorted
+        for p in index.instructional_periods_sorted
+    } - {(entry.day_id, entry.period_id)}
+    got_slots = {(t.day_id, t.period_id) for t in preview.targets}
+    assert got_slots == expected_slots
+    assert preview.version_number == 1
+
+
+def test_preview_move_allowed_target_matches_validate_move_directly():
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    index = ProblemIndex(problem)
+    schedule = Schedule(entries=v1.entries)
+    r1, d1, p1, d2, p2 = _find_simple_move(problem, index, schedule)
+
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+    preview = service.preview_move(_SCHOOL, _YEAR, 1, r1, d1, p1)
+
+    target = next(t for t in preview.targets if (t.day_id, t.period_id) == (d2, p2))
+    assert target.allowed is True
+    assert target.violations == ()
+    # Not persisted -- it's read-only.
+    assert schedule_repo.persist_calls == []
+
+
+def test_preview_move_rejected_target_carries_the_same_violation_as_validate_move():
+    """`art_8b` is fixed at (mon, p1) -- every candidate target must be
+    reported as forbidden with the exact FIXED_PLACEMENT violation
+    `validate_move` itself produces, never a simplified/duplicated check."""
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    index = ProblemIndex(problem)
+    schedule = Schedule(entries=v1.entries)
+
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+    preview = service.preview_move(_SCHOOL, _YEAR, 1, "art_8b", "mon", "p1")
+
+    assert preview.targets  # non-empty
+    for t in preview.targets:
+        direct = validate_move(problem, schedule, "art_8b", "mon", "p1", t.day_id, t.period_id, index=index)
+        assert t.allowed == direct.allowed
+        assert t.violations == tuple((v.code, v.message) for v in direct.violations)
+        assert t.allowed is False
+        assert any(code == "FIXED_PLACEMENT" for code, _ in t.violations)
+
+
+def test_preview_move_required_block_breaking_target_reports_required_block_violation():
+    """Mirrors `test_editing_moves.py`'s REQUIRED-block coverage: any target
+    day that already holds another occurrence of a REQUIRED-block
+    requirement must surface REQUIRED_BLOCK_VIOLATION through the preview,
+    exactly as the real `validate_move` reports it."""
+    problem, v1 = _seed_v1()
+    index = ProblemIndex(problem)
+    schedule = Schedule(entries=v1.entries)
+
+    required_entries = [
+        e for e in v1.entries
+        if next(
+            (r for r in problem.teaching_requirements if r.id == e.requirement_id), None,
+        ) is not None
+        and next(
+            r for r in problem.teaching_requirements if r.id == e.requirement_id
+        ).block_policy is not None
+        and next(
+            r for r in problem.teaching_requirements if r.id == e.requirement_id
+        ).block_policy.mode.name == "REQUIRED"
+    ]
+    if not required_entries:
+        pytest.skip("fixture has no REQUIRED-block requirement to exercise")
+
+    source = required_entries[0]
+    other_day_same_requirement = next(
+        (e for e in required_entries if e.requirement_id == source.requirement_id and e.day_id != source.day_id),
+        None,
+    )
+    if other_day_same_requirement is None:
+        pytest.skip("fixture's REQUIRED-block requirement occupies only one day")
+
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+    preview = service.preview_move(_SCHOOL, _YEAR, 1, source.requirement_id, source.day_id, source.period_id)
+
+    target = next(
+        t for t in preview.targets
+        if t.day_id == other_day_same_requirement.day_id and t.period_id == other_day_same_requirement.period_id
+    )
+    direct = validate_move(
+        problem, schedule, source.requirement_id, source.day_id, source.period_id,
+        target.day_id, target.period_id, index=index,
+    )
+    assert target.allowed == direct.allowed
+    assert target.violations == tuple((v.code, v.message) for v in direct.violations)
+
+
+def test_preview_move_split_group_source_uses_real_logical_occurrence_semantics():
+    """`german_8a`/`russian_8a` are a split-group pair -- previewing from
+    `german_8a` must reuse the exact same logical-occurrence expansion
+    `validate_move` itself performs, not a manually-expanded frontend
+    stand-in."""
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    index = ProblemIndex(problem)
+    schedule = Schedule(entries=v1.entries)
+    entry = next(e for e in v1.entries if e.requirement_id == "german_8a")
+
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+    preview = service.preview_move(_SCHOOL, _YEAR, 1, "german_8a", entry.day_id, entry.period_id)
+
+    assert preview.targets
+    for t in preview.targets:
+        direct = validate_move(
+            problem, schedule, "german_8a", entry.day_id, entry.period_id,
+            t.day_id, t.period_id, index=index,
+        )
+        assert t.allowed == direct.allowed
+        assert t.violations == tuple((v.code, v.message) for v in direct.violations)
+
+
+def test_preview_move_with_stale_base_version_raises_immediately_without_loading_problem():
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+
+    with pytest.raises(StaleScheduleVersionError) as exc_info:
+        service.preview_move(_SCHOOL, _YEAR, 999, "art_8b", "mon", "p1")
+
+    assert exc_info.value.expected_base_version_number == 999
+    assert exc_info.value.actual_active_version_number == 1
+    assert problem_repo.calls == []
+    assert schedule_repo.persist_calls == []
+
+
+def test_preview_move_with_unresolvable_source_raises_invalid_edit_target_error():
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+
+    with pytest.raises(InvalidEditTargetError):
+        service.preview_move(_SCHOOL, _YEAR, 1, "does_not_exist", "mon", "p1")
+
+    assert schedule_repo.persist_calls == []
+
+
+def test_preview_move_performs_zero_persistence_writes():
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    entry = next(e for e in v1.entries if e.requirement_id == "math_8a")
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+
+    service.preview_move(_SCHOOL, _YEAR, 1, "math_8a", entry.day_id, entry.period_id)
+
+    assert schedule_repo.persist_calls == []
+    assert schedule_repo.active is v1
+    assert schedule_repo.write_check_active is v1
+
+
+def test_preview_move_does_not_change_actual_move_behavior():
+    """Running a preview first must not alter what a subsequent real move
+    does -- proving the preview is a pure read, sharing `validate_move`
+    with the mutating command rather than a parallel code path."""
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    index = ProblemIndex(problem)
+    schedule = Schedule(entries=v1.entries)
+    r1, d1, p1, d2, p2 = _find_simple_move(problem, index, schedule)
+
+    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service.preview_move(_SCHOOL, _YEAR, 1, r1, d1, p1)
+    v2 = service.move(_SCHOOL, _YEAR, 1, r1, d1, p1, d2, p2)
+
+    assert v2.version_number == 2
+    assert v2.entries != v1.entries
+    assert len(schedule_repo.persist_calls) == 1

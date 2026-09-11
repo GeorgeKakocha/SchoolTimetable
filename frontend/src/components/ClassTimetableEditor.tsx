@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import TimetableGrid from "./TimetableGrid";
+import type { PreviewTargetState } from "./TimetableGrid";
 import {
   getActiveSchedule,
   lockOccurrence,
   moveScheduleEntry,
+  previewMove,
   reoptimizeSchedule,
   unlockOccurrence,
 } from "../api/scheduleEditing";
 import { ApiError } from "../api/client";
-import type { ClassTimetableEntry, ClassTimetableResponse } from "../api/types";
+import type { ClassTimetableEntry, ClassTimetableResponse, MoveViolation } from "../api/types";
 
 /**
  * Manual timetable editing MVP (backend slice already shipped): wraps
@@ -129,6 +131,67 @@ function ClassTimetableEditor({ schoolId, academicYearId, timetable, onMutationS
   const [reoptimizeError, setReoptimizeError] = useState<string | null>(null);
   const [reoptimizeErrorDetails, setReoptimizeErrorDetails] = useState<string[]>([]);
 
+  // Move-target preview (backend's authoritative `move/preview`): `null`
+  // means "not yet evaluated" -- the grid must render every candidate
+  // neutral/gray in that state, never defaulting to allowed/green.
+  const [previewTargets, setPreviewTargets] = useState<Map<string, PreviewTargetState> | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [previewRetryToken, setPreviewRetryToken] = useState(0);
+  const [inspectedForbidden, setInspectedForbidden] = useState<{
+    dayId: string;
+    periodId: string;
+    violations: MoveViolation[];
+  } | null>(null);
+
+  // Fires exactly once per "enter Move mode" -- no separate "Check"
+  // button. Re-fires only if the admin cancels and re-enters Move mode,
+  // or hits Retry after a failure (`previewRetryToken`).
+  useEffect(() => {
+    if (mode !== "choosing-target" || selection === null) {
+      return;
+    }
+    const controller = new AbortController();
+    setPreviewTargets(null);
+    setPreviewFailed(false);
+    setInspectedForbidden(null);
+    previewMove(
+      schoolId,
+      academicYearId,
+      {
+        base_version_number: timetable.version_number,
+        requirement_id: selection.requirementId,
+        source_day_id: selection.dayId,
+        source_period_id: selection.periodId,
+      },
+      controller.signal,
+    )
+      .then((response) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        const map = new Map<string, PreviewTargetState>();
+        for (const target of response.targets) {
+          map.set(`${target.day_id}|${target.period_id}`, { allowed: target.allowed, violations: target.violations });
+        }
+        setPreviewTargets(map);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        if (error instanceof ApiError && error.code === "STALE_SCHEDULE_VERSION") {
+          setStaleNotice("The timetable changed since this page loaded. Refreshing — please try your move again.");
+          onMutationSuccess();
+          return;
+        }
+        setPreviewFailed(true);
+      });
+    return () => {
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, selection, schoolId, academicYearId, timetable.version_number, previewRetryToken]);
+
   // Lock badges come from a separate GET -- re-fetched whenever the
   // class projection's own version changes (a fresh version means the
   // lock set may have changed too, whether or not THIS panel caused it).
@@ -161,6 +224,9 @@ function ClassTimetableEditor({ schoolId, academicYearId, timetable, onMutationS
     setSelection(null);
     setMode("view");
     setTarget(null);
+    setPreviewTargets(null);
+    setPreviewFailed(false);
+    setInspectedForbidden(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timetable.version_number]);
 
@@ -191,6 +257,9 @@ function ClassTimetableEditor({ schoolId, academicYearId, timetable, onMutationS
     setTarget(null);
     setActionError(null);
     setActionErrorDetails([]);
+    setPreviewTargets(null);
+    setPreviewFailed(false);
+    setInspectedForbidden(null);
   }
 
   function handleStartMove() {
@@ -201,12 +270,24 @@ function ClassTimetableEditor({ schoolId, academicYearId, timetable, onMutationS
 
   function handleSelectTarget(dayId: string, periodId: string) {
     setTarget({ dayId, periodId });
+    setInspectedForbidden(null);
     setMode("confirming-move");
+  }
+
+  function handleInspectForbiddenTarget(dayId: string, periodId: string, violations: MoveViolation[]) {
+    setInspectedForbidden({ dayId, periodId, violations });
   }
 
   function handleCancelTarget() {
     setMode("view");
     setTarget(null);
+    setPreviewTargets(null);
+    setPreviewFailed(false);
+    setInspectedForbidden(null);
+  }
+
+  function handleRetryPreview() {
+    setPreviewRetryToken((token) => token + 1);
   }
 
   async function handleConfirmMove() {
@@ -301,10 +382,12 @@ function ClassTimetableEditor({ schoolId, academicYearId, timetable, onMutationS
   const gridEditing = {
     selected: selection !== null ? { requirementId: selection.requirementId, dayId: selection.dayId, periodId: selection.periodId } : null,
     targetMode: mode === "choosing-target",
+    previewTargets: previewFailed ? null : previewTargets,
     lockedKeys,
     disabled: busy,
     onSelectOccurrence: handleSelectOccurrence,
     onSelectTarget: handleSelectTarget,
+    onInspectForbiddenTarget: handleInspectForbiddenTarget,
   };
 
   return (
@@ -395,10 +478,39 @@ function ClassTimetableEditor({ schoolId, academicYearId, timetable, onMutationS
 
           {mode === "choosing-target" && (
             <>
-              <p className="lesson-edit-panel-hint">
-                Choose a destination slot in the timetable below. This checks the move -- it doesn't guarantee it will
-                be accepted.
-              </p>
+              {previewFailed ? (
+                <div role="alert" className="lesson-edit-panel-error">
+                  <p>Couldn't check available destinations. The timetable is unchanged.</p>
+                  <span className="lesson-edit-panel-actions">
+                    <button type="button" className="action-button" onClick={handleRetryPreview}>
+                      Retry
+                    </button>
+                  </span>
+                </div>
+              ) : previewTargets === null ? (
+                <p className="lesson-edit-panel-hint" aria-live="polite">
+                  Checking available destinations…
+                </p>
+              ) : (
+                <p className="lesson-edit-panel-hint">
+                  Green destinations are allowed; red destinations are not -- select one to see why.
+                </p>
+              )}
+              {inspectedForbidden !== null && (
+                <div className="lesson-edit-panel-error">
+                  <p>
+                    Not allowed: {dayName(timetable, inspectedForbidden.dayId)},{" "}
+                    {periodName(timetable, inspectedForbidden.periodId)}
+                  </p>
+                  {inspectedForbidden.violations.length > 0 && (
+                    <ul className="generate-diagnostics">
+                      {inspectedForbidden.violations.map((violation, index) => (
+                        <li key={index}>{violation.message}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               <span className="lesson-edit-panel-actions">
                 <button type="button" onClick={handleCancelTarget}>
                   Cancel

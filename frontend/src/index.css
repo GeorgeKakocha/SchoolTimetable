@@ -282,8 +282,23 @@ select:focus-visible {
   box-shadow: inset 0 0 0 2px #2563eb;
 }
 
-.timetable-cell-target-candidate {
+.timetable-cell-target-source,
+.timetable-cell-target-loading,
+.timetable-cell-target-allowed,
+.timetable-cell-target-forbidden {
   padding: 0 !important;
+}
+
+.timetable-cell-target-source {
+  padding: 0.4rem 0.6rem !important;
+  background-color: #eef4fb !important;
+  box-shadow: inset 0 0 0 2px #2563eb;
+}
+
+.timetable-cell-target-loading {
+  padding: 0.4rem 0.6rem !important;
+  background-color: #f3f4f6 !important;
+  color: #9aa0a8;
 }
 
 .timetable-target-slot {
@@ -298,6 +313,7 @@ select:focus-visible {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  position: relative;
 }
 
 .timetable-target-slot:hover {
@@ -313,6 +329,41 @@ select:focus-visible {
 .timetable-target-slot:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.timetable-cell-target-allowed .timetable-target-slot {
+  border: 1px solid #2f9e57;
+  background-color: #eefaf1;
+}
+
+.timetable-cell-target-allowed .timetable-target-slot:hover {
+  background-color: #dcf5e3;
+}
+
+.timetable-cell-target-forbidden .timetable-target-slot {
+  border: 1px solid #c94b4b;
+  background-color: #fdeeee;
+  cursor: pointer;
+}
+
+.timetable-cell-target-forbidden .timetable-target-slot:hover {
+  background-color: #fbdede;
+}
+
+.timetable-target-indicator {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.4rem;
+  font-weight: 700;
+  font-size: 0.95em;
+}
+
+.timetable-cell-target-allowed .timetable-target-indicator {
+  color: #1e7e40;
+}
+
+.timetable-cell-target-forbidden .timetable-target-indicator {
+  color: #a52222;
 }
 
 .editing-panel-wrapper {

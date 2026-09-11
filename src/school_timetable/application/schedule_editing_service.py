@@ -56,6 +56,7 @@ from school_timetable.application.errors import (
     StaleScheduleVersionError,
 )
 from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.schedule_editing_models import MovePreviewResult, MovePreviewTarget
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.problem import SchedulingProblem
@@ -64,6 +65,7 @@ from school_timetable.domain.schedule import Schedule
 from school_timetable.scheduling.editing import (
     EditingError,
     apply_move,
+    find_logical_occurrence,
     lock_occurrence,
     unlock_occurrence,
     validate_move,
@@ -155,6 +157,61 @@ class ScheduleEditingService:
             school_natural_id, academic_year_natural_id, base_version_number, candidate,
             SolverStatus.FEASIBLE, penalty, wall_time_seconds=0.0, random_seed=None,
         )
+
+    def preview_move(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        base_version_number: int,
+        requirement_id: str,
+        source_day_id: str,
+        source_period_id: str,
+    ) -> MovePreviewResult:
+        """Read-only: for every OTHER instructional slot, reports exactly
+        what `validate_move` would say about moving this source
+        occurrence there -- never a second, simplified validity check.
+        Persists nothing; creates no `ScheduleVersion`. A caller (the
+        `move` command itself) remains the sole authority on whether a
+        move actually succeeds -- this only lets a UI show the same
+        answer before the user commits to one specific target, so a
+        race between preview and the real move is expected and safe
+        (the real move re-validates and re-checks the base version
+        itself, exactly as it already does without this method existing
+        at all)."""
+        problem, schedule, index, active = self._load_active_for_edit(
+            school_natural_id, academic_year_natural_id, base_version_number,
+        )
+
+        # Resolve the source once, up front: an unresolvable source
+        # (unknown requirement, or a schedule so malformed
+        # find_logical_occurrence itself refuses to reason about it)
+        # is reported as the same InvalidEditTargetError every other
+        # command uses -- never a preview result where every target is
+        # forbidden for the same underlying reason.
+        try:
+            find_logical_occurrence(problem, index, schedule, requirement_id, source_day_id, source_period_id)
+        except EditingError as exc:
+            raise InvalidEditTargetError(
+                school_natural_id, academic_year_natural_id, exc.code, str(exc),
+            ) from None
+
+        targets: list[MovePreviewTarget] = []
+        for day in index.days_sorted:
+            for period in index.instructional_periods_sorted:
+                if day.id == source_day_id and period.id == source_period_id:
+                    continue  # never a candidate destination for itself
+                result = validate_move(
+                    problem, schedule, requirement_id, source_day_id, source_period_id,
+                    day.id, period.id, index=index,
+                )
+                targets.append(MovePreviewTarget(
+                    day_id=day.id,
+                    period_id=period.id,
+                    allowed=result.allowed,
+                    violations=tuple((v.code, v.message) for v in result.violations),
+                ))
+
+        return MovePreviewResult(version_number=active.version_number, targets=tuple(targets))
 
     def lock(
         self,

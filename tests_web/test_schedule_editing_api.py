@@ -265,6 +265,153 @@ def test_move_no_active_schedule_returns_404_active_schedule_not_found(client, d
     assert response.json() == {"detail": "Active schedule not found"}
 
 
+# == move preview =============================================================
+
+
+def test_preview_move_returns_every_other_slot_with_true_validate_move_outcomes(client, db):
+    session, _session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    r1, d1, p1, d2, p2 = _find_move(problem, entries)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move/preview",
+        json={"base_version_number": 1, "requirement_id": r1, "source_day_id": d1, "source_period_id": p1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version_number"] == 1
+
+    index = ProblemIndex(problem)
+    expected_slots = {
+        (day.id, period.id)
+        for day in index.days_sorted
+        for period in index.instructional_periods_sorted
+    } - {(d1, p1)}
+    got_slots = {(t["day_id"], t["period_id"]) for t in body["targets"]}
+    assert got_slots == expected_slots
+
+    # No write happened -- still exactly one ScheduleVersion.
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 1
+
+    # The allowed target we found is reported as allowed with no violations.
+    target = next(t for t in body["targets"] if (t["day_id"], t["period_id"]) == (d2, p2))
+    assert target["allowed"] is True
+    assert target["violations"] == []
+
+
+def test_preview_move_forbidden_target_carries_the_fixed_placement_violation(client, db):
+    session, _session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move/preview",
+        json={"base_version_number": 1, "requirement_id": "art_8b", "source_day_id": "mon", "source_period_id": "p1"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["targets"]
+    for target in body["targets"]:
+        assert target["allowed"] is False
+        assert any(v["code"] == "FIXED_PLACEMENT" for v in target["violations"])
+
+
+def test_preview_move_with_stale_base_version_returns_409(client, db):
+    session, _session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move/preview",
+        json={"base_version_number": 999, "requirement_id": "art_8b", "source_day_id": "mon", "source_period_id": "p1"},
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["code"] == "STALE_SCHEDULE_VERSION"
+    assert body["expected_base_version_number"] == 999
+    assert body["actual_active_version_number"] == 1
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 1
+
+
+def test_preview_move_unresolvable_source_returns_422_invalid_edit_target(client, db):
+    session, _session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move/preview",
+        json={
+            "base_version_number": 1, "requirement_id": "no-such-requirement",
+            "source_day_id": "mon", "source_period_id": "p1",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_EDIT_TARGET"
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 1
+
+
+def test_preview_move_unknown_school_year_returns_404_scheduling_configuration(client):
+    response = client.post(
+        "/schools/no-such-school/years/no-such-year/schedule/active/move/preview",
+        json={"base_version_number": 1, "requirement_id": "x", "source_day_id": "mon", "source_period_id": "p1"},
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Scheduling configuration not found"}
+
+
+def test_preview_move_no_active_schedule_returns_404_active_schedule_not_found(client, db):
+    session, _session_factory = db
+    problem = build_valid_fixture()
+    write_scheduling_problem(session, problem)
+    session.flush()
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move/preview",
+        json={"base_version_number": 1, "requirement_id": "art_8b", "source_day_id": "mon", "source_period_id": "p1"},
+    )
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Active schedule not found"}
+
+
+def test_preview_move_never_persists_and_a_real_move_still_works_afterward(client, db):
+    """Proves the preview route performs zero persistence writes, and that
+    running it does not disturb the real move command's own behavior."""
+    session, _session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    r1, d1, p1, d2, p2 = _find_move(problem, entries)
+    year_id = _year_id(session, problem.academic_year.id)
+
+    for _ in range(3):
+        preview_response = client.post(
+            f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move/preview",
+            json={"base_version_number": 1, "requirement_id": r1, "source_day_id": d1, "source_period_id": p1},
+        )
+        assert preview_response.status_code == 200
+    assert _counts(session, year_id)["schedule_version"] == 1
+
+    move_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move",
+        json={
+            "base_version_number": 1, "requirement_id": r1,
+            "source_day_id": d1, "source_period_id": p1,
+            "target_day_id": d2, "target_period_id": p2,
+        },
+    )
+    assert move_response.status_code == 200
+    assert move_response.json()["version_number"] == 2
+    assert _counts(session, year_id)["schedule_version"] == 2
+
+
 # == lock / unlock ============================================================
 
 

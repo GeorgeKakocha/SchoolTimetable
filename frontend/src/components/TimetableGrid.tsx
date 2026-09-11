@@ -1,4 +1,12 @@
-import type { ClassTimetableEntry, ClassTimetableResponse } from "../api/types";
+import type { ClassTimetableEntry, ClassTimetableResponse, MoveViolation } from "../api/types";
+
+/** One candidate destination slot's `validate_move` outcome, exactly as
+ * the backend's `move/preview` response reported it -- this component
+ * never re-derives `allowed`/`violations` itself. */
+export interface PreviewTargetState {
+  allowed: boolean;
+  violations: MoveViolation[];
+}
 
 /** Manual timetable editing (backend slice already shipped): optional
  * bundle of editing state/callbacks. Omitted entirely, the grid renders
@@ -12,6 +20,14 @@ export interface TimetableGridEditing {
    * individually clickable (source selection is not evaluated while
    * choosing a target). */
   targetMode: boolean;
+  /** Only meaningful while `targetMode` is true. `null` while the
+   * `move/preview` request for the current source is in flight, hasn't
+   * been dispatched yet, or failed -- every non-source cell must render
+   * neutral/not-yet-evaluated in that case, NEVER default to
+   * allowed/green. Once populated, keyed by `"${day_id}|${period_id}"`,
+   * one entry per candidate destination the backend's preview reported
+   * (the source's own slot is never a key here). */
+  previewTargets: Map<string, PreviewTargetState> | null;
   /** `"${requirement_id}|${day_id}|${period_id}"` for the ANCHOR period
    * of every currently locked occurrence -- built from `GET .../
    * schedule/active`'s `locked_occurrences`. Known limitation: a locked
@@ -28,7 +44,17 @@ export interface TimetableGridEditing {
    * request. */
   disabled: boolean;
   onSelectOccurrence: (entry: ClassTimetableEntry, dayId: string, periodId: string) => void;
+  /** Fired only for a target the preview already reported `allowed:
+   * true`. */
   onSelectTarget: (dayId: string, periodId: string) => void;
+  /** Fired for a target the preview reported `allowed: false` (on click
+   * or focus) -- surfaces its violations for inspection; never sends a
+   * move request and never enables a confirm step. */
+  onInspectForbiddenTarget: (dayId: string, periodId: string, violations: MoveViolation[]) => void;
+}
+
+function targetKey(dayId: string, periodId: string): string {
+  return `${dayId}|${periodId}`;
 }
 
 interface TimetableGridProps {
@@ -52,12 +78,19 @@ function lockKey(requirementId: string, dayId: string, periodId: string): string
  * `REQUIREMENT` entry becomes a real `<button>` (source selection); a
  * `RESERVED_BLOCK` entry never does (Reserved Activities are fixed
  * placements, never movable/lockable from this grid). While
- * `editing.targetMode` is true, every instructional cell instead
- * becomes one `<button>` wrapping its whole (read-only, un-clickable)
- * content -- clicking anywhere in the cell chooses it as the
- * destination; this is "choose a destination to validate", never a
- * claim that every cell is a guaranteed-valid target (the backend
- * remains authoritative and may still reject it).
+ * `editing.targetMode` is true, every instructional cell renders one of
+ * four states, entirely driven by `editing.previewTargets` (itself
+ * sourced from the backend's authoritative `move/preview` response --
+ * this component never re-derives validity): the source occurrence's own
+ * cell (BLUE, `.timetable-cell-target-source`, never clickable); a
+ * candidate not yet evaluated -- `previewTargets` is `null` while the
+ * preview request is in flight or has failed (GRAY,
+ * `.timetable-cell-target-loading`, never clickable, and never treated
+ * as allowed); an allowed candidate (GREEN, `.timetable-cell-target-
+ * allowed`, ✓ indicator, clicking calls `onSelectTarget`); and a
+ * forbidden candidate (RED, `.timetable-cell-target-forbidden`, ×
+ * indicator, clicking/focusing/hovering calls `onInspectForbiddenTarget`
+ * to surface its reasons elsewhere -- never sends a move request).
  */
 function TimetableGrid({ timetable, editing }: TimetableGridProps) {
   return (
@@ -91,15 +124,64 @@ function TimetableGrid({ timetable, editing }: TimetableGridProps) {
                   editing.selected.periodId === row.period_id;
 
                 if (editing !== undefined && editing.targetMode) {
+                  const dayLabel = timetable.days.find((d) => d.id === cell.day_id)?.name ?? cell.day_id;
+                  const isSource =
+                    editing.selected !== null &&
+                    editing.selected.dayId === cell.day_id &&
+                    editing.selected.periodId === row.period_id;
+
+                  if (isSource) {
+                    return (
+                      <td key={cell.day_id} className="timetable-cell-target-source">
+                        {cell.entries.map((entry, index) => (
+                          <TimetableEntryBlock
+                            entry={entry}
+                            key={entryKey(entry, index)}
+                            locked={false}
+                            interactive={false}
+                          />
+                        ))}
+                      </td>
+                    );
+                  }
+
+                  const previewState = editing.previewTargets?.get(targetKey(cell.day_id, row.period_id)) ?? null;
+
+                  if (previewState === null) {
+                    return (
+                      <td key={cell.day_id} className="timetable-cell-target-loading">
+                        {cell.entries.map((entry, index) => (
+                          <TimetableEntryBlock
+                            entry={entry}
+                            key={entryKey(entry, index)}
+                            locked={false}
+                            interactive={false}
+                          />
+                        ))}
+                      </td>
+                    );
+                  }
+
+                  const statusClass = previewState.allowed
+                    ? "timetable-cell-target-allowed"
+                    : "timetable-cell-target-forbidden";
+                  const statusLabel = previewState.allowed ? "Allowed destination" : "Not allowed";
+                  const inspect = () => editing.onInspectForbiddenTarget(cell.day_id, row.period_id, previewState.violations);
+
                   return (
-                    <td key={cell.day_id} className="timetable-cell-target-candidate">
+                    <td key={cell.day_id} className={statusClass}>
                       <button
                         type="button"
                         className="timetable-target-slot"
                         disabled={editing.disabled}
-                        aria-label={`Move to ${timetable.days.find((d) => d.id === cell.day_id)?.name ?? cell.day_id}, ${row.period_name}`}
-                        onClick={() => editing.onSelectTarget(cell.day_id, row.period_id)}
+                        aria-label={`${statusLabel}: ${dayLabel}, ${row.period_name}`}
+                        onClick={previewState.allowed ? () => editing.onSelectTarget(cell.day_id, row.period_id) : inspect}
+                        onFocus={previewState.allowed ? undefined : inspect}
+                        onMouseEnter={previewState.allowed ? undefined : inspect}
                       >
+                        <span className="timetable-target-indicator" aria-hidden="true">
+                          {previewState.allowed ? "✓" : "×"}
+                        </span>
                         {cell.entries.map((entry, index) => (
                           <TimetableEntryBlock
                             entry={entry}

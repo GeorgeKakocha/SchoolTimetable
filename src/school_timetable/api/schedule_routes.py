@@ -9,8 +9,11 @@ sibling teacher-timetable projection, same architecture/error
 conventions as the class-timetable route directly below it), and the
 manual-timetable-editing backend slice's four thin commands --
 `POST .../schedule/active/move`, `.../lock`, `.../unlock`, and
-`.../reoptimize` -- each a thin wrapper over `ScheduleEditingService`,
-documented in their own section near the bottom of this file.
+`.../reoptimize` -- plus one read-only query, `POST .../schedule/active/
+move/preview` (reports every candidate destination slot's `validate_move`
+outcome for a given source occurrence, without persisting anything) --
+each a thin wrapper over `ScheduleEditingService`, documented in their
+own section near the bottom of this file.
 
 Every route depends only on `application/` Protocols/services
 (`ScheduleVersionRepository`, `GenerateScheduleService`,
@@ -97,6 +100,9 @@ from school_timetable.api.schemas import (
     InvalidEditTargetErrorResponse,
     LockRequest,
     MoveNotAllowedErrorResponse,
+    MovePreviewRequest,
+    MovePreviewResponse,
+    MovePreviewTargetResponse,
     MoveRequest,
     MoveViolationResponse,
     ReoptimizationInfeasibleErrorResponse,
@@ -260,7 +266,7 @@ def get_teacher_timetable(
 
 # -- Manual timetable editing (ScheduleEditingService) --------------------
 #
-# Error mapping, shared by all four routes below:
+# Error mapping, shared by all five routes below:
 # - `SchedulingProblemNotFoundError` -> 404 (same body as every other
 #   route in this file).
 # - `NoActiveScheduleError` -> 404, `{"detail": "Active schedule not
@@ -273,16 +279,26 @@ def get_teacher_timetable(
 #   "MOVE_NOT_ALLOWED", "detail": "...", "violations": [{"code": ...,
 #   "message": ...}, ...]}` -- every `MoveViolation`, in order, never
 #   flattened to a generic message.
-# - (move/lock/unlock only) `InvalidEditTargetError` -> 422, `{"code":
-#   "INVALID_EDIT_TARGET", "detail": "..."}`.
+# - (move/preview/lock/unlock only) `InvalidEditTargetError` -> 422,
+#   `{"code": "INVALID_EDIT_TARGET", "detail": "..."}`.
 # - (reoptimize only) `ReoptimizationInfeasibleError` -> 409, `{"code":
 #   "REOPTIMIZATION_INFEASIBLE", "detail": "..."}`; `ReoptimizationInvalid
 #   InputError` -> 422, `{"code": "REOPTIMIZATION_INVALID_INPUT",
 #   "detail": "...", "errors": [...]}` (the same diagnostic shape
 #   `InvalidConfigurationResponse` already uses).
-# - Every successful command returns the exact same `ActiveScheduleResponse`
-#   shape `GET .../schedule/active` does, for its newly-active version --
-#   no second GET is ever required to refresh the projection.
+# - Every successful mutating command returns the exact same
+#   `ActiveScheduleResponse` shape `GET .../schedule/active` does, for its
+#   newly-active version -- no second GET is ever required to refresh the
+#   projection.
+# - `POST .../schedule/active/move/preview` is the one read-only route in
+#   this group: zero persistence, no `ScheduleVersion` is ever created by
+#   it. It never raises `MoveNotAllowedError` -- instead it reports, for
+#   every OTHER instructional (day, period) slot, exactly what
+#   `validate_move` would say about moving the given source occurrence
+#   there, as `MovePreviewResponse{version_number, targets: [{day_id,
+#   period_id, allowed, violations: [{code, message}]}]}`. An unresolvable
+#   source still maps to `InvalidEditTargetError` -> 422, same as above --
+#   never a fake all-red/all-green grid.
 # - Deliberately NOT caught, by design (an internal defect, left to
 #   FastAPI's normal unhandled-exception/generic-500 behavior): `schedule_
 #   editing_service.EditVerificationFailedError`/`ReoptimizationError`,
@@ -326,6 +342,52 @@ def move_schedule_entry(
             content=InvalidEditTargetErrorResponse(code="INVALID_EDIT_TARGET", detail=str(exc)).model_dump(),
         )
     return active_schedule_response_from_active_version(active)
+
+
+@router.post(
+    "/schools/{school_id}/years/{year_id}/schedule/active/move/preview",
+    response_model=MovePreviewResponse,
+)
+def preview_move(
+    school_id: str,
+    year_id: str,
+    body: MovePreviewRequest,
+    service: ScheduleEditingService = Depends(get_schedule_editing_service),
+):
+    """Read-only: never persists, never creates a `ScheduleVersion`.
+    Reports the exact same `validate_move` outcome the real move command
+    would compute for every other instructional slot -- error mapping is
+    otherwise identical to `move_schedule_entry` above (`MoveNotAllowedError`
+    is never raised here; a per-target rejection is reported inline as
+    `allowed: false` plus its violations, not an HTTP error)."""
+    try:
+        preview = service.preview_move(
+            school_id, year_id, body.base_version_number,
+            body.requirement_id, body.source_day_id, body.source_period_id,
+        )
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except NoActiveScheduleError:
+        raise HTTPException(status_code=404, detail="Active schedule not found") from None
+    except StaleScheduleVersionError as exc:
+        return _stale_version_response(exc)
+    except InvalidEditTargetError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=InvalidEditTargetErrorResponse(code="INVALID_EDIT_TARGET", detail=str(exc)).model_dump(),
+        )
+    return MovePreviewResponse(
+        version_number=preview.version_number,
+        targets=tuple(
+            MovePreviewTargetResponse(
+                day_id=t.day_id,
+                period_id=t.period_id,
+                allowed=t.allowed,
+                violations=tuple(MoveViolationResponse(code=c, message=m) for c, m in t.violations),
+            )
+            for t in preview.targets
+        ),
+    )
 
 
 @router.post(

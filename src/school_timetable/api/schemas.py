@@ -271,6 +271,41 @@ class MoveRequest(BaseModel):
     target_period_id: str
 
 
+class MovePreviewRequest(BaseModel):
+    """`POST .../schedule/active/move/preview`'s request body -- the
+    exact same source-identification fields `MoveRequest` uses (never a
+    second source-identification convention), minus the target: the
+    whole point of this endpoint is to report every OTHER instructional
+    slot's `validate_move` outcome for this one source."""
+
+    base_version_number: int
+    requirement_id: str
+    source_day_id: str
+    source_period_id: str
+
+
+class MovePreviewTargetResponse(BaseModel):
+    """One candidate destination's `validate_move` outcome. `violations`
+    is empty whenever `allowed` is `True` -- never partially populated in
+    either direction."""
+
+    day_id: str
+    period_id: str
+    allowed: bool
+    violations: tuple[MoveViolationResponse, ...]
+
+
+class MovePreviewResponse(BaseModel):
+    """`POST .../schedule/active/move/preview`'s success body. Never a
+    write -- no `ScheduleVersion` is created, `version_number` is simply
+    the currently active one this preview was computed against (the same
+    value the caller must still pass back as `base_version_number` on
+    the real move)."""
+
+    version_number: int
+    targets: tuple[MovePreviewTargetResponse, ...]
+
+
 class LockRequest(BaseModel):
     """`POST .../schedule/active/lock`'s request body. Naming any one
     member of a split group locks every sibling together -- the domain

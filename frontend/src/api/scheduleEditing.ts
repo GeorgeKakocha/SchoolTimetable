@@ -12,7 +12,7 @@
  * class/teacher timetable projections already expose.
  */
 import { getJson, postJson } from "./client";
-import type { ActiveScheduleResponse } from "./types";
+import type { ActiveScheduleResponse, MovePreviewResponse } from "./types";
 
 export interface MoveRequest {
   base_version_number: number;
@@ -21,6 +21,17 @@ export interface MoveRequest {
   source_period_id: string;
   target_day_id: string;
   target_period_id: string;
+}
+
+/** `POST .../schedule/active/move/preview`'s request body -- the exact
+ * same source-identification fields `MoveRequest` uses, minus the
+ * target: this endpoint reports every OTHER instructional slot's
+ * `validate_move` outcome for this one source. */
+export interface MovePreviewRequest {
+  base_version_number: number;
+  requirement_id: string;
+  source_day_id: string;
+  source_period_id: string;
 }
 
 export interface LockRequest {
@@ -55,6 +66,18 @@ export function moveScheduleEntry(
   signal?: AbortSignal,
 ): Promise<ActiveScheduleResponse> {
   return postJson<ActiveScheduleResponse>(`${scheduleActivePath(schoolId, academicYearId)}/move`, body, signal);
+}
+
+/** Read-only -- never persists anything, so callers may issue it freely
+ * (including re-issuing it after a stale-version 409) without any of
+ * the write-throttling concerns the mutating commands below carry. */
+export function previewMove(
+  schoolId: string,
+  academicYearId: string,
+  body: MovePreviewRequest,
+  signal?: AbortSignal,
+): Promise<MovePreviewResponse> {
+  return postJson<MovePreviewResponse>(`${scheduleActivePath(schoolId, academicYearId)}/move/preview`, body, signal);
 }
 
 export function lockOccurrence(

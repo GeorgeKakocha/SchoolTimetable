@@ -226,6 +226,31 @@ export interface ActiveScheduleResponse {
   locked_occurrences: LockedOccurrence[];
 }
 
+// -- POST .../schedule/active/move/preview -------------------------------
+// Read-only: reports, for every OTHER instructional (day, period) slot,
+// exactly what the backend's authoritative `validate_move` would say
+// about moving the given source occurrence there. Never persists
+// anything -- `version_number` is simply the currently active version
+// this preview was computed against (the same value the caller must
+// still pass back as `base_version_number` on the real move).
+
+export interface MoveViolation {
+  code: string;
+  message: string;
+}
+
+export interface MovePreviewTarget {
+  day_id: string;
+  period_id: string;
+  allowed: boolean;
+  violations: MoveViolation[];
+}
+
+export interface MovePreviewResponse {
+  version_number: number;
+  targets: MovePreviewTarget[];
+}
+
 // -- GET /schools/{school_id}/years/{year_id}/teaching-assignments ------
 //
 // Mirrors Phase 3C.2b's `TeachingAssignmentsProjectionResponse` exactly
