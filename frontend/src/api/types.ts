@@ -185,6 +185,47 @@ export interface GenerateScheduleResponse {
   is_active: boolean;
 }
 
+// -- Manual timetable editing backend slice: POST .../schedule/active/
+// {move,lock,unlock,reoptimize}, all returning `ActiveScheduleResponse`
+// -- the exact same shape `GET .../schedule/active` already returns
+// (`docs/DECISIONS.md`'s manual-editing entries), so a successful
+// mutation's response is never rendered directly: the caller re-fetches
+// the per-class projection (`ClassTimetableResponse` above) for actual
+// display, exactly like the existing generate flow already does. This
+// type is used only to read `version_number` (the new
+// `base_version_number` for the next mutation) and, via a separate
+// `GET .../schedule/active` call, `locked_occurrences` for the grid's
+// lock-state badges.
+
+export interface ScheduleEntry {
+  source: EntrySource;
+  day_id: string;
+  period_id: string;
+  requirement_id: string | null;
+  reserved_block_id: string | null;
+  activity_id: string;
+  teacher_id: string | null;
+  participant_group_id: string | null;
+  resource_id: string | null;
+  class_sections: string[];
+}
+
+export interface LockedOccurrence {
+  requirement_id: string;
+  day_id: string;
+  anchor_period_id: string;
+}
+
+export interface ActiveScheduleResponse {
+  version_number: number;
+  solver_status: SolverStatus;
+  total_soft_penalty: number;
+  created_at: string;
+  is_active: boolean;
+  entries: ScheduleEntry[];
+  locked_occurrences: LockedOccurrence[];
+}
+
 // -- GET /schools/{school_id}/years/{year_id}/teaching-assignments ------
 //
 // Mirrors Phase 3C.2b's `TeachingAssignmentsProjectionResponse` exactly

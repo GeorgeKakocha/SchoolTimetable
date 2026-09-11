@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import ClassSelector from "../components/ClassSelector";
+import ClassTimetableEditor from "../components/ClassTimetableEditor";
 import TeacherSelector from "../components/TeacherSelector";
 import TeacherTimetableGrid from "../components/TeacherTimetableGrid";
-import TimetableGrid from "../components/TimetableGrid";
 import {
   ApiError,
   generateSchedule,
@@ -378,13 +378,18 @@ function TimetablePage() {
                   </div>
                 )}
                 {timetableState.status === "error" && <p role="alert">{timetableState.message}</p>}
-                {timetableState.status === "loaded" && (
+                {timetableState.status === "loaded" && appConfigResult.ok && (
                   <>
                     <p className="timetable-meta">
                       {timetableState.timetable.class_section_name} · Version{" "}
                       {timetableState.timetable.version_number}
                     </p>
-                    <TimetableGrid timetable={timetableState.timetable} />
+                    <ClassTimetableEditor
+                      schoolId={appConfigResult.schoolId}
+                      academicYearId={appConfigResult.academicYearId}
+                      timetable={timetableState.timetable}
+                      onMutationSuccess={() => setGenerationRefreshToken((token) => token + 1)}
+                    />
                   </>
                 )}
               </>
