@@ -44,6 +44,23 @@ instead of persisting, with no `Schedule`/`ScheduleVersion`/
 transaction -- never across the CP-SAT solve, which has already
 finished by the time this method is even called.
 
+`persist_edited_version` (manual-editing backend persistence slice) is
+the write-side sibling for every *subsequent* version: it reuses the
+exact same Owner-Decision-#36 `AcademicYear` row lock, then compares the
+actual current active version's `version_number` against the caller's
+`base_version_number` (never a surrogate ID) -- a mismatch means someone
+else's edit/re-optimization was promoted first, and raises
+`StaleScheduleVersionError` with zero rows written. On a match, it
+inserts exactly one new `ScheduleVersion` (`parent_version_id` set to
+the previous active version's surrogate ID, `version_number` one past
+`MAX(version_number)` for this `Schedule` -- not just `active + 1` --
+so a future non-linear history can never collide even though this slice
+only ever produces a linear chain), its own `ScheduleEntry` rows (same
+shape as `persist_initial_version`'s), and its own `LockedOccurrence`
+rows from the candidate `Schedule.locked_occurrences`, then atomically
+repoints `Schedule.active_version_id`. No prior version's rows are ever
+touched.
+
 `get_active_schedule` re-derives each `ScheduleEntry`'s
 `activity_id`/`teacher_id`/`participant_group_id`/`resource_id`/
 `class_sections` by joining back to the referenced configuration
@@ -62,7 +79,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -70,11 +87,12 @@ from school_timetable.application.errors import (
     ConfigurationChangedDuringGenerationError,
     ScheduleAlreadyExistsError,
     SchedulingProblemNotFoundError,
+    StaleScheduleVersionError,
 )
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import EntrySource, ScheduleEntry, SolverStatus
-from school_timetable.domain.schedule import OccurrenceKey
+from school_timetable.domain.schedule import OccurrenceKey, Schedule
 from school_timetable.persistence import mappers as mp
 from school_timetable.persistence import models as orm
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
@@ -283,6 +301,138 @@ class SqlAlchemyScheduleVersionRepository:
                 created_at=version_row.created_at,
                 entries=entries,
                 locked_occurrences=frozenset(),
+            )
+        finally:
+            session.close()
+
+    def persist_edited_version(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        base_version_number: int,
+        candidate: Schedule,
+        solver_status: SolverStatus,
+        total_soft_penalty: int,
+        wall_time_seconds: float,
+        random_seed: int | None,
+    ) -> ActiveScheduleVersion:
+        session = self._session_factory()
+        try:
+            year_id = _resolve_year_id(session, school_natural_id, academic_year_natural_id)
+
+            # Owner Decision #36: the same short, exclusive AcademicYear
+            # row lock `persist_initial_version` takes, held only for
+            # this short transaction.
+            session.execute(
+                select(orm.AcademicYear.id).where(orm.AcademicYear.id == year_id).with_for_update()
+            )
+
+            schedule_row = session.execute(
+                select(orm.Schedule).where(orm.Schedule.academic_year_id == year_id)
+            ).scalar_one_or_none()
+            if schedule_row is None or schedule_row.active_version_id is None:
+                session.rollback()
+                raise CorruptScheduleStateError(
+                    f"no active schedule exists for school={school_natural_id!r}, "
+                    f"academic_year={academic_year_natural_id!r} to edit -- "
+                    "persist_edited_version requires an existing active ScheduleVersion "
+                    "(use persist_initial_version to create the first one)"
+                )
+
+            active_version_row = session.get(orm.ScheduleVersion, schedule_row.active_version_id)
+            if active_version_row is None:
+                session.rollback()
+                raise CorruptScheduleStateError(
+                    f"schedule's active version pointer for school={school_natural_id!r}, "
+                    f"academic_year={academic_year_natural_id!r} does not reference an "
+                    "existing schedule_version row"
+                )
+
+            if active_version_row.version_number != base_version_number:
+                session.rollback()
+                raise StaleScheduleVersionError(
+                    school_natural_id,
+                    academic_year_natural_id,
+                    base_version_number,
+                    active_version_row.version_number,
+                )
+
+            # One past the highest version_number for this Schedule --
+            # not just `active_version_row.version_number + 1` -- so a
+            # future non-linear history can never collide, even though
+            # this slice only ever produces a linear chain from the
+            # active version.
+            max_version_number = session.execute(
+                select(func.max(orm.ScheduleVersion.version_number)).where(
+                    orm.ScheduleVersion.schedule_id == schedule_row.id
+                )
+            ).scalar_one()
+            next_version_number = max_version_number + 1
+
+            day_ids = _natural_to_surrogate(session, orm.Day, year_id)
+            period_ids = _natural_to_surrogate(session, orm.Period, year_id)
+            requirement_ids = _natural_to_surrogate(session, orm.TeachingRequirement, year_id)
+            reserved_block_ids = _natural_to_surrogate(session, orm.ReservedBlock, year_id)
+
+            try:
+                new_version_row = orm.ScheduleVersion(
+                    academic_year_id=year_id,
+                    schedule_id=schedule_row.id,
+                    version_number=next_version_number,
+                    parent_version_id=active_version_row.id,
+                    solver_status=solver_status.value,
+                    total_soft_penalty=total_soft_penalty,
+                    wall_time_seconds=wall_time_seconds,
+                    random_seed=random_seed,
+                )
+                session.add(new_version_row)
+                session.flush()
+
+                for ordinal, entry in enumerate(candidate.entries):
+                    is_requirement = entry.source == EntrySource.REQUIREMENT
+                    session.add(orm.ScheduleEntry(
+                        academic_year_id=year_id,
+                        schedule_version_id=new_version_row.id,
+                        ordinal=ordinal,
+                        source=entry.source.value,
+                        day_id=day_ids[entry.day_id],
+                        period_id=period_ids[entry.period_id],
+                        teaching_requirement_id=(
+                            requirement_ids[entry.requirement_id] if is_requirement else None
+                        ),
+                        reserved_block_id=(
+                            None if is_requirement else reserved_block_ids[entry.reserved_block_id]
+                        ),
+                    ))
+                session.flush()
+
+                for key in candidate.locked_occurrences:
+                    session.add(orm.LockedOccurrence(
+                        academic_year_id=year_id,
+                        schedule_version_id=new_version_row.id,
+                        teaching_requirement_id=requirement_ids[key.requirement_id],
+                        day_id=day_ids[key.day_id],
+                        anchor_period_id=period_ids[key.anchor_period_id],
+                    ))
+                session.flush()
+
+                schedule_row.active_version_id = new_version_row.id
+                session.flush()
+
+                session.commit()
+            except BaseException:
+                session.rollback()
+                raise
+
+            return ActiveScheduleVersion(
+                version_number=next_version_number,
+                solver_status=solver_status,
+                total_soft_penalty=total_soft_penalty,
+                wall_time_seconds=wall_time_seconds,
+                random_seed=random_seed,
+                created_at=new_version_row.created_at,
+                entries=candidate.entries,
+                locked_occurrences=candidate.locked_occurrences,
             )
         finally:
             session.close()

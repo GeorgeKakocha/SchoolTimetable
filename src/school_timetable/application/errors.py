@@ -315,6 +315,41 @@ class ConfigurationChangedDuringGenerationError(Exception):
         )
 
 
+class StaleScheduleVersionError(Exception):
+    """The manual-editing/re-optimization persistence sibling of
+    `ConfigurationChangedDuringGenerationError`: `persist_edited_version`
+    re-locks the `AcademicYear` row and reloads the *actual* current
+    active `ScheduleVersion` immediately before persisting a candidate
+    edited/re-optimized `Schedule`. If its `version_number` no longer
+    matches the `base_version_number` the caller edited/re-optimized
+    from -- another edit/re-optimization was promoted to active first --
+    this error is raised instead of persisting, and no `ScheduleVersion`,
+    `ScheduleEntry`, or `LockedOccurrence` row is ever created;
+    `Schedule.active_version_id` is left untouched. Carries only the
+    natural school/year IDs plus both version numbers, never a
+    persistence surrogate ID or the underlying SQLAlchemy exception. The
+    caller may reload the now-current active version and retry its
+    edit/re-optimization against it."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        expected_base_version_number: int,
+        actual_active_version_number: int,
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.expected_base_version_number = expected_base_version_number
+        self.actual_active_version_number = actual_active_version_number
+        super().__init__(
+            f"stale schedule version for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: expected active version "
+            f"{expected_base_version_number!r} but the current active version is "
+            f"{actual_active_version_number!r}; reload and retry"
+        )
+
+
 class ClassSectionNotFoundError(Exception):
     """The requested `class_section_id` does not exist in this school/
     academic-year's persisted configuration (`docs/DECISIONS.md` #32).

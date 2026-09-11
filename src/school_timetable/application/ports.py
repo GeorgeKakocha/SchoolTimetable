@@ -61,6 +61,7 @@ from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.application.teacher_availability_models import TeacherAvailabilityExceptionFields
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import ScheduleEntry, SolverStatus
+from school_timetable.domain.schedule import Schedule
 
 
 class SchedulingProblemRepository(Protocol):
@@ -145,6 +146,59 @@ class ScheduleVersionRepository(Protocol):
         lock, by this method itself. Raises
         `SchedulingProblemNotFoundError` if the school/year itself does
         not resolve.
+        """
+        ...
+
+    def persist_edited_version(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        base_version_number: int,
+        candidate: Schedule,
+        solver_status: SolverStatus,
+        total_soft_penalty: int,
+        wall_time_seconds: float,
+        random_seed: int | None,
+    ) -> ActiveScheduleVersion:
+        """Persists a manually-edited or re-optimized in-memory
+        `Schedule` (the domain type from `domain.schedule` -- entries
+        plus `locked_occurrences`) as a new, immutable `ScheduleVersion`,
+        and atomically promotes it to active. The manual-editing core
+        (`scheduling/editing.py`/`scheduling/reoptimize.py`) is entirely
+        in-memory and produces this `candidate` value; this method is
+        the one and only way it becomes durable.
+
+        `base_version_number` is the `version_number` the caller loaded
+        and edited/re-optimized *from* -- never a persistence surrogate
+        ID, matching `ActiveScheduleVersion` itself never exposing one.
+        Under the same Owner-Decision-#36 `AcademicYear` row lock
+        `persist_initial_version` already uses, this method reloads the
+        actual current active version and compares its `version_number`
+        against `base_version_number`; if they differ (someone else's
+        edit/re-optimization was promoted first), it raises
+        `school_timetable.application.errors.StaleScheduleVersionError`
+        and persists nothing at all -- no `ScheduleVersion`,
+        `ScheduleEntry`, or `LockedOccurrence` row, and
+        `active_version_id` is left untouched.
+
+        On success, exactly one new `ScheduleVersion` is created with
+        `parent_version_id` set to the previous active version's
+        surrogate ID, `version_number` one past the highest existing
+        version number for this `Schedule`, its own full set of
+        `ScheduleEntry` rows (from `candidate.entries`) and its own
+        `LockedOccurrence` rows (from `candidate.locked_occurrences`) --
+        never touching any prior version's rows -- and
+        `Schedule.active_version_id` is atomically repointed to it. No
+        migration, rollback, version-activation, or history-listing
+        capability is implied by this method; it only ever creates the
+        next version linearly from the currently active one.
+
+        Raises `SchedulingProblemNotFoundError` if the school/year
+        itself does not resolve, and `CorruptScheduleStateError`
+        (persistence-internal; see `schedule_repository.py`) if no
+        `Schedule`/active version exists yet to edit at all -- this
+        method is never the way a *first* `ScheduleVersion` is created
+        (`persist_initial_version` is).
         """
         ...
 
