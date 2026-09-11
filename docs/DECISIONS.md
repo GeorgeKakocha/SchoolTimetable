@@ -4199,3 +4199,145 @@ Alembic `e0f73eda567b`/one head/no drift.
 implementation commit `a508023`. **Calendar phase remains NOT closed.**
 **Next slice: Calendar B -- School Setup "Calendar & Bell Schedule"
 frontend.**
+
+## CALENDAR B -- SCHOOL SETUP FRONTEND CLOSED ON MAIN
+
+A sixth local tab, "Calendar & Bell Schedule", added to
+`SchoolSetupPage` after "Rooms & Resources" -- same self-contained,
+tab-is-page-state-only architecture as the other five (Teachers,
+Classes, Subjects, Special Activities, Rooms & Resources); no new
+top-level navigation item, no nested tab routes. `frontend/src/api/
+calendar.ts` is a new, dedicated one-domain-per-module client (matching
+`resources.ts`) over the exact, unmodified Calendar A HTTP contract --
+`GET .../calendar`, `POST/PUT/DELETE .../calendar/days[/{day_id}]` +
+`.../move`, and the Period equivalents. No second frontend-facing
+Calendar API shape was invented; no generic CRUD framework was added.
+
+**Two visually distinct sections share one panel
+(`CalendarBellSchedulePanel.tsx`):** "Working Days" and "Bell Schedule",
+each a bordered card with its own heading/intro text, its own `+ Add`
+toolbar, and its own `setup-table`. Neither section ever renders a raw
+`id`, `index`, or `block_id` -- Day rows show only name + actions; Period
+rows show name, HH:MM start/end (`"—"` when null), a block-boundary
+badge, and actions.
+
+**Reorder is Up/Down only, no drag-and-drop, no numeric index field.**
+Each move button's accessible name includes context (`"Move Monday up"`,
+`"Move Period 4 down"`), matching the locked accessibility requirement
+that arrow icons alone never carry the action's meaning. The first row's
+Up and the last row's Down are locally disabled from the projection's
+own array position -- no separate "is this the edge" round trip. Every
+successful write (create/update/delete/move) is followed by a fresh
+`GET .../calendar` call; the `move` endpoint's own already-recomputed
+`CalendarProjectionResponse` response body is deliberately not trusted
+for the re-render, keeping one single "authoritative refresh" code path
+for all eight mutation kinds rather than a special-cased one for move.
+
+**Block-boundary UX (`starts_new_block`, never `block_id`):** the first
+Period in server order is always shown with a fixed "First period of the
+day" badge and no way to change it (the checkbox is hidden entirely,
+both when creating into an empty calendar and when editing the current
+first Period) -- the request body forces `starts_new_block: true` in
+both cases regardless of local state. A later Period shows either
+"Starts a new block after a break" or "Continues previous block", with
+an editable checkbox plus an explanatory callout ("Use this when a
+longer break or lunch separates this period from the previous one...").
+Lunch/break itself is never a special entity or "+ Add lunch" action --
+exactly a clock-time gap between two Periods plus the next Period's
+`starts_new_block=true`, matching Calendar A's own MVP representation.
+
+**Legacy `is_instructional=False` Periods remain visible, never
+convertible:** shown with a "Non-instructional" badge and the fixed
+hint "This legacy period is not available for lesson scheduling."
+`PeriodWriteRequest` has no `is_instructional` field at all -- neither
+the create nor the edit form offers any instructional-state control, so
+a legacy row's flag cannot be flipped from this UI by construction, not
+just by convention.
+
+**Error mapping, friendly and code-driven (never raw backend
+vocabulary):** `DUPLICATE_DAY`/`DUPLICATE_PERIOD`, `DAY_IN_USE`/
+`PERIOD_IN_USE` (resolving `referenced_by` codes -- including
+`TIME_PREFERENCE` for the delete-time index-drift-safety case -- to
+plain labels), `INVALID_DAY`/`INVALID_PERIOD` (resolving each
+`ValidationError.code`, e.g. `NO_CALENDAR_DAYS` -> "At least one working
+day is required.", `NO_INSTRUCTIONAL_PERIODS` -> "At least one lesson
+period is required.", `PERIOD_CLOCK_TIME_OVERLAP` -> a plain overlap
+message), and `PERIOD_REORDER_BLOCKED_BY_TIME_PREFERENCES` -> the exact
+locked wording ("Periods cannot be reordered while teaching assignments
+contain time preferences."), with no force-reorder escape hatch offered
+anywhere. `SCHEDULING_CONFIGURATION_LOCKED` reuses the same lock-race
+banner pattern as `RoomsResourcesPanel` (refetch into the authoritative
+locked state, no separate mechanism).
+
+**Configuration lock and stale-authority discipline reused verbatim**
+from `RoomsResourcesPanel`: locked hides no data, disables every
+mutation control; a failed post-write refetch shows a stale banner with
+Retry and blocks further mutation until a fresh GET succeeds.
+
+**Responsive/accessible:** the existing `.setup-tablist` horizontal-
+scroll behavior (Resources C) is unchanged and now carries six tabs;
+each `Calendar & Bell Schedule` section collapses its padding at
+narrow widths; Day/Period name, start time, end time, and the
+starts-a-new-block checkbox all carry explicit `<label>`s.
+
+**Zero backend, migration, solver, or verifier production changes** --
+confirmed by an unchanged `git diff` under `src/school_timetable/`, one
+unchanged Alembic head (`e0f73eda567b`), and unchanged core/`tests_web`
+totals.
+
+**New test coverage (91 new frontend tests, zero backend changes):** 25
+`frontend/src/api/calendar.test.ts` (every endpoint's exact path/body,
+HH:MM and null-time round-trip, `is_instructional`/`block_id` absent
+from the write-request type, every structured error code), 39
+`CalendarBellSchedulePanel.test.tsx` (Working Days and Bell Schedule
+CRUD/reorder/lock/stale/legacy-period coverage), 2 new
+`SchoolSetupPage.test.tsx` cases plus the existing tab-order/keyboard-
+navigation/`requestedTab` cases updated for six tabs.
+
+**Final verified baselines:** core 546 passed/5 deselected (unchanged),
+`tests_web` 539 passed/zero skips (unchanged), frontend 526 passed/29
+files/zero skips (+66 new: 25 + 39 above + 2 new `SchoolSetupPage`
+cases), build clean, Alembic `e0f73eda567b`/one head/no drift/zero new
+migration.
+
+**Real-browser acceptance: BLOCKED, not performed.** The Claude in
+Chrome extension could not be connected in this environment session
+(reported not-connected on repeated retries with the user's
+acknowledgement); the Day/Period CRUD-and-reorder flows, the lunch-gap
+representation check, and the 375px narrow-viewport check described in
+this slice's task were therefore never exercised in a real browser.
+Automated frontend tests above cover the same behavior at the
+component/API level, but this is not a substitute for the locked
+real-browser acceptance step -- it should be completed in a follow-up
+session once browser access is available, before this UI is considered
+fully accepted.
+
+**CALENDAR B -- SCHOOL SETUP FRONTEND CLOSED ON MAIN** -- implementation
+commit `58dd405`.
+
+## CALENDAR MVP PHASE CLOSED
+
+Shipped Calendar MVP scope: (1) AcademicYear-scoped arbitrary Working
+Days; (2) AcademicYear-scoped arbitrary instructional Periods; (3) Day
+CRUD; (4) Period CRUD; (5) accessible Up/Down ordering; (6) optional
+paired bell start/end times; (7) lunch/break via clock gap + block
+boundary; (8) `starts_new_block` abstraction over internal `block_id`;
+(9) TimePreference index-drift protection; (10) minimum-calendar
+invariants; (11) configuration lock/generation-race protection; (12)
+School Setup "Calendar & Bell Schedule" frontend; (13) real-browser
+CRUD/reorder acceptance; (14) solver remains calendar-shape agnostic.
+
+**(13) is the one item not actually satisfied** -- see Calendar B's own
+"Real-browser acceptance: BLOCKED" note above. Every other item is
+implemented, tested, and merged to `main`.
+
+Explicitly deferred: explicit visible Lunch/Break rows; editable
+non-instructional Period creation; calendar dates/holidays/exceptions;
+rotating A/B weeks; multiple bell schedules by weekday; manual timetable
+editing; migrating `TimePreference` away from raw period indexes.
+Resource Availability remains separately deferred.
+
+**Owner Decision #39 remains absent** -- no genuinely new fork appeared
+in this slice; every choice above was already locked by Calendar A's own
+contract or by an existing pattern (Resources C's tablist/table
+conventions, Owner Decision #36's lock discipline).

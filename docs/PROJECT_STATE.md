@@ -3569,3 +3569,96 @@ frontend** (the tab itself: Day/Period list, create/rename/delete,
 Up/Down reorder, optional HH:MM bell times, lunch/break shown as a
 visual gap, all backed by the Calendar A API above). No manual
 timetable editing is in scope for Calendar B either.
+
+## CALENDAR B -- SCHOOL SETUP FRONTEND CLOSED ON MAIN
+
+Sixth `SchoolSetupPage` tab, "Calendar & Bell Schedule", over the
+unmodified Calendar A backend:
+
+1. `frontend/src/api/calendar.ts` -- a new, dedicated client module
+   (`getCalendar`/Day and Period create/update/delete/move) matching
+   `resources.ts`'s one-domain-per-module convention; no second
+   frontend-facing Calendar API shape.
+2. `CalendarBellSchedulePanel.tsx` -- two visually distinct sections,
+   "Working Days" and "Bell Schedule", each its own bordered card with
+   a `setup-table`; never renders a raw `id`/`index`/`block_id`.
+3. Day CRUD + accessible Up/Down move (first row's Up / last row's Down
+   locally disabled); Period CRUD + move, with optional paired HH:MM
+   times (`type="time"` inputs, both-empty-or-both-present validated
+   locally before submit) and the `starts_new_block` toggle (hidden and
+   forced `true` for the first Period, editable for every later one,
+   with an explanatory callout -- never a raw `block_id` control).
+4. Legacy `is_instructional=False` Periods remain visible with a
+   "Non-instructional" badge and explanatory hint; `PeriodWriteRequest`
+   has no `is_instructional` field at all, so no form can flip one.
+5. Every mutation (create/update/delete/move, for both Days and
+   Periods) is followed by a fresh authoritative `GET .../calendar` --
+   the `move` endpoint's own already-recomputed projection response is
+   deliberately not trusted for the re-render, keeping one single
+   refresh code path for all eight mutation kinds.
+6. Friendly, code-driven error mapping for every locked Calendar A
+   error (`DUPLICATE_DAY`/`DUPLICATE_PERIOD`, `DAY_IN_USE`/
+   `PERIOD_IN_USE` incl. the `TIME_PREFERENCE` delete-safety case,
+   `INVALID_DAY`/`INVALID_PERIOD` per validation code,
+   `PERIOD_REORDER_BLOCKED_BY_TIME_PREFERENCES` with the exact locked
+   wording and no force-reorder option, `SCHEDULING_CONFIGURATION_LOCKED`
+   reusing `RoomsResourcesPanel`'s lock-race pattern) -- no raw backend
+   vocabulary is ever shown.
+7. Configuration lock and stale-authority discipline reused verbatim
+   from `RoomsResourcesPanel`. Six-tab keyboard navigation (Arrow keys/
+   Home/End wrapping) and the existing narrow-width tablist horizontal
+   scroll (Resources C) both cover the new tab unchanged.
+
+**Zero backend, migration, solver, or verifier production changes.**
+
+**New test coverage (91 new frontend tests):** 25
+`frontend/src/api/calendar.test.ts`, 39
+`CalendarBellSchedulePanel.test.tsx`, 2 new + several updated
+`SchoolSetupPage.test.tsx` cases for the six-tab contract.
+
+**Final verified baselines:** core 546 passed/5 deselected (unchanged),
+`tests_web` 539 passed/zero skips (unchanged), frontend 526 passed/29
+files/zero skips (+66 new), build clean, Alembic
+`e0f73eda567b`/one head/no drift/zero new migration.
+
+**Real-browser acceptance: BLOCKED, not performed** -- the Claude in
+Chrome extension could not be connected in this session; the Day/Period
+CRUD-and-reorder flows, lunch-gap representation, and 375px narrow-
+viewport checks described in the Calendar B task were never exercised
+in a real browser. This should be completed in a follow-up session
+before the UI is considered fully accepted; see `DECISIONS.md`'s
+Calendar B entry for the full note.
+
+**CALENDAR B -- SCHOOL SETUP FRONTEND CLOSED ON MAIN** -- implementation
+commit `58dd405`.
+
+## CALENDAR MVP PHASE CLOSED
+
+Shipped: arbitrary Working Days and instructional Periods, Day/Period
+CRUD, accessible Up/Down ordering, optional paired bell times,
+lunch/break as clock gap + block boundary, the `starts_new_block`
+abstraction, TimePreference index-drift protection, minimum-calendar
+invariants, configuration lock/generation-race protection, and the
+School Setup "Calendar & Bell Schedule" frontend. The solver remains
+calendar-shape agnostic throughout (zero solver/verifier production
+changes across both Calendar A and B).
+
+**One item of the originally-scoped closure checklist is not actually
+satisfied: real-browser CRUD/reorder acceptance was BLOCKED** (browser
+tooling unavailable this session) rather than performed -- every other
+item is implemented, tested, and merged to `main`. Explicitly deferred
+beyond this MVP: explicit visible Lunch/Break rows, editable
+non-instructional Period creation, calendar dates/holidays/exceptions,
+rotating A/B weeks, multiple bell schedules by weekday, manual
+timetable editing, migrating `TimePreference` away from raw period
+indexes. Resource Availability remains separately deferred.
+
+**Owner Decision #39 remains absent.**
+
+**Next major product area (recommended): admin-facing manual timetable
+editing, locking, and re-optimization.** School Setup catalogs, Teacher
+Availability, Teaching Assignments, Reserved Activities, Rooms &
+Resources, the Calendar/Bell Schedule, schedule generation, and the
+class/teacher timetable display all already exist -- manual editing
+over a generated schedule is the natural next slice. Not implemented in
+this slice.
