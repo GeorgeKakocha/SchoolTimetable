@@ -4545,3 +4545,91 @@ accepted: move/swap, lock, unlock, re-optimize, immutable
 soft-penalty metadata, the independent-verifier gate, and REQUIRED-
 block-safe move validation. Only the UI slice exposing these through
 the timetable views remains. Not implemented in this task.
+
+## MANUAL TIMETABLE EDITING MVP END-TO-END ACCEPTANCE COMPLETED
+
+Closes the UI slice the previous entry left open, including the
+move-target-preview slice implemented after it (`POST .../schedule/
+active/move/preview`, reusing `validate_move` directly, zero persistence
+writes -- see that task's own commit `1fa7aea` for the full technical
+detail). This entry records the end-to-end human acceptance of the
+whole manual-editing MVP, not just the preview addition.
+
+**Accepted behavior:** class-view, click-based editing (no
+drag-and-drop); Move/swap gated behind an explicit confirmation step;
+server-authoritative constraint validation via `validate_move` (the
+frontend never re-implements a scheduling rule); a valid Move creates a
+new immutable `ScheduleVersion`, an invalid one creates none and
+displays the specific backend rejection reason; Lock/Unlock, each
+producing a new version while carrying the base version's own truthful
+`solver_status`/`total_soft_penalty` forward unchanged; Re-optimize
+behind its own confirmation, honoring every lock and persisting the
+real solver's own metadata; stale-`base_version_number` protection
+(`409 STALE_SCHEDULE_VERSION`) on every mutating command; the
+independent verifier and the REQUIRED-block-safe move-validation fix
+(this file's earlier manual-editing correction slice) sitting behind
+every mutation unchanged; split-group logical-occurrence handling;
+Reserved Activities remaining fixed and non-editable; automatic active-
+version refresh after every mutation; and move-target preview coloring
+every candidate cell -- BLUE source, GREEN + ✓ allowed, RED + ×
+forbidden with an inspectable reason, neutral/gray while loading or on
+failure, never defaulting an unevaluated cell to allowed.
+
+**Human real-browser acceptance (explicit, performed by the user) on
+`editing-review-school`/`ay-editing-review-2026`:**
+
+1. Valid Move -- Class 8-A, Science moved/swapped successfully; active
+   `ScheduleVersion` increased.
+2. Invalid Move -- the fixed Art lesson was rejected correctly; the UI
+   showed "This move isn't allowed." plus the fixed-placement reason;
+   no invalid mutation occurred.
+3. Lock -- the lesson showed a visible Locked state; version increased;
+   Move was unavailable while locked.
+4. Unlock -- the Locked state disappeared; Move became available again;
+   version increased.
+5. Re-optimize -- completed successfully; new active version created;
+   no error.
+6. Move target preview -- the selected/source cell displayed distinctly;
+   valid targets displayed GREEN + ✓; forbidden targets displayed
+   RED + ×; a forbidden target's reason was visible; an allowed target
+   could proceed to confirmation; the user confirmed the UX works and
+   is good.
+
+**Technical proof (completed in the implementation task, re-confirmed
+here):** the preview endpoint reuses the authoritative `validate_move`
+and creates zero persistence writes; 549/549 frontend tests, 575/575
+core backend tests, 568/568 `tests_web` integration tests, a clean
+production build, Alembic head unchanged at `e0f73eda567b`, no
+migration.
+
+**Dataset roles, as they stand now:** `generation-review-school`/
+`ay-generation-review-2026` remains the protected fresh-generation
+baseline, untouched (`ScheduleVersion` 1, `OPTIMAL`, penalty 0).
+`editing-review-school`/`ay-editing-review-2026` is the disposable
+manual-editing acceptance dataset and now intentionally carries
+multiple `ScheduleVersion` rows from real human editing acceptance --
+expected, not a defect. `synthetic-school`/`ay-2026` was accidentally
+mutated by real Move/Lock/Reoptimize UI actions during earlier human
+editing review, before the disposable dataset existed, progressing from
+its original version 1 to version 7 -- **it is reclassified here: it is
+no longer the pristine version-1 regression baseline it previously
+was.** No destructive repair was attempted in this closure task, and no
+further mutation of it occurred during this task's own work (including
+its automated tests, which run against isolated/rolled-back
+transactions and never touch this dataset).
+
+**THE ADMIN MANUAL TIMETABLE EDITING MVP IS NOW END-TO-END ACCEPTED.**
+
+**MANUAL TIMETABLE EDITING MVP ACCEPTANCE CLOSED ON MAIN** -- docs-only,
+zero production-code change, no migration.
+
+**Next major product area: schedule version history + restore.** Show
+the immutable `ScheduleVersion` history for a school/year (version
+number, timestamp, solver status, penalty), distinguish the current
+active version, let the admin inspect an older version, and let them
+safely restore one. Restoring must never mutate an old immutable
+`ScheduleVersion` in place: the intended semantics are select a
+historical version -> create a NEW immutable `ScheduleVersion` copied
+from it -> parent it from the currently-active version -> promote the
+new version active, preserving append-only history and giving a safe
+Undo/Restore behavior. Not implemented in this task.

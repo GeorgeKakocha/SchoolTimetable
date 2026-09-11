@@ -3801,3 +3801,96 @@ re-optimize, immutable `ScheduleVersion` creation, stale-version
 protection, truthful soft-penalty metadata, the independent-verifier
 gate, REQUIRED-block-safe move validation -- already exists and is
 accepted. Only the UI slice remains. Not implemented in this task.
+
+## MANUAL TIMETABLE EDITING MVP END-TO-END ACCEPTANCE COMPLETED
+
+Closes the UI slice the previous entry left open. Accepted behavior,
+proven both technically and by the user's own real-browser testing:
+
+- class-view, click-based editing (no drag-and-drop)
+- Move/swap with an explicit confirmation step before any request is sent
+- server-authoritative constraint validation (`validate_move`) -- the
+  frontend never re-implements a scheduling rule of its own
+- a valid Move creates a new immutable `ScheduleVersion`; an invalid one
+  creates none, with the specific backend rejection reason displayed
+  (never a generic failure message)
+- Lock / Unlock, each creating a new `ScheduleVersion` while carrying the
+  base version's own truthful `solver_status`/`total_soft_penalty`
+  forward unchanged (entries are unchanged by a lock/unlock)
+- Re-optimize, with an explicit confirmation step, honoring every locked
+  occurrence and persisting the real solver's own metadata
+- stale-`base_version_number` protection (`409 STALE_SCHEDULE_VERSION`)
+  on every mutating command, surfaced as a refresh notice rather than a
+  raw error
+- the independent verifier and REQUIRED-block-safe move validation
+  (`docs/DECISIONS.md`'s manual-editing correction slice) sit behind
+  every mutation, unchanged by this UI work
+- split-group logical-occurrence handling (moving/locking one half moves
+  or locks its sibling too, exactly as the domain layer already required)
+- Reserved Activities remain fixed, non-editable placements -- never
+  selectable as a Move/Lock source
+- the grid's active version refreshes automatically after every
+  successful mutation, with no full-page reload
+- **move-target preview:** entering Move mode calls a dedicated,
+  read-only `POST .../schedule/active/move/preview` endpoint (reusing
+  `validate_move` directly, never a simplified frontend validator) and
+  colors every candidate cell before the admin ever attempts a move --
+  BLUE for the selected source, GREEN + ✓ for a backend-confirmed
+  allowed destination, RED + × for a forbidden one (with its violation
+  reason inspectable on click/focus/hover, without sending any move
+  request), and neutral/gray while the preview is loading or if it
+  fails -- an unevaluated cell is never treated as allowed.
+
+**Human real-browser acceptance (explicit, performed by the user):** on
+`editing-review-school`/`ay-editing-review-2026` -- a valid Move (Class
+8-A, Science) succeeded and the active version increased; an invalid
+Move (the fixed Art lesson) was correctly rejected with "This move isn't
+allowed." plus the fixed-placement reason, and caused no mutation; Lock
+showed a visible locked state and increased the version, with Move
+disabled while locked; Unlock removed the locked state, re-enabled Move,
+and increased the version; Re-optimize completed successfully with a
+new active version and no error; and for move-target preview, the
+source cell displayed distinctly, valid targets displayed GREEN + ✓,
+forbidden targets displayed RED + ×, a forbidden target's reason was
+visible, an allowed target could proceed to confirmation, and the user
+confirmed the overall UX works and is good.
+
+**Technical proof (already completed in the implementation task):** the
+preview endpoint reuses the authoritative `validate_move` and creates
+zero persistence writes (proven both by a dedicated unit test and by a
+direct before/after row-count check against the real dev database);
+549/549 frontend tests, 575/575 core backend tests, 568/568 `tests_web`
+integration tests, a clean production build, Alembic head unchanged at
+`e0f73eda567b`, no migration.
+
+**Dataset roles, as they stand now:** `generation-review-school`/
+`ay-generation-review-2026` remains the protected, untouched
+fresh-generation baseline (still exactly `ScheduleVersion` 1, `OPTIMAL`,
+penalty 0) and must not be mutated or reset. `editing-review-school`/
+`ay-editing-review-2026` is the disposable manual-editing acceptance
+dataset and now intentionally carries multiple `ScheduleVersion` rows
+from real human editing acceptance -- this is expected, not a defect.
+`synthetic-school`/`ay-2026` was accidentally mutated by real Move/Lock/
+Reoptimize UI actions during earlier human editing review, before the
+disposable dataset existed, and progressed from its original version 1
+to version 7 as a result -- **it is no longer considered the pristine
+version-1 regression baseline it was before**; no destructive repair was
+attempted in this closure, and none of this task's own work (automated
+tests included) mutated it any further.
+
+**THE ADMIN MANUAL TIMETABLE EDITING MVP IS NOW END-TO-END ACCEPTED.**
+
+**MANUAL TIMETABLE EDITING MVP ACCEPTANCE CLOSED ON MAIN** -- docs-only,
+zero production-code change, no migration.
+
+**Next major product area: schedule version history + restore.** Show
+the immutable `ScheduleVersion` history for a school/year (version
+number, timestamp, solver status, penalty), distinguish the current
+active version, let the admin inspect an older version, and let them
+safely restore one. Restoring must never mutate an old immutable
+`ScheduleVersion` in place -- the intended semantics for that design
+slice are: select a historical version, create a NEW immutable
+`ScheduleVersion` copied from it, parent it from the currently-active
+version, and promote the new version active, preserving append-only
+history and giving a safe Undo/Restore behavior. Not implemented in
+this task.
