@@ -4468,3 +4468,80 @@ School Setup catalogs, Teacher Availability, Teaching Assignments,
 Reserved Activities, Rooms & Resources, Calendar MVP, and now the full
 generated timetable itself (both machine-verified and human-reviewed).
 Not implemented in this task.
+
+## FRESH TIMETABLE GENERATION END-TO-END ACCEPTANCE COMPLETED
+
+Closes the one gap the previous entry explicitly left open: a genuine
+*initial* `POST .../schedule/generate` run, proven end-to-end from a
+verifiably clean dataset through browser display, on a dedicated
+review dataset -- `generation-review-school` / `ay-generation-review-2026`
+-- seeded via the existing `tests_web/support/problem_writer` test-only
+writer against a renamed copy of `build_valid_fixture()` (no production
+code added to create it).
+
+**Initial state, confirmed before generation:** 0 `Schedule`, 0
+`ScheduleVersion`, 0 `ScheduleEntry`, 0 `LockedOccurrence`. Full
+production preflight passed with zero errors against 5 days, 8
+instructional periods, 4 class sections, 8 teachers, 25 teaching
+requirements (including one REQUIRED-block, one PREFERRED-block, two
+split-group, one merged-class requirement, and one fixed placement),
+3 availability rows, 2 reserved blocks, 1 resource.
+
+**Generation, through the real HTTP path** (backend restarted first
+onto current `main`, since the running process had been serving stale
+code): `POST .../schedule/generate` -> `HTTP 201`, `version_number: 1`,
+`solver_status: OPTIMAL`, `total_soft_penalty: 0`, `is_active: true`.
+Persisted: exactly 1 `Schedule`, 1 `ScheduleVersion` (`parent_version_id`
+null), 160 `ScheduleEntry` rows, 0 `LockedOccurrence` rows.
+
+**Independent proof, not merely trusted `solver_status`:** the real
+verifier ran against the real persisted entries -- `passed: True`, zero
+violations. Cross-checked directly: exact-full 40/40 occupancy on all
+four classes; zero teacher collisions across all 8 teachers; both
+`UNAVAILABLE` slots and the one `PREFER_NOT` slot correctly unscheduled;
+both `ReservedBlock`s placed exactly as configured with their joint
+classes; the one `Resource`'s capacity never exceeded; the split-group
+pair synchronized in lock-step; the merged-class requirement scheduled
+once, correctly covering both classes; the REQUIRED block's pattern
+matched exactly.
+
+**Projection proof:** `GET .../schedule/active/classes/{id}` for all
+four classes and `.../teachers/{id}` for all eight teachers -- zero
+empty class cells, zero teacher-collision cells, readable names
+throughout, no raw persistence ID leaked as a label.
+
+**Idempotency:** a second `POST .../schedule/generate` call ->
+`HTTP 409 SCHEDULE_ALREADY_EXISTS`, zero new rows, active version
+unchanged -- Decision #31's initial-generation-only contract proven
+under real HTTP, not just at the repository layer.
+
+**Human real-browser proof:** the user opened
+`http://localhost:5173/timetable` (frontend temporarily retargeted via
+the gitignored `frontend/.env.local`, restored afterward) and reviewed
+every class and teacher timetable view, confirming everything displayed
+correctly. No defect reported.
+
+**No product defect was found anywhere in this pass; zero production
+code was changed to perform it.**
+
+**Two known-good datasets now coexist, deliberately never merged or
+reset into each other:** `synthetic-school`/`ay-2026` remains the
+previously-generated regression baseline (Schedule active_version_id 2,
+still version 1, `OPTIMAL`, penalty 0, confirmed untouched by this
+slice); `generation-review-school`/`ay-generation-review-2026` is now
+the independently-proven *fresh-generation* baseline (Schedule
+active_version_id 9, version 1, `OPTIMAL`, penalty 0) -- it already
+carries its accepted `ScheduleVersion` 1 and is therefore no longer a
+"clean-before-generation" dataset; it must not be regenerated or reset
+merely to re-run this proof again.
+
+**FRESH TIMETABLE GENERATION END-TO-END ACCEPTANCE CLOSED ON MAIN** --
+docs-only, zero production-code change, no migration.
+
+**Next major product area: admin-facing manual timetable editing
+frontend.** Every backend capability it needs already exists and is
+accepted: move/swap, lock, unlock, re-optimize, immutable
+`ScheduleVersion` creation, stale-version protection, truthful
+soft-penalty metadata, the independent-verifier gate, and REQUIRED-
+block-safe move validation. Only the UI slice exposing these through
+the timetable views remains. Not implemented in this task.

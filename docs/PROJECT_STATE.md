@@ -3751,3 +3751,53 @@ prerequisite -- School Setup catalogs, Teacher Availability, Teaching
 Assignments, Reserved Activities, Rooms & Resources, Calendar MVP, and
 now the full generated timetable itself -- is accepted. Not implemented
 in this task.
+
+## FRESH TIMETABLE GENERATION END-TO-END ACCEPTANCE COMPLETED
+
+Dataset: `generation-review-school` / `ay-generation-review-2026`,
+seeded clean (0 `Schedule`/`ScheduleVersion`/`ScheduleEntry`/
+`LockedOccurrence`) via the existing test-only
+`tests_web/support/problem_writer` writer against a renamed copy of
+`build_valid_fixture()` -- no production code added to create it.
+
+**Generation result:** real `POST .../schedule/generate` -> `HTTP 201`,
+`version_number 1`, `OPTIMAL`, `total_soft_penalty 0`, active version 1,
+`parent_version_id` null, 160 `ScheduleEntry` rows, 0
+`LockedOccurrence` rows.
+
+**Independent proof:** verifier `passed: True`, zero violations;
+exact-full occupancy on all four classes; zero teacher collisions;
+availability (`UNAVAILABLE`/`PREFER_NOT`) respected; both reserved
+activities correct; resource capacity respected; split group
+synchronized; merged class coherent; REQUIRED block pattern valid.
+
+**Projection proof:** every class and every teacher timetable view
+verified correct via the real API.
+
+**Idempotency:** a second `POST .../schedule/generate` -> `HTTP 409
+SCHEDULE_ALREADY_EXISTS`, zero mutation.
+
+**Human browser proof:** the user reviewed every class/teacher
+timetable view in the browser and confirmed everything displayed
+correctly. No defect reported.
+
+**THE INITIAL TIMETABLE GENERATION PRODUCT PATH IS NOW END-TO-END
+ACCEPTED FROM A CLEAN DATASET THROUGH BROWSER DISPLAY.**
+
+**Two datasets, kept deliberately distinct:** `synthetic-school`/
+`ay-2026` remains the previously-generated regression baseline
+(untouched by this slice); `generation-review-school`/
+`ay-generation-review-2026` is now the independently-proven
+fresh-generation baseline -- it already carries its accepted
+`ScheduleVersion` 1 and is no longer "clean"; neither dataset is to be
+regenerated or reset to re-run this proof again.
+
+**FRESH TIMETABLE GENERATION END-TO-END ACCEPTANCE CLOSED ON MAIN** --
+docs-only, zero production-code change, no migration.
+
+**Next major product area: admin-facing manual timetable editing
+frontend.** Every backend capability -- move/swap, lock, unlock,
+re-optimize, immutable `ScheduleVersion` creation, stale-version
+protection, truthful soft-penalty metadata, the independent-verifier
+gate, REQUIRED-block-safe move validation -- already exists and is
+accepted. Only the UI slice remains. Not implemented in this task.
