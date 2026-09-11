@@ -3704,3 +3704,50 @@ code changed; Calendar B's own baselines remain authoritative).
 **The previously outstanding acceptance gap is now satisfied. Calendar
 B is fully accepted. CALENDAR MVP IS FULLY ACCEPTED.** Deferred scope
 is unchanged. **Owner Decision #39 remains absent.**
+
+## FULL TIMETABLE END-TO-END ACCEPTANCE COMPLETED
+
+Dataset: `synthetic-school` / `ay-2026`, which already carried a
+pre-existing active schedule -- Schedule id 2, active `ScheduleVersion`
+1 (`OPTIMAL`, `total_soft_penalty 0`, 160 `ScheduleEntry` rows, created
+2026-09-07). This closure proves the *existing* generated timetable
+end-to-end, not a fresh generation run.
+
+**Automated proof:** the existing, unmodified independent
+`verification.verifier.verify()` ran against the real persisted
+`SchedulingProblem` + active schedule -- **passed, zero violations**
+across all 12 checks. Independently cross-checked: exact-full 40/40
+occupancy for all four class sections (160 total, correctly accounting
+for the German/Russian split group as one occupancy unit); zero teacher
+double-bookings across all 8 teachers; both Teacher Science
+`UNAVAILABLE` slots and the one Teacher History `PREFER_NOT` slot
+correctly unscheduled; both `ReservedBlock`s (Chess Club, Robotics
+Club) placed exactly as configured with their joint classes; Indoor Gym
+capacity never exceeded; the split-group and merged-class (History
+9a/9b) requirements scheduled correctly; both REQUIRED and PREFERRED
+block patterns formed exactly as configured. The class and teacher
+timetable API projections were called directly and found structurally
+consistent with the DB-derived counts.
+
+**Human real-browser proof:** the user visually confirmed all four
+class timetables (8a/8b/9a/9b) fully filled with no collisions, both
+Reserved Activities in their expected joint slots, and every teacher
+timetable (not just the automated sample) correct. No defect found.
+
+**Important distinction:** this is acceptance of the existing active
+schedule, not a demonstration of a fresh `Generate` run --
+`synthetic-school` already has an active `Schedule`, and Decision #31's
+locked initial-generation-only contract correctly refuses a second one
+(`409 SCHEDULE_ALREADY_EXISTS`). A fresh-generation demonstration
+remains open for later, on a separate dedicated dataset, never by
+resetting this known-good baseline.
+
+**FULL TIMETABLE END-TO-END ACCEPTANCE CLOSED ON MAIN** -- docs-only,
+zero production-code change.
+
+**Next major product area (recommended, now fully justified): admin-
+facing manual timetable editing, locking, and re-optimization.** Every
+prerequisite -- School Setup catalogs, Teacher Availability, Teaching
+Assignments, Reserved Activities, Rooms & Resources, Calendar MVP, and
+now the full generated timetable itself -- is accepted. Not implemented
+in this task.

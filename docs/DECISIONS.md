@@ -4395,3 +4395,76 @@ since no backend code changed).
 B is fully accepted. CALENDAR MVP IS FULLY ACCEPTED.** Deferred scope
 is unchanged from Calendar B's own list above. **Owner Decision #39
 remains absent.**
+
+## FULL TIMETABLE END-TO-END ACCEPTANCE COMPLETED
+
+With Calendar MVP closed, the full generated-timetable product path was
+independently proven end-to-end against the normal pilot dataset
+(`synthetic-school` / `ay-2026`), which already carried a pre-existing
+active schedule (Schedule id 2, active `ScheduleVersion` 1, created
+2026-09-07) -- not a fresh generation.
+
+**Active schedule metadata:** `solver_status OPTIMAL`,
+`total_soft_penalty 0`, `wall_time_seconds 0.259`, 160 `ScheduleEntry`
+rows, 0 locked occurrences.
+
+**Automated proof (read-only, no mutation):** a one-off script loaded
+the real `SchedulingProblem` (`SessionFactorySchedulingProblemRepository`)
+and the real active `ScheduleVersion`
+(`SqlAlchemyScheduleVersionRepository`) and ran the existing,
+unmodified `verification.verifier.verify()` against them --
+**`passed: True`, zero violations** across all 12 of its checks. This
+was cross-checked, not merely trusted: exact-full 40/40 occupancy for
+all four class sections (160 occupied class-slots total, confirmed
+correct once split-group branches are counted as one occupancy unit --
+matching the verifier's own `_occupancy_unit_key` logic, not a naive
+per-`ScheduleEntry` count); zero teacher double-bookings across all 8
+teachers; both `UNAVAILABLE` slots (Teacher Science, Friday P7/P8) and
+the one `PREFER_NOT` slot (Teacher History, Tuesday P3) all correctly
+empty in the schedule; both `ReservedBlock`s (Chess Club at Wed P8 for
+8a+8b jointly, Robotics Club at Thu P8 for 9a+9b jointly) placed
+exactly as configured with no ordinary-activity overlap; the Indoor Gym
+resource (capacity 1) never exceeded simultaneous usage of 1; the
+German/Russian split group (`split_lang_8a`) synchronized in lock-step
+across its 3 shared slots with two different teachers and no collision;
+the merged History requirement (9a+9b) scheduled once, in one slot, for
+one teacher, covering both classes; `math_8a`'s REQUIRED and
+`science_8b`'s PREFERRED double-lesson block patterns both formed
+exactly as configured (including the PREFERRED double actually being
+achieved, consistent with zero soft penalty). `GET .../schedule/active/
+classes/{id}` (all four) and `.../teachers/{id}` (representative
+sample: Math, Science, History) were also called directly and found
+structurally consistent with the DB-derived counts above -- zero empty
+cells for any class, zero multi-entry (collision) cells for any
+teacher, and the same UNAVAILABLE/PREFER_NOT slots empty in the
+projection too.
+
+**Human real-browser proof:** the user opened `/timetable` and visually
+confirmed all four classes (8a, 8b, 9a, 9b) fully filled Monday-Friday
+with no visible collisions, Chess Club and Robotics Club appearing in
+their expected joint slots, and readable activity/teacher/class names
+with no unexpected raw IDs; the user additionally opened every teacher
+timetable (not just the Math/Science/History sample the automated pass
+called out) and confirmed all of them correct.
+
+**No product defect was found anywhere in this pass.**
+
+**Important distinction, preserved deliberately:** this closes
+acceptance of the *existing, already-generated* schedule as proof the
+current product works end-to-end -- it does **not** demonstrate a fresh
+`POST .../schedule/generate` run, because `synthetic-school` already
+has an active `Schedule` and Decision #31's locked "Generate is
+initial-generation-only" contract correctly refuses a second one
+(`409 SCHEDULE_ALREADY_EXISTS`). A fresh-generation demonstration
+remains open, to be done later on a separate, dedicated clean dataset
+-- never by deleting or resetting this known-good baseline.
+
+**FULL TIMETABLE END-TO-END ACCEPTANCE CLOSED ON MAIN** -- docs-only,
+zero production-code change.
+
+**Next major product area: admin-facing manual timetable editing,
+locking, and re-optimization.** Every prerequisite is now accepted:
+School Setup catalogs, Teacher Availability, Teaching Assignments,
+Reserved Activities, Rooms & Resources, Calendar MVP, and now the full
+generated timetable itself (both machine-verified and human-reviewed).
+Not implemented in this task.
