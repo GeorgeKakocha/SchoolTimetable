@@ -7,10 +7,12 @@ import { getClasses } from "../api/classes";
 import { getSubjects } from "../api/subjects";
 import { getSpecialActivities } from "../api/specialActivities";
 import { getResources } from "../api/resources";
+import { getCalendar } from "../api/calendar";
 import { loadAppConfig } from "../config/appConfig";
 import type { ClassesProjectionResponse, SubjectsProjectionResponse, TeachersProjectionResponse } from "../api/types";
 import type { SpecialActivitiesProjectionResponse } from "../api/specialActivities";
 import type { ResourcesProjectionResponse } from "../api/resources";
+import type { CalendarProjectionResponse } from "../api/calendar";
 
 vi.mock("../api/teachers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/teachers")>();
@@ -32,6 +34,10 @@ vi.mock("../api/resources", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/resources")>();
   return { ...actual, getResources: vi.fn() };
 });
+vi.mock("../api/calendar", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/calendar")>();
+  return { ...actual, getCalendar: vi.fn() };
+});
 vi.mock("../config/appConfig", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/appConfig")>();
   return { ...actual, loadAppConfig: vi.fn() };
@@ -42,6 +48,7 @@ const mockedGetClasses = vi.mocked(getClasses);
 const mockedGetSubjects = vi.mocked(getSubjects);
 const mockedGetSpecialActivities = vi.mocked(getSpecialActivities);
 const mockedGetResources = vi.mocked(getResources);
+const mockedGetCalendar = vi.mocked(getCalendar);
 const mockedLoadAppConfig = vi.mocked(loadAppConfig);
 
 const TEACHERS_PROJECTION: TeachersProjectionResponse = {
@@ -61,6 +68,21 @@ const RESOURCES_PROJECTION: ResourcesProjectionResponse = {
   configuration_locked: false,
   resources: [{ id: "resource_gym", name: "Gym", capacity: 1 }],
 };
+const CALENDAR_PROJECTION: CalendarProjectionResponse = {
+  configuration_locked: false,
+  days: [{ id: "day_mon", name: "Monday", index: 0 }],
+  periods: [
+    {
+      id: "period_1",
+      name: "1",
+      index: 0,
+      start_time: "09:00",
+      end_time: "09:40",
+      starts_new_block: true,
+      is_instructional: true,
+    },
+  ],
+};
 
 beforeEach(() => {
   mockedLoadAppConfig.mockReturnValue({ schoolId: "s1", academicYearId: "y1" });
@@ -69,6 +91,7 @@ beforeEach(() => {
   mockedGetSubjects.mockResolvedValue(SUBJECTS_PROJECTION);
   mockedGetSpecialActivities.mockResolvedValue(SPECIAL_ACTIVITIES_PROJECTION);
   mockedGetResources.mockResolvedValue(RESOURCES_PROJECTION);
+  mockedGetCalendar.mockResolvedValue(CALENDAR_PROJECTION);
 });
 
 afterEach(() => {
@@ -127,6 +150,7 @@ describe("SchoolSetupPage", () => {
     expect(mockedGetSubjects).not.toHaveBeenCalled();
     expect(mockedGetSpecialActivities).not.toHaveBeenCalled();
     expect(mockedGetResources).not.toHaveBeenCalled();
+    expect(mockedGetCalendar).not.toHaveBeenCalled();
   });
 
   it("switching to Classes loads the Classes projection only at that point, not on initial mount", async () => {
@@ -170,7 +194,23 @@ describe("SchoolSetupPage", () => {
     expect(mockedGetResources).toHaveBeenCalledTimes(1);
   });
 
-  it("shows exactly five tabs in the exact order Teachers, Classes, Subjects, Special Activities, Rooms & Resources", async () => {
+  it("switching to Calendar & Bell Schedule loads only the Calendar projection", async () => {
+    renderPage();
+    await screen.findByText("Ada Lovelace");
+    expect(mockedGetCalendar).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Calendar & Bell Schedule" }));
+
+    await screen.findByText("Monday");
+    expect(mockedGetCalendar).toHaveBeenCalledTimes(1);
+    expect(mockedGetTeachers).toHaveBeenCalledTimes(1);
+    expect(mockedGetClasses).not.toHaveBeenCalled();
+    expect(mockedGetSubjects).not.toHaveBeenCalled();
+    expect(mockedGetSpecialActivities).not.toHaveBeenCalled();
+    expect(mockedGetResources).not.toHaveBeenCalled();
+  });
+
+  it("shows exactly six tabs in the exact order Teachers, Classes, Subjects, Special Activities, Rooms & Resources, Calendar & Bell Schedule", async () => {
     renderPage();
     await screen.findByText("Ada Lovelace");
 
@@ -181,6 +221,7 @@ describe("SchoolSetupPage", () => {
       "Subjects",
       "Special Activities",
       "Rooms & Resources",
+      "Calendar & Bell Schedule",
     ]);
   });
 
@@ -191,10 +232,15 @@ describe("SchoolSetupPage", () => {
     expect(screen.queryByText("Mathematics")).not.toBeInTheDocument();
     expect(screen.queryByText("Debate Club")).not.toBeInTheDocument();
     expect(screen.queryByText("Gym")).not.toBeInTheDocument();
+    expect(screen.queryByText("Monday")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Classes" }));
     await screen.findByText("8-A");
     expect(screen.queryByText("Ada Lovelace")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Calendar & Bell Schedule" }));
+    await screen.findByText("Monday");
+    expect(screen.queryByText("8-A")).not.toBeInTheDocument();
   });
 
   it("sets correct ARIA state on tabs and the tabpanel", async () => {
@@ -230,6 +276,7 @@ describe("SchoolSetupPage", () => {
     const subjectsTab = screen.getByRole("tab", { name: "Subjects" });
     const specialActivitiesTab = screen.getByRole("tab", { name: "Special Activities" });
     const roomsResourcesTab = screen.getByRole("tab", { name: "Rooms & Resources" });
+    const calendarTab = screen.getByRole("tab", { name: "Calendar & Bell Schedule" });
 
     teachersTab.focus();
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
@@ -250,13 +297,17 @@ describe("SchoolSetupPage", () => {
     expect(roomsResourcesTab).toHaveAttribute("aria-selected", "true");
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    await screen.findByText("Monday");
+    expect(calendarTab).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
     await screen.findByText("Ada Lovelace");
     expect(teachersTab).toHaveAttribute("aria-selected", "true");
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowLeft" });
-    await screen.findByText("Gym");
-    expect(roomsResourcesTab).toHaveAttribute("aria-selected", "true");
-    expect(document.activeElement).toBe(roomsResourcesTab);
+    await screen.findByText("Monday");
+    expect(calendarTab).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(calendarTab);
   });
 
   it("Home/End jump to the first/last tab", async () => {
@@ -264,13 +315,13 @@ describe("SchoolSetupPage", () => {
     await screen.findByText("Ada Lovelace");
 
     const teachersTab = screen.getByRole("tab", { name: "Teachers" });
-    const roomsResourcesTab = screen.getByRole("tab", { name: "Rooms & Resources" });
+    const calendarTab = screen.getByRole("tab", { name: "Calendar & Bell Schedule" });
 
     teachersTab.focus();
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "End" });
-    await screen.findByText("Gym");
-    expect(roomsResourcesTab).toHaveAttribute("aria-selected", "true");
-    expect(document.activeElement).toBe(roomsResourcesTab);
+    await screen.findByText("Monday");
+    expect(calendarTab).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(calendarTab);
 
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "Home" });
     await screen.findByText("Ada Lovelace");
@@ -326,6 +377,13 @@ describe("SchoolSetupPage", () => {
       renderPage({ requestedTab: "rooms-resources" });
       await screen.findByText("Gym");
       expect(screen.getByRole("tab", { name: "Rooms & Resources" })).toHaveAttribute("aria-selected", "true");
+      expect(mockedGetTeachers).not.toHaveBeenCalled();
+    });
+
+    it("requestedTab: 'calendar-bell-schedule' opens on the Calendar & Bell Schedule tab", async () => {
+      renderPage({ requestedTab: "calendar-bell-schedule" });
+      await screen.findByText("Monday");
+      expect(screen.getByRole("tab", { name: "Calendar & Bell Schedule" })).toHaveAttribute("aria-selected", "true");
       expect(mockedGetTeachers).not.toHaveBeenCalled();
     });
 

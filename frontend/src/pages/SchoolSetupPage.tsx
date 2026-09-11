@@ -5,6 +5,7 @@ import ClassesPanel from "../components/setup/ClassesPanel";
 import SubjectsPanel from "../components/setup/SubjectsPanel";
 import SpecialActivitiesPanel from "../components/setup/SpecialActivitiesPanel";
 import RoomsResourcesPanel from "../components/setup/RoomsResourcesPanel";
+import CalendarBellSchedulePanel from "../components/setup/CalendarBellSchedulePanel";
 
 /**
  * Real-School Setup MVP Slice E: `/configuration/setup`, the School
@@ -50,7 +51,13 @@ import RoomsResourcesPanel from "../components/setup/RoomsResourcesPanel";
  * and default/stay on "teachers"/whatever tab is locally active.
  */
 
-export type TabKey = "teachers" | "classes" | "subjects" | "special-activities" | "rooms-resources";
+export type TabKey =
+  | "teachers"
+  | "classes"
+  | "subjects"
+  | "special-activities"
+  | "rooms-resources"
+  | "calendar-bell-schedule";
 
 export interface SchoolSetupNavigationState {
   requestedTab?: TabKey;
@@ -62,6 +69,7 @@ const VALID_TAB_KEYS: readonly TabKey[] = [
   "subjects",
   "special-activities",
   "rooms-resources",
+  "calendar-bell-schedule",
 ];
 
 export function isSchoolSetupTabKey(value: unknown): value is TabKey {
@@ -79,6 +87,7 @@ const TABS: readonly TabDefinition[] = [
   { key: "subjects", label: "Subjects" },
   { key: "special-activities", label: "Special Activities" },
   { key: "rooms-resources", label: "Rooms & Resources" },
+  { key: "calendar-bell-schedule", label: "Calendar & Bell Schedule" },
 ];
 
 function tabId(key: TabKey): string {
@@ -192,6 +201,7 @@ function SchoolSetupPage() {
         {activeTab === "subjects" && <SubjectsPanel />}
         {activeTab === "special-activities" && <SpecialActivitiesPanel />}
         {activeTab === "rooms-resources" && <RoomsResourcesPanel />}
+        {activeTab === "calendar-bell-schedule" && <CalendarBellSchedulePanel />}
       </div>
     </div>
   );
