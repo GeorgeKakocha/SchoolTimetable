@@ -399,8 +399,12 @@ class ScheduleEditingService:
                 base_version_number, active.version_number,
             )
 
-        problem = self._problem_repository.load_by_school_and_year(
-            school_natural_id, academic_year_natural_id,
+        # Safe Configuration Changes, Slice A: resolve config from the
+        # active version's OWN configuration revision, never "whatever
+        # is currently published/draft" -- see `ActiveScheduleVersion.
+        # configuration_revision_number`'s own docstring.
+        problem = self._problem_repository.load_for_revision(
+            school_natural_id, academic_year_natural_id, active.configuration_revision_number,
         )
         schedule = Schedule(entries=active.entries, locked_occurrences=active.locked_occurrences)
         index = ProblemIndex(problem)

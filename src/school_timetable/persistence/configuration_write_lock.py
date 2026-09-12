@@ -59,3 +59,31 @@ def reject_if_configuration_locked(
     if schedule_exists:
         session.rollback()
         raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)
+
+
+def resolve_draft_revision_id(
+    session: Session, year_id: int, school_natural_id: str, academic_year_natural_id: str,
+) -> int:
+    """Safe Configuration Changes, Slice A: the `ConfigurationRevision`
+    every configuration write must stamp its new/edited row with.
+    Called only after `reject_if_configuration_locked` has already
+    confirmed no `Schedule` exists for this year -- in Slice A that is
+    exactly the condition under which `AcademicYear.draft_revision_id`
+    is guaranteed set (publishing only ever happens atomically with a
+    year's first `Generate`, which is precisely what creates its first
+    `Schedule` row) -- so this never returns `None` on any reachable
+    path. Slice B's future "Edit scheduling configuration" command is
+    the only other thing that will ever set a draft; this function's
+    contract (resolve the year's current draft) does not change then,
+    only the set of moments a draft can exist grows."""
+    draft_revision_id = session.execute(
+        select(orm.AcademicYear.draft_revision_id).where(orm.AcademicYear.id == year_id)
+    ).scalar_one()
+    if draft_revision_id is None:
+        # Unreachable given the precondition above -- guarded rather
+        # than silently writing a row under no revision at all.
+        raise RuntimeError(
+            f"AcademicYear school={school_natural_id!r}, academic_year={academic_year_natural_id!r} "
+            "has no draft configuration revision to write into"
+        )
+    return draft_revision_id

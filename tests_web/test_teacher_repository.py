@@ -30,7 +30,7 @@ from school_timetable.persistence import models as m
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.persistence.teacher_repository import SqlAlchemyTeacherRepository
-from tests_web.support.problem_writer import write_scheduling_problem
+from tests_web.support.problem_writer import create_draft_configuration_revision, write_scheduling_problem
 
 
 @pytest.fixture
@@ -179,8 +179,9 @@ def test_same_year_isolation(seeded_db, live_db_engine):
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
+    revision2_id = create_draft_configuration_revision(session, year2.id)
     session.add(m.Teacher(
-        academic_year_id=year2.id, natural_id="teacher_test_create",
+        academic_year_id=year2.id, configuration_revision_id=revision2_id, natural_id="teacher_test_create",
         first_name="Other George", last_name="Other Kakochashvili", ordinal=0,
     ))
     session.commit()

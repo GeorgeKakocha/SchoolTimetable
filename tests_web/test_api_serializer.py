@@ -123,7 +123,7 @@ def test_generate_response_has_exact_five_fields_no_entries_no_solver_telemetry(
     version = ActiveScheduleVersion(
         version_number=1, solver_status=SolverStatus.OPTIMAL, total_soft_penalty=3,
         wall_time_seconds=2.5, random_seed=7, created_at=_CREATED_AT,
-        entries=(), locked_occurrences=frozenset(),
+        entries=(), locked_occurrences=frozenset(), configuration_revision_number=1,
     )
     response = generate_response_from_active_version(version)
     assert isinstance(response, GenerateScheduleResponse)
@@ -163,7 +163,7 @@ def test_active_schedule_response_preserves_exact_entry_order_and_metadata():
     version = ActiveScheduleVersion(
         version_number=2, solver_status=SolverStatus.FEASIBLE, total_soft_penalty=0,
         wall_time_seconds=1.0, random_seed=None, created_at=_CREATED_AT,
-        entries=entries, locked_occurrences=frozenset(),
+        entries=entries, locked_occurrences=frozenset(), configuration_revision_number=1,
     )
 
     response = active_schedule_response_from_active_version(version)
@@ -194,6 +194,7 @@ def test_active_schedule_response_includes_locked_occurrences_in_deterministic_o
             OccurrenceKey("russian_8a", "tue", "p6"),
             OccurrenceKey("german_8a", "tue", "p6"),
         }),
+        configuration_revision_number=1,
     )
 
     response = active_schedule_response_from_active_version(version)

@@ -35,7 +35,11 @@ def db_session(live_db_engine):
 
 def _seed_year(session: Session, school_natural: str, year_natural: str) -> dict:
     """Insert one minimal, fully cross-linked academic-year configuration
-    and return every row so tests can build further inserts on top of it."""
+    and return every row so tests can build further inserts on top of it.
+    Every row belongs to the year's own initial DRAFT `ConfigurationRevision`
+    (Safe Configuration Changes, Slice A) -- `_seed_year`'s own test-only
+    stand-in for the invariant `problem_writer.write_scheduling_problem`
+    already upholds for real seeding."""
     school = m.School(natural_id=school_natural, name=f"School {school_natural}")
     session.add(school)
     session.flush()
@@ -44,37 +48,58 @@ def _seed_year(session: Session, school_natural: str, year_natural: str) -> dict
     session.add(year)
     session.flush()
 
-    day = m.Day(academic_year_id=year.id, natural_id="mon", name="Monday", idx=0)
-    period = m.Period(academic_year_id=year.id, natural_id="p1", name="Period 1", idx=0, block_id="morning")
-    class_section = m.ClassSection(academic_year_id=year.id, natural_id="8a", name="8-A", ordinal=0)
-    teacher = m.Teacher(
-        academic_year_id=year.id, natural_id="t_math", first_name="Teacher Math", last_name="", ordinal=0,
+    revision = m.ConfigurationRevision(academic_year_id=year.id, revision_number=1, status="DRAFT")
+    session.add(revision)
+    session.flush()
+    year.draft_revision_id = revision.id
+    session.flush()
+    rid = revision.id
+
+    day = m.Day(academic_year_id=year.id, configuration_revision_id=rid, natural_id="mon", name="Monday", idx=0)
+    period = m.Period(
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="p1", name="Period 1", idx=0, block_id="morning",
     )
-    activity = m.Activity(academic_year_id=year.id, natural_id="math", name="Math", ordinal=0)
-    resource = m.Resource(academic_year_id=year.id, natural_id="gym", name="Gym", capacity=1, ordinal=0)
+    class_section = m.ClassSection(
+        academic_year_id=year.id, configuration_revision_id=rid, natural_id="8a", name="8-A", ordinal=0,
+    )
+    teacher = m.Teacher(
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="t_math", first_name="Teacher Math", last_name="", ordinal=0,
+    )
+    activity = m.Activity(
+        academic_year_id=year.id, configuration_revision_id=rid, natural_id="math", name="Math", ordinal=0,
+    )
+    resource = m.Resource(
+        academic_year_id=year.id, configuration_revision_id=rid, natural_id="gym", name="Gym",
+        capacity=1, ordinal=0,
+    )
     session.add_all([day, period, class_section, teacher, activity, resource])
     session.flush()
 
     group = m.ParticipantGroup(
-        academic_year_id=year.id, natural_id="pg_8a", name="All 8-A", role="WHOLE_CLASS", ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="pg_8a", name="All 8-A", role="WHOLE_CLASS", ordinal=0,
     )
     session.add(group)
     session.flush()
 
     membership = m.ParticipantGroupClassSection(
-        academic_year_id=year.id, participant_group_id=group.id, class_section_id=class_section.id, ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        participant_group_id=group.id, class_section_id=class_section.id, ordinal=0,
     )
     session.add(membership)
 
     requirement = m.TeachingRequirement(
-        academic_year_id=year.id, natural_id="math_8a", teacher_id=teacher.id, activity_id=activity.id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="math_8a", teacher_id=teacher.id, activity_id=activity.id,
         participant_group_id=group.id, weekly_periods=5, ordinal=0,
     )
     session.add(requirement)
     session.flush()
 
     return {
-        "school": school, "year": year, "day": day, "period": period,
+        "school": school, "year": year, "revision": revision, "day": day, "period": period,
         "class_section": class_section, "teacher": teacher, "activity": activity,
         "resource": resource, "group": group, "requirement": requirement,
     }
@@ -96,31 +121,37 @@ def test_same_year_full_config_inserts_cleanly(db_session):
     seeded = _seed_year(db_session, "school-ok", "year-ok")
     year, teacher, day, period = seeded["year"], seeded["teacher"], seeded["day"], seeded["period"]
     requirement = seeded["requirement"]
+    rid = seeded["revision"].id
 
     db_session.add(m.TeacherAvailability(
-        academic_year_id=year.id, teacher_id=teacher.id, day_id=day.id, period_id=period.id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        teacher_id=teacher.id, day_id=day.id, period_id=period.id,
         status="UNAVAILABLE", ordinal=0,
     ))
     db_session.add(m.TimePreference(
-        academic_year_id=year.id, teaching_requirement_id=requirement.id, ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        teaching_requirement_id=requirement.id, ordinal=0,
         preferred_period_indexes=[0, 1], weight="HIGH",
     ))
     db_session.add(m.FixedPlacement(
-        academic_year_id=year.id, natural_id="fixed_math_8a", teaching_requirement_id=requirement.id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="fixed_math_8a", teaching_requirement_id=requirement.id,
         day_id=day.id, period_id=period.id, ordinal=0,
     ))
     reserved = m.ReservedBlock(
-        academic_year_id=year.id, natural_id="club_chess", name="Chess Club",
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="club_chess", name="Chess Club",
         activity_id=seeded["activity"].id, teacher_id=teacher.id, ordinal=0,
     )
     db_session.add(reserved)
     db_session.flush()
     db_session.add(m.ReservedBlockClassSection(
-        academic_year_id=year.id, reserved_block_id=reserved.id,
+        academic_year_id=year.id, configuration_revision_id=rid, reserved_block_id=reserved.id,
         class_section_id=seeded["class_section"].id, ordinal=0,
     ))
     db_session.add(m.ReservedBlockSlot(
-        academic_year_id=year.id, reserved_block_id=reserved.id, day_id=day.id, period_id=period.id, ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        reserved_block_id=reserved.id, day_id=day.id, period_id=period.id, ordinal=0,
     ))
     db_session.flush()  # no IntegrityError anywhere above
 
@@ -131,35 +162,95 @@ def test_cross_academic_year_references_are_rejected(db_session):
     academic_year_id -- proven at the PostgreSQL level, not in Python."""
     year_a = _seed_year(db_session, "school-a", "year-a")
     year_b = _seed_year(db_session, "school-b", "year-b")
+    rid_a = year_a["revision"].id
 
     # teaching_requirement -> teacher across years
     _fails(db_session, m.TeachingRequirement(
-        academic_year_id=year_a["year"].id, natural_id="cross_teacher", teacher_id=year_b["teacher"].id,
+        academic_year_id=year_a["year"].id, configuration_revision_id=rid_a,
+        natural_id="cross_teacher", teacher_id=year_b["teacher"].id,
         activity_id=year_a["activity"].id, participant_group_id=year_a["group"].id,
         weekly_periods=1, ordinal=1,
     ))
 
     # teacher_availability -> day and -> period across years
     _fails(db_session, m.TeacherAvailability(
-        academic_year_id=year_a["year"].id, teacher_id=year_a["teacher"].id,
+        academic_year_id=year_a["year"].id, configuration_revision_id=rid_a, teacher_id=year_a["teacher"].id,
         day_id=year_b["day"].id, period_id=year_a["period"].id, status="AVAILABLE", ordinal=1,
     ))
     _fails(db_session, m.TeacherAvailability(
-        academic_year_id=year_a["year"].id, teacher_id=year_a["teacher"].id,
+        academic_year_id=year_a["year"].id, configuration_revision_id=rid_a, teacher_id=year_a["teacher"].id,
         day_id=year_a["day"].id, period_id=year_b["period"].id, status="AVAILABLE", ordinal=1,
     ))
 
     # participant_group_class_section -> class_section across years
     _fails(db_session, m.ParticipantGroupClassSection(
-        academic_year_id=year_a["year"].id, participant_group_id=year_a["group"].id,
+        academic_year_id=year_a["year"].id, configuration_revision_id=rid_a, participant_group_id=year_a["group"].id,
         class_section_id=year_b["class_section"].id, ordinal=1,
     ))
 
     # fixed_placement -> teaching_requirement across years
     _fails(db_session, m.FixedPlacement(
-        academic_year_id=year_a["year"].id, natural_id="cross_fp", teaching_requirement_id=year_b["requirement"].id,
+        academic_year_id=year_a["year"].id, configuration_revision_id=rid_a,
+        natural_id="cross_fp", teaching_requirement_id=year_b["requirement"].id,
         day_id=year_a["day"].id, period_id=year_a["period"].id, ordinal=1,
     ))
+
+
+def test_cross_configuration_revision_references_are_rejected(db_session):
+    """Safe Configuration Changes, Slice A: the same isolation proven
+    above for `academic_year_id`, now proven for `configuration_revision_id`
+    within the SAME academic year -- a row declaring itself in revision
+    R2 must never be able to reference a sibling row that actually
+    belongs to revision R1, even though both share one `academic_year_id`
+    and the same natural IDs (e.g. both have their own "t_math" row)."""
+    seeded = _seed_year(db_session, "school-cross-rev", "year-cross-rev")
+    year = seeded["year"]
+    rev2 = m.ConfigurationRevision(academic_year_id=year.id, revision_number=2, status="PUBLISHED")
+    db_session.add(rev2)
+    db_session.flush()
+    # A second "t_math" teacher, same natural_id, living in revision 2 --
+    # proven possible/safe by `test_two_revisions_may_share_natural_ids`.
+    teacher_r2 = m.Teacher(
+        academic_year_id=year.id, configuration_revision_id=rev2.id,
+        natural_id="t_math", first_name="Teacher Math", last_name="", ordinal=0,
+    )
+    db_session.add(teacher_r2)
+    db_session.flush()
+
+    # teaching_requirement in revision 1 must never reference the
+    # revision-2 teacher row, even though academic_year_id matches and
+    # natural_id ("t_math") is identical.
+    _fails(db_session, m.TeachingRequirement(
+        academic_year_id=year.id, configuration_revision_id=seeded["revision"].id,
+        natural_id="cross_revision_teacher", teacher_id=teacher_r2.id,
+        activity_id=seeded["activity"].id, participant_group_id=seeded["group"].id,
+        weekly_periods=1, ordinal=1,
+    ))
+
+
+def test_two_revisions_may_share_natural_ids_without_uniqueness_collision(db_session):
+    """Safe Configuration Changes, Slice A: the schema must make eager
+    cloning possible later (Slice B) -- two `ConfigurationRevision`s for
+    the SAME `AcademicYear` may each have their own row for the exact
+    same logical entity (`natural_id="t_math"`), coexisting permanently,
+    with no unique-constraint collision."""
+    seeded = _seed_year(db_session, "school-two-revisions", "year-two-revisions")
+    year = seeded["year"]
+    rev2 = m.ConfigurationRevision(academic_year_id=year.id, revision_number=2, status="PUBLISHED")
+    db_session.add(rev2)
+    db_session.flush()
+
+    # Same natural_id ("t_math") as `seeded["teacher"]` (revision 1), now
+    # also in revision 2 -- must succeed, not violate uq_teacher_ay_natural_id.
+    db_session.add(m.Teacher(
+        academic_year_id=year.id, configuration_revision_id=rev2.id,
+        natural_id="t_math", first_name="Alicia", last_name="", ordinal=0,
+    ))
+    db_session.flush()  # no IntegrityError
+
+    rows = db_session.query(m.Teacher).filter_by(academic_year_id=year.id, natural_id="t_math").all()
+    assert len(rows) == 2
+    assert {row.configuration_revision_id for row in rows} == {seeded["revision"].id, rev2.id}
 
 
 def test_natural_id_uniqueness_is_per_academic_year(db_session):
@@ -170,8 +261,8 @@ def test_natural_id_uniqueness_is_per_academic_year(db_session):
     year_b = _seed_year(db_session, "school-dup-b", "year-dup-b")
 
     _fails(db_session, m.Teacher(
-        academic_year_id=year_a["year"].id, natural_id="t_math",
-        first_name="Duplicate Teacher Math", last_name="", ordinal=1,
+        academic_year_id=year_a["year"].id, configuration_revision_id=year_a["revision"].id,
+        natural_id="t_math", first_name="Duplicate Teacher Math", last_name="", ordinal=1,
     ))
 
     # Same natural_id, different academic year: allowed (already inserted
@@ -182,50 +273,61 @@ def test_natural_id_uniqueness_is_per_academic_year(db_session):
 
 def test_day_and_period_idx_uniqueness_within_academic_year(db_session):
     seeded = _seed_year(db_session, "school-idx", "year-idx")
-    year = seeded["year"]
+    year, rid = seeded["year"], seeded["revision"].id
 
-    _fails(db_session, m.Day(academic_year_id=year.id, natural_id="tue", name="Tuesday", idx=0))
+    _fails(db_session, m.Day(
+        academic_year_id=year.id, configuration_revision_id=rid, natural_id="tue", name="Tuesday", idx=0,
+    ))
     _fails(db_session, m.Period(
-        academic_year_id=year.id, natural_id="p2", name="Period 2", idx=0, block_id="morning",
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="p2", name="Period 2", idx=0, block_id="morning",
     ))
 
 
 def test_enum_check_constraints_reject_invalid_values(db_session):
     seeded = _seed_year(db_session, "school-enum", "year-enum")
     year, teacher, day, period = seeded["year"], seeded["teacher"], seeded["day"], seeded["period"]
+    rid = seeded["revision"].id
 
     _fails(db_session, m.TeacherAvailability(
-        academic_year_id=year.id, teacher_id=teacher.id, day_id=day.id, period_id=period.id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        teacher_id=teacher.id, day_id=day.id, period_id=period.id,
         status="SOMETIMES", ordinal=1,
     ))
     _fails(db_session, m.Activity(
-        academic_year_id=year.id, natural_id="mystery", name="Mystery", kind="UNKNOWN_KIND", ordinal=1,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="mystery", name="Mystery", kind="UNKNOWN_KIND", ordinal=1,
     ))
     _fails(db_session, m.TeachingRequirement(
-        academic_year_id=year.id, natural_id="bad_mode", teacher_id=teacher.id, activity_id=seeded["activity"].id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="bad_mode", teacher_id=teacher.id, activity_id=seeded["activity"].id,
         participant_group_id=seeded["group"].id, weekly_periods=1, block_mode="SOMETIMES", ordinal=1,
     ))
     _fails(db_session, m.TimePreference(
-        academic_year_id=year.id, teaching_requirement_id=seeded["requirement"].id, ordinal=1,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        teaching_requirement_id=seeded["requirement"].id, ordinal=1,
         preferred_period_indexes=[0], weight="EXTREME",
     ))
     _fails(db_session, m.ParticipantGroup(
-        academic_year_id=year.id, natural_id="bad_role_group", name="Bad Role",
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="bad_role_group", name="Bad Role",
         role="EVERYONE", ordinal=1,
     ))
 
 
 def test_positive_value_check_constraints(db_session):
     seeded = _seed_year(db_session, "school-positive", "year-positive")
-    year = seeded["year"]
+    year, rid = seeded["year"], seeded["revision"].id
 
     _fails(db_session, m.TeachingRequirement(
-        academic_year_id=year.id, natural_id="zero_periods", teacher_id=seeded["teacher"].id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="zero_periods", teacher_id=seeded["teacher"].id,
         activity_id=seeded["activity"].id, participant_group_id=seeded["group"].id,
         weekly_periods=0, ordinal=1,
     ))
     _fails(db_session, m.Resource(
-        academic_year_id=year.id, natural_id="bad_resource", name="Bad Resource", capacity=0, ordinal=1,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="bad_resource", name="Bad Resource", capacity=0, ordinal=1,
     ))
 
 
@@ -236,7 +338,8 @@ def test_owned_child_cascade_delete(db_session):
     teacher, day, period, year = seeded["teacher"], seeded["day"], seeded["period"], seeded["year"]
 
     db_session.add(m.TeacherAvailability(
-        academic_year_id=year.id, teacher_id=teacher.id, day_id=day.id, period_id=period.id,
+        academic_year_id=year.id, configuration_revision_id=seeded["revision"].id,
+        teacher_id=teacher.id, day_id=day.id, period_id=period.id,
         status="UNAVAILABLE", ordinal=0,
     ))
     db_session.flush()
@@ -285,20 +388,25 @@ def test_cross_entity_restrict_blocks_sibling_delete(db_session):
 def test_ordinal_and_membership_uniqueness_on_ordered_child_tables(db_session):
     seeded = _seed_year(db_session, "school-ordinal", "year-ordinal")
     year, group, class_section = seeded["year"], seeded["group"], seeded["class_section"]
+    rid = seeded["revision"].id
 
-    other_class = m.ClassSection(academic_year_id=year.id, natural_id="8b", name="8-B", ordinal=1)
+    other_class = m.ClassSection(
+        academic_year_id=year.id, configuration_revision_id=rid, natural_id="8b", name="8-B", ordinal=1,
+    )
     db_session.add(other_class)
     db_session.flush()
 
     # Same (participant_group_id, ordinal) twice -> PK violation.
     _fails(db_session, m.ParticipantGroupClassSection(
-        academic_year_id=year.id, participant_group_id=group.id, class_section_id=other_class.id, ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        participant_group_id=group.id, class_section_id=other_class.id, ordinal=0,
     ))
 
     # Same (participant_group_id, class_section_id) twice at a different
     # ordinal -> duplicate-membership violation.
     _fails(db_session, m.ParticipantGroupClassSection(
-        academic_year_id=year.id, participant_group_id=group.id, class_section_id=class_section.id, ordinal=1,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        participant_group_id=group.id, class_section_id=class_section.id, ordinal=1,
     ))
 
 
@@ -314,6 +422,7 @@ def test_deleting_academic_year_cascades_complete_snapshot(db_session):
     school, teacher, day, period = seeded["school"], seeded["teacher"], seeded["day"], seeded["period"]
     activity, resource, group = seeded["activity"], seeded["resource"], seeded["group"]
     requirement, class_section = seeded["requirement"], seeded["class_section"]
+    rid = seeded["revision"].id
 
     # Exercise the RESTRICT edges, not just independent rows: attach the
     # optional resource to the requirement, add a TimePreference, a
@@ -322,28 +431,34 @@ def test_deleting_academic_year_cascades_complete_snapshot(db_session):
     # and slot child rows.
     requirement.resource_id = resource.id
     db_session.add(m.TimePreference(
-        academic_year_id=year.id, teaching_requirement_id=requirement.id, ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        teaching_requirement_id=requirement.id, ordinal=0,
         preferred_period_indexes=[0, 1], weight="HIGH",
     ))
     db_session.add(m.TeacherAvailability(
-        academic_year_id=year.id, teacher_id=teacher.id, day_id=day.id, period_id=period.id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        teacher_id=teacher.id, day_id=day.id, period_id=period.id,
         status="UNAVAILABLE", ordinal=0,
     ))
     db_session.add(m.FixedPlacement(
-        academic_year_id=year.id, natural_id="fixed_math_8a", teaching_requirement_id=requirement.id,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="fixed_math_8a", teaching_requirement_id=requirement.id,
         day_id=day.id, period_id=period.id, ordinal=0,
     ))
     reserved = m.ReservedBlock(
-        academic_year_id=year.id, natural_id="club_chess", name="Chess Club",
+        academic_year_id=year.id, configuration_revision_id=rid,
+        natural_id="club_chess", name="Chess Club",
         activity_id=activity.id, teacher_id=teacher.id, ordinal=0,
     )
     db_session.add(reserved)
     db_session.flush()
     db_session.add(m.ReservedBlockClassSection(
-        academic_year_id=year.id, reserved_block_id=reserved.id, class_section_id=class_section.id, ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        reserved_block_id=reserved.id, class_section_id=class_section.id, ordinal=0,
     ))
     db_session.add(m.ReservedBlockSlot(
-        academic_year_id=year.id, reserved_block_id=reserved.id, day_id=day.id, period_id=period.id, ordinal=0,
+        academic_year_id=year.id, configuration_revision_id=rid,
+        reserved_block_id=reserved.id, day_id=day.id, period_id=period.id, ordinal=0,
     ))
     db_session.flush()
 

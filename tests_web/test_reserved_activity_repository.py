@@ -876,7 +876,11 @@ def test_update_replaces_resource_id(seeded_db, live_db_engine):
 
     connection = live_db_engine.connect()
     session = Session(bind=connection)
-    session.add(m.Resource(academic_year_id=year_id, natural_id="lab", name="Science Lab", capacity=1, ordinal=999))
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
+    session.add(m.Resource(
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="lab", name="Science Lab", capacity=1, ordinal=999,
+    ))
     session.commit()
     session.close()
     connection.close()

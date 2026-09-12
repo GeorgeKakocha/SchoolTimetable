@@ -45,6 +45,7 @@ from school_timetable.persistence import models as orm
 from school_timetable.persistence.configuration_write_lock import (
     lock_academic_year as _lock_academic_year,
     reject_if_configuration_locked as _reject_if_configuration_locked,
+    resolve_draft_revision_id as _resolve_draft_revision_id,
     resolve_year_id as _resolve_year_id,
 )
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
@@ -93,8 +94,10 @@ class SqlAlchemyTeachingAssignmentRepository:
                 else _natural_to_surrogate(session, orm.Resource, year_id)[resource_id]
             )
 
+            revision_id = _resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
             session.add(orm.TeachingRequirement(
                 academic_year_id=year_id,
+                configuration_revision_id=revision_id,
                 natural_id=natural_id,
                 teacher_id=teacher_ids[teacher_id],
                 activity_id=activity_ids[activity_id],

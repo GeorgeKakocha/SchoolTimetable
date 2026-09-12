@@ -57,7 +57,7 @@ def _active(entries: tuple[ScheduleEntry, ...], **overrides) -> ActiveScheduleVe
     defaults = dict(
         version_number=1, solver_status=SolverStatus.OPTIMAL, total_soft_penalty=0,
         wall_time_seconds=1.0, random_seed=None, created_at=_CREATED_AT,
-        entries=entries, locked_occurrences=frozenset(),
+        entries=entries, locked_occurrences=frozenset(), configuration_revision_number=1,
     )
     defaults.update(overrides)
     return ActiveScheduleVersion(**defaults)
@@ -77,7 +77,7 @@ def _snapshot(entries: tuple[ScheduleEntry, ...], **overrides) -> ScheduleVersio
     defaults = dict(
         version_number=1, solver_status=SolverStatus.OPTIMAL, total_soft_penalty=0,
         wall_time_seconds=1.0, random_seed=None, created_at=_CREATED_AT,
-        is_active=False, parent_version_number=None,
+        is_active=False, parent_version_number=None, configuration_revision_number=1,
         entries=entries, locked_occurrences=frozenset(),
     )
     defaults.update(overrides)
@@ -90,6 +90,11 @@ class _FakeProblemRepository:
         self._error = error
 
     def load_by_school_and_year(self, school_natural_id: str, academic_year_natural_id: str):
+        if self._error is not None:
+            raise self._error
+        return self._problem
+
+    def load_for_revision(self, school_natural_id: str, academic_year_natural_id: str, revision_number: int):
         if self._error is not None:
             raise self._error
         return self._problem

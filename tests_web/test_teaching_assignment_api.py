@@ -42,7 +42,7 @@ from school_timetable.persistence.db import get_session
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.persistence.teaching_assignment_repository import SqlAlchemyTeachingAssignmentRepository
-from tests_web.support.problem_writer import write_scheduling_problem
+from tests_web.support.problem_writer import create_draft_configuration_revision, write_scheduling_problem
 
 
 @pytest.fixture
@@ -247,8 +247,9 @@ def test_get_zero_workload_teacher_appears_with_zero_total(client, db):
     next_ordinal = session.execute(
         select(func.max(m.Teacher.ordinal)).where(m.Teacher.academic_year_id == year_id)
     ).scalar_one()
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
     session.add(m.Teacher(
-        academic_year_id=year_id, natural_id="t_zero",
+        academic_year_id=year_id, configuration_revision_id=revision_id, natural_id="t_zero",
         first_name="Teacher Zero", last_name="", ordinal=next_ordinal + 1,
     ))
     session.flush()
@@ -513,7 +514,11 @@ def test_post_cross_ay_resource_id_returns_422(client, db, live_db_engine):
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
-    session.add(m.Resource(academic_year_id=year2.id, natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0))
+    revision2_id = create_draft_configuration_revision(session, year2.id)
+    session.add(m.Resource(
+        academic_year_id=year2.id, configuration_revision_id=revision2_id,
+        natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0,
+    ))
     session.flush()
 
     response = client.post(_url(problem), json={
@@ -647,7 +652,11 @@ def test_put_replaces_resource_a_with_resource_b(client, db, live_db_engine):
     year_id = session.execute(
         select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
     ).scalar_one()
-    session.add(m.Resource(academic_year_id=year_id, natural_id="lab", name="Science Lab", capacity=1, ordinal=999))
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
+    session.add(m.Resource(
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="lab", name="Science Lab", capacity=1, ordinal=999,
+    ))
     session.flush()
 
     response = client.put(_url(problem, "sport_8a"), json={
@@ -699,7 +708,11 @@ def test_put_cross_ay_resource_id_returns_422(client, db, live_db_engine):
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
-    session.add(m.Resource(academic_year_id=year2.id, natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0))
+    revision2_id = create_draft_configuration_revision(session, year2.id)
+    session.add(m.Resource(
+        academic_year_id=year2.id, configuration_revision_id=revision2_id,
+        natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0,
+    ))
     session.flush()
 
     response = client.put(_url(problem, "science_8a"), json={

@@ -31,6 +31,7 @@ from school_timetable.persistence import models as orm
 from school_timetable.persistence.configuration_write_lock import (
     lock_academic_year,
     reject_if_configuration_locked,
+    resolve_draft_revision_id,
     resolve_year_id,
 )
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
@@ -113,9 +114,11 @@ class SqlAlchemyTeacherAvailabilityRepository:
                 key=lambda cell: (day_idx_by_surrogate[cell[0]], period_idx_by_surrogate[cell[1]]),
             )
             next_ordinal = _next_availability_ordinal(session, year_id)
+            revision_id = resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
             for day_surrogate, period_surrogate in new_cells:
                 session.add(orm.TeacherAvailability(
                     academic_year_id=year_id,
+                    configuration_revision_id=revision_id,
                     teacher_id=teacher_row.id,
                     day_id=day_surrogate,
                     period_id=period_surrogate,

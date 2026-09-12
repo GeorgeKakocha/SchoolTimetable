@@ -35,6 +35,7 @@ from school_timetable.persistence import models as orm
 from school_timetable.persistence.configuration_write_lock import (
     lock_academic_year,
     reject_if_configuration_locked,
+    resolve_draft_revision_id,
     resolve_year_id,
 )
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
@@ -67,22 +68,24 @@ class SqlAlchemyClassSectionRepository:
             )
             validate(current_problem)
 
+            revision_id = resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
             class_row = orm.ClassSection(
-                academic_year_id=year_id, natural_id=class_natural_id,
+                academic_year_id=year_id, configuration_revision_id=revision_id, natural_id=class_natural_id,
                 name=name, ordinal=_next_class_ordinal(session, year_id),
             )
             session.add(class_row)
             session.flush()  # obtain class_row.id (surrogate)
 
             group_row = orm.ParticipantGroup(
-                academic_year_id=year_id, natural_id=canonical_group_natural_id,
+                academic_year_id=year_id, configuration_revision_id=revision_id,
+                natural_id=canonical_group_natural_id,
                 name=name, role="WHOLE_CLASS", ordinal=_next_group_ordinal(session, year_id),
             )
             session.add(group_row)
             session.flush()  # obtain group_row.id (surrogate)
 
             session.add(orm.ParticipantGroupClassSection(
-                academic_year_id=year_id, participant_group_id=group_row.id,
+                academic_year_id=year_id, configuration_revision_id=revision_id, participant_group_id=group_row.id,
                 class_section_id=class_row.id, ordinal=0,
             ))
             session.commit()

@@ -36,7 +36,7 @@ from school_timetable.persistence import models as m
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.persistence.teaching_assignment_repository import SqlAlchemyTeachingAssignmentRepository
-from tests_web.support.problem_writer import write_scheduling_problem
+from tests_web.support.problem_writer import create_draft_configuration_revision, write_scheduling_problem
 
 
 @pytest.fixture
@@ -162,8 +162,9 @@ def test_same_year_isolation(seeded_db, live_db_engine):
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
+    revision2_id = create_draft_configuration_revision(session, year2.id)
     session.add(m.Teacher(
-        academic_year_id=year2.id, natural_id="t_math",
+        academic_year_id=year2.id, configuration_revision_id=revision2_id, natural_id="t_math",
         first_name="Other Teacher Math", last_name="", ordinal=0,
     ))
     session.commit()
@@ -309,7 +310,11 @@ def test_update_replaces_resource_id(seeded_db, live_db_engine):
 
     connection = live_db_engine.connect()
     session = Session(bind=connection)
-    session.add(m.Resource(academic_year_id=year_id, natural_id="lab", name="Science Lab", capacity=1, ordinal=999))
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
+    session.add(m.Resource(
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="lab", name="Science Lab", capacity=1, ordinal=999,
+    ))
     session.commit()
     session.close()
     connection.close()
@@ -441,7 +446,11 @@ def test_cross_ay_resource_cannot_be_assigned(seeded_db, live_db_engine):
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
-    session.add(m.Resource(academic_year_id=year2.id, natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0))
+    revision2_id = create_draft_configuration_revision(session, year2.id)
+    session.add(m.Resource(
+        academic_year_id=year2.id, configuration_revision_id=revision2_id,
+        natural_id="cross_ay_gym", name="Other Gym", capacity=1, ordinal=0,
+    ))
     session.commit()
     school2_id = school2.id
     session.close()

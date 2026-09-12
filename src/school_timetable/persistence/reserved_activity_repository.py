@@ -58,6 +58,7 @@ from school_timetable.persistence import models as orm
 from school_timetable.persistence.configuration_write_lock import (
     lock_academic_year,
     reject_if_configuration_locked,
+    resolve_draft_revision_id,
     resolve_year_id,
 )
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
@@ -105,8 +106,10 @@ class SqlAlchemyReservedActivityRepository:
             )
             slot_rows = _resolve_slots(session, year_id, fields.slots, school_natural_id, academic_year_natural_id)
 
+            revision_id = resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
             block_row = orm.ReservedBlock(
-                academic_year_id=year_id, natural_id=reserved_activity_natural_id,
+                academic_year_id=year_id, configuration_revision_id=revision_id,
+                natural_id=reserved_activity_natural_id,
                 name=activity_row.name, activity_id=activity_row.id,
                 teacher_id=teacher_row.id if teacher_row is not None else None,
                 resource_id=resource_row.id if resource_row is not None else None,
@@ -115,7 +118,7 @@ class SqlAlchemyReservedActivityRepository:
             session.add(block_row)
             session.flush()  # obtain block_row.id (surrogate)
 
-            _insert_children(session, year_id, block_row.id, class_rows, slot_rows)
+            _insert_children(session, year_id, revision_id, block_row.id, class_rows, slot_rows)
             session.commit()
 
             return _write_result(
@@ -191,9 +194,9 @@ class SqlAlchemyReservedActivityRepository:
             # Full-replacement, matching every other field on this row
             # (Resources B2) -- `resource_id=None` always clears it.
             block_row.resource_id = resource_row.id if resource_row is not None else None
-            # natural_id and ordinal are never touched.
+            # natural_id, ordinal, and configuration_revision_id are never touched.
 
-            _insert_children(session, year_id, block_row.id, class_rows, slot_rows)
+            _insert_children(session, year_id, block_row.configuration_revision_id, block_row.id, class_rows, slot_rows)
             session.commit()
 
             return _write_result(
@@ -347,16 +350,17 @@ def _resolve_slots(
 
 
 def _insert_children(
-    session: Session, year_id: int, block_id: int,
+    session: Session, year_id: int, revision_id: int, block_id: int,
     class_rows: list[orm.ClassSection], slot_rows: list[tuple[orm.Day, orm.Period]],
 ) -> None:
     for ordinal, class_row in enumerate(class_rows):
         session.add(orm.ReservedBlockClassSection(
-            academic_year_id=year_id, reserved_block_id=block_id, class_section_id=class_row.id, ordinal=ordinal,
+            academic_year_id=year_id, configuration_revision_id=revision_id,
+            reserved_block_id=block_id, class_section_id=class_row.id, ordinal=ordinal,
         ))
     for ordinal, (day_row, period_row) in enumerate(slot_rows):
         session.add(orm.ReservedBlockSlot(
-            academic_year_id=year_id, reserved_block_id=block_id,
+            academic_year_id=year_id, configuration_revision_id=revision_id, reserved_block_id=block_id,
             day_id=day_row.id, period_id=period_row.id, ordinal=ordinal,
         ))
 

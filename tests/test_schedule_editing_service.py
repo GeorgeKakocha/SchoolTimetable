@@ -53,6 +53,10 @@ class _FakeProblemRepository:
         self.calls.append((school_natural_id, academic_year_natural_id))
         return self._problem
 
+    def load_for_revision(self, school_natural_id: str, academic_year_natural_id: str, revision_number: int):
+        self.calls.append((school_natural_id, academic_year_natural_id))
+        return self._problem
+
 
 class _FakeScheduleRepository:
     """`active` is what `get_active_schedule` returns; `write_check_active`
@@ -80,6 +84,7 @@ class _FakeScheduleRepository:
                 total_soft_penalty=active.total_soft_penalty, wall_time_seconds=active.wall_time_seconds,
                 random_seed=active.random_seed, created_at=active.created_at,
                 is_active=True, parent_version_number=None,
+                configuration_revision_number=active.configuration_revision_number,
                 entries=active.entries, locked_occurrences=active.locked_occurrences,
             )
 
@@ -112,6 +117,9 @@ class _FakeScheduleRepository:
             created_at=_CREATED_AT,
             entries=candidate.entries,
             locked_occurrences=candidate.locked_occurrences,
+            # Manual editing/restore never changes configuration
+            # revision -- copied forward unchanged from the base version.
+            configuration_revision_number=current.configuration_revision_number,
         )
         self.persist_calls.append({
             "base_version_number": base_version_number,
@@ -129,6 +137,7 @@ class _FakeScheduleRepository:
             total_soft_penalty=total_soft_penalty, wall_time_seconds=wall_time_seconds,
             random_seed=random_seed, created_at=_CREATED_AT,
             is_active=True, parent_version_number=current.version_number,
+            configuration_revision_number=current.configuration_revision_number,
             entries=candidate.entries, locked_occurrences=candidate.locked_occurrences,
         )
         self._next_version_number += 1
@@ -144,7 +153,7 @@ def _seed_v1():
     v1 = ActiveScheduleVersion(
         version_number=1, solver_status=result.status, total_soft_penalty=result.total_soft_penalty,
         wall_time_seconds=1.0, random_seed=11, created_at=_CREATED_AT,
-        entries=result.entries, locked_occurrences=frozenset(),
+        entries=result.entries, locked_occurrences=frozenset(), configuration_revision_number=1,
     )
     return problem, v1
 
@@ -387,7 +396,7 @@ def test_move_with_a_race_between_read_and_persist_is_still_rejected():
     v2 = ActiveScheduleVersion(
         version_number=2, solver_status=SolverStatus.FEASIBLE, total_soft_penalty=0,
         wall_time_seconds=0.0, random_seed=None, created_at=_CREATED_AT,
-        entries=v1.entries, locked_occurrences=frozenset(),
+        entries=v1.entries, locked_occurrences=frozenset(), configuration_revision_number=1,
     )
     schedule_repo.write_check_active = v2
 

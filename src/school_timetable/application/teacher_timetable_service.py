@@ -54,20 +54,27 @@ class TeacherTimetableService:
         academic_year_natural_id: str,
         teacher_id: str,
     ) -> TeacherTimetableView | None:
-        # (1) Load config. SchedulingProblemNotFoundError propagates
-        # unchanged if the school/year itself does not resolve.
-        problem = self._problem_repository.load_by_school_and_year(
-            school_natural_id, academic_year_natural_id,
-        )
-        teacher = _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
-
-        # Load the active schedule. None means "no Schedule has been
-        # generated yet" -- an ordinary, expected outcome, not an error.
+        # Load the active schedule first (Safe Configuration Changes,
+        # Slice A: the active version's own configuration revision is
+        # what this projection must resolve config from, never
+        # "whatever is currently published/draft"). SchedulingProblemNotFoundError
+        # propagates unchanged if the school/year itself does not
+        # resolve. None means "no Schedule has been generated yet" -- an
+        # ordinary, expected outcome, not an error.
         active = self._schedule_repository.get_active_schedule(
             school_natural_id, academic_year_natural_id,
         )
         if active is None:
+            problem = self._problem_repository.load_by_school_and_year(
+                school_natural_id, academic_year_natural_id,
+            )
+            _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
             return None
+
+        problem = self._problem_repository.load_for_revision(
+            school_natural_id, academic_year_natural_id, active.configuration_revision_number,
+        )
+        teacher = _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
 
         return _build_view(
             problem, teacher, active.entries, active.version_number, active.solver_status,
@@ -84,21 +91,27 @@ class TeacherTimetableService:
         """Historical sibling of `project`: projects one SPECIFIC,
         possibly-inactive `ScheduleVersion` (schedule version history +
         restore slice) instead of always the current active one -- the
-        exact same projection rules, never duplicated. Returns `None`
-        only if no `Schedule` exists at all yet for this school/year
-        (mirrors `project`'s own convention); raises `school_timetable.
-        application.errors.ScheduleVersionNotFoundError` if a `Schedule`
-        exists but this `version_number` does not."""
-        problem = self._problem_repository.load_by_school_and_year(
-            school_natural_id, academic_year_natural_id,
-        )
-        teacher = _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
-
+        exact same projection rules, never duplicated. Resolves
+        `SchedulingProblem` from THIS version's own `configuration_
+        revision_number`, never "whatever is currently published/draft".
+        Returns `None` only if no `Schedule` exists at all yet for this
+        school/year (mirrors `project`'s own convention); raises
+        `school_timetable.application.errors.ScheduleVersionNotFoundError`
+        if a `Schedule` exists but this `version_number` does not."""
         snapshot = self._schedule_repository.get_version(
             school_natural_id, academic_year_natural_id, version_number,
         )
         if snapshot is None:
+            problem = self._problem_repository.load_by_school_and_year(
+                school_natural_id, academic_year_natural_id,
+            )
+            _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
             return None
+
+        problem = self._problem_repository.load_for_revision(
+            school_natural_id, academic_year_natural_id, snapshot.configuration_revision_number,
+        )
+        teacher = _resolve_teacher(problem, school_natural_id, academic_year_natural_id, teacher_id)
 
         return _build_view(
             problem, teacher, snapshot.entries, snapshot.version_number, snapshot.solver_status,

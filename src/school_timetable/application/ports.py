@@ -79,11 +79,40 @@ class SchedulingProblemRepository(Protocol):
         `SchedulingProblem` with exact tuple order and no persistence
         surrogate ID anywhere in the result.
 
+        Safe Configuration Changes, Slice A: resolves the year's
+        currently *relevant* `ConfigurationRevision` -- its published
+        revision if one exists, else its draft (the pre-first-Generate
+        case). Never mixes rows from two different revisions.
+
         Raises `school_timetable.application.errors.
         SchedulingProblemNotFoundError` identically whether
         `school_natural_id` itself is unknown or it is known but
         `academic_year_natural_id` is not -- both are the same
         "this configuration does not exist" outcome to the caller.
+        """
+        ...
+
+    def load_for_revision(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        revision_number: int,
+    ) -> SchedulingProblem:
+        """Load the complete persisted scheduling configuration for one
+        SPECIFIC `ConfigurationRevision`, identified by its natural
+        `revision_number` (never a persistence surrogate ID) -- for
+        historical `ScheduleVersion` projection, which must resolve
+        against the exact revision its entries were generated/edited
+        against, never "whatever is currently published/draft".
+
+        Raises `SchedulingProblemNotFoundError` if the school/year
+        itself does not resolve, matching `load_by_school_and_year`
+        exactly. `revision_number` is always sourced from an existing
+        `ScheduleVersion`'s own `configuration_revision_number` by
+        every caller of this method -- a revision a `ScheduleVersion`
+        references is never deleted, so an unresolvable
+        `revision_number` here would be an internal defect, not an
+        ordinary client-facing outcome, and is never disguised as one.
         """
         ...
 

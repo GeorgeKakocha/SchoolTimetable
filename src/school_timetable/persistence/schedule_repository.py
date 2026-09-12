@@ -161,8 +161,9 @@ class SqlAlchemyScheduleVersionRepository:
                     "does not reference an existing schedule_version row"
                 )
 
+            revision_number = _revision_number_for_id(session, version_row.configuration_revision_id)
             entries, locked_occurrences = _load_version_payload(
-                session, school_natural_id, academic_year_natural_id, year_id, version_row,
+                session, school_natural_id, academic_year_natural_id, year_id, version_row, revision_number,
             )
 
             return ActiveScheduleVersion(
@@ -174,6 +175,7 @@ class SqlAlchemyScheduleVersionRepository:
                 created_at=version_row.created_at,
                 entries=entries,
                 locked_occurrences=locked_occurrences,
+                configuration_revision_number=revision_number,
             )
         finally:
             session.close()
@@ -241,8 +243,9 @@ class SqlAlchemyScheduleVersionRepository:
             if version_row is None:
                 raise ScheduleVersionNotFoundError(school_natural_id, academic_year_natural_id, version_number)
 
+            revision_number = _revision_number_for_id(session, version_row.configuration_revision_id)
             entries, locked_occurrences = _load_version_payload(
-                session, school_natural_id, academic_year_natural_id, year_id, version_row,
+                session, school_natural_id, academic_year_natural_id, year_id, version_row, revision_number,
             )
 
             parent_version_number = None
@@ -259,6 +262,7 @@ class SqlAlchemyScheduleVersionRepository:
                 created_at=version_row.created_at,
                 is_active=(schedule_row.active_version_id == version_row.id),
                 parent_version_number=parent_version_number,
+                configuration_revision_number=revision_number,
                 entries=entries,
                 locked_occurrences=locked_occurrences,
             )
@@ -290,9 +294,9 @@ class SqlAlchemyScheduleVersionRepository:
             # here, immediately before this short persist transaction --
             # never across the solve that already finished before this
             # method was even called.
-            session.execute(
-                select(orm.AcademicYear.id).where(orm.AcademicYear.id == year_id).with_for_update()
-            )
+            academic_year_row = session.execute(
+                select(orm.AcademicYear).where(orm.AcademicYear.id == year_id).with_for_update()
+            ).scalar_one()
             current_problem = SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
                 school_natural_id, academic_year_natural_id,
             )
@@ -300,12 +304,53 @@ class SqlAlchemyScheduleVersionRepository:
                 session.rollback()
                 raise ConfigurationChangedDuringGenerationError(school_natural_id, academic_year_natural_id)
 
+            # Safe Configuration Changes, Slice A: the draft this problem
+            # was actually solved against (`load_by_school_and_year`
+            # above resolves "published if any, else draft" -- with no
+            # published revision yet, that is necessarily this year's
+            # draft) becomes PUBLISHED, atomically, in the same
+            # transaction that creates the first ScheduleVersion
+            # referencing it. No ScheduleVersion is ever created
+            # referencing a still-mutable revision.
+            #
+            # A second call for a year that already has a Schedule sees
+            # `draft_revision_id is None` (the first call already
+            # published and cleared it) -- that is NOT an error here: it
+            # must fall through unpublished, so the pre-existing
+            # `uq_schedule_academic_year_id` IntegrityError below still
+            # fires and is translated into `ScheduleAlreadyExistsError`,
+            # exactly as it did before Slice A. Only a genuinely corrupt
+            # AcademicYear (neither a draft nor a published revision) is
+            # an error.
+            draft_revision_id = academic_year_row.draft_revision_id
+            publish_draft = draft_revision_id is not None
+            if publish_draft:
+                draft_revision_row = session.get(orm.ConfigurationRevision, draft_revision_id)
+                revision_id_for_version = draft_revision_id
+                configuration_revision_number = draft_revision_row.revision_number
+            else:
+                if academic_year_row.published_revision_id is None:
+                    session.rollback()
+                    raise RuntimeError(
+                        f"AcademicYear school={school_natural_id!r}, academic_year="
+                        f"{academic_year_natural_id!r} has neither a draft nor a published "
+                        "configuration revision"
+                    )
+                revision_id_for_version = academic_year_row.published_revision_id
+                configuration_revision_number = _revision_number_for_id(session, revision_id_for_version)
+
             day_ids = _natural_to_surrogate(session, orm.Day, year_id)
             period_ids = _natural_to_surrogate(session, orm.Period, year_id)
             requirement_ids = _natural_to_surrogate(session, orm.TeachingRequirement, year_id)
             reserved_block_ids = _natural_to_surrogate(session, orm.ReservedBlock, year_id)
 
             try:
+                if publish_draft:
+                    draft_revision_row.status = "PUBLISHED"
+                    academic_year_row.published_revision_id = draft_revision_id
+                    academic_year_row.draft_revision_id = None
+                    session.flush()
+
                 schedule_row = orm.Schedule(academic_year_id=year_id, active_version_id=None)
                 session.add(schedule_row)
                 session.flush()
@@ -315,6 +360,7 @@ class SqlAlchemyScheduleVersionRepository:
                     schedule_id=schedule_row.id,
                     version_number=1,
                     parent_version_id=None,
+                    configuration_revision_id=revision_id_for_version,
                     solver_status=solver_status.value,
                     total_soft_penalty=total_soft_penalty,
                     wall_time_seconds=wall_time_seconds,
@@ -379,6 +425,7 @@ class SqlAlchemyScheduleVersionRepository:
                 created_at=version_row.created_at,
                 entries=entries,
                 locked_occurrences=frozenset(),
+                configuration_revision_number=configuration_revision_number,
             )
         finally:
             session.close()
@@ -446,6 +493,9 @@ class SqlAlchemyScheduleVersionRepository:
                 )
             ).scalar_one()
             next_version_number = max_version_number + 1
+            configuration_revision_number = _revision_number_for_id(
+                session, active_version_row.configuration_revision_id
+            )
 
             day_ids = _natural_to_surrogate(session, orm.Day, year_id)
             period_ids = _natural_to_surrogate(session, orm.Period, year_id)
@@ -458,6 +508,12 @@ class SqlAlchemyScheduleVersionRepository:
                     schedule_id=schedule_row.id,
                     version_number=next_version_number,
                     parent_version_id=active_version_row.id,
+                    # Safe Configuration Changes, Slice A: manual editing
+                    # (move/lock/unlock/reoptimize) and same-revision
+                    # restore never change which configuration revision a
+                    # version belongs to -- always copied forward
+                    # unchanged from the base version being edited from.
+                    configuration_revision_id=active_version_row.configuration_revision_id,
                     solver_status=solver_status.value,
                     total_soft_penalty=total_soft_penalty,
                     wall_time_seconds=wall_time_seconds,
@@ -511,6 +567,7 @@ class SqlAlchemyScheduleVersionRepository:
                 created_at=new_version_row.created_at,
                 entries=candidate.entries,
                 locked_occurrences=candidate.locked_occurrences,
+                configuration_revision_number=configuration_revision_number,
             )
         finally:
             session.close()
@@ -535,17 +592,29 @@ def _natural_to_surrogate(session: Session, model: type, year_id: int) -> dict[s
     return {row.natural_id: row.id for row in rows}
 
 
+def _revision_number_for_id(session: Session, revision_id: int) -> int:
+    revision_row = session.get(orm.ConfigurationRevision, revision_id)
+    return revision_row.revision_number
+
+
 def _load_version_payload(
     session: Session,
     school_natural_id: str,
     academic_year_natural_id: str,
     year_id: int,
     version_row: orm.ScheduleVersion,
+    revision_number: int,
 ) -> tuple[tuple[ScheduleEntry, ...], frozenset[OccurrenceKey]]:
     """Shared by `get_active_schedule`/`get_version`: loads one
     `ScheduleVersion`'s own `ScheduleEntry`/`LockedOccurrence` rows and
     resolves them to domain objects -- identical regardless of whether
-    the version in question happens to be the active one."""
+    the version in question happens to be the active one.
+
+    Safe Configuration Changes, Slice A: resolves the `SchedulingProblem`
+    from `version_row`'s OWN `configuration_revision_id` (via
+    `revision_number`), never from "whatever is currently published/
+    draft" -- this is what makes historical projection correct even
+    once a later revision exists (Slice B)."""
     entry_rows = list(
         session.execute(
             select(orm.ScheduleEntry).where(orm.ScheduleEntry.schedule_version_id == version_row.id)
@@ -556,15 +625,16 @@ def _load_version_payload(
             select(orm.LockedOccurrence).where(orm.LockedOccurrence.schedule_version_id == version_row.id)
         ).scalars()
     )
-    problem = SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
-        school_natural_id, academic_year_natural_id
+    problem = SqlAlchemySchedulingProblemRepository(session).load_for_revision(
+        school_natural_id, academic_year_natural_id, revision_number,
     )
-    return _resolve_entries(session, year_id, problem, entry_rows, locked_rows)
+    return _resolve_entries(session, year_id, version_row.configuration_revision_id, problem, entry_rows, locked_rows)
 
 
 def _resolve_entries(
     session: Session,
     year_id: int,
+    revision_id: int,
     problem: SchedulingProblem,
     entry_rows: Sequence[orm.ScheduleEntry],
     locked_rows: Sequence[orm.LockedOccurrence],
@@ -573,13 +643,33 @@ def _resolve_entries(
     reserved_blocks_by_natural_id = {b.id: b for b in problem.reserved_blocks}
     participant_groups_by_natural_id = {g.id: g for g in problem.participant_groups}
 
-    day_rows = session.execute(select(orm.Day).where(orm.Day.academic_year_id == year_id)).scalars().all()
-    period_rows = session.execute(select(orm.Period).where(orm.Period.academic_year_id == year_id)).scalars().all()
+    # `ScheduleEntry`/`LockedOccurrence` reference `Day`/`Period`/
+    # `TeachingRequirement`/`ReservedBlock` via those tables' own
+    # unmodified `(academic_year_id, id)` FK target (Slice A deliberately
+    # never widens this specific reference -- see `ScheduleVersion.
+    # configuration_revision_id`'s own docstring) -- but a *lookup* here
+    # still must not accidentally resolve a different revision's row
+    # sharing the same natural_id, so these reads are scoped by revision
+    # explicitly even though the FK itself is not.
+    day_rows = session.execute(
+        select(orm.Day).where(orm.Day.academic_year_id == year_id, orm.Day.configuration_revision_id == revision_id)
+    ).scalars().all()
+    period_rows = session.execute(
+        select(orm.Period).where(
+            orm.Period.academic_year_id == year_id, orm.Period.configuration_revision_id == revision_id,
+        )
+    ).scalars().all()
     requirement_rows = session.execute(
-        select(orm.TeachingRequirement).where(orm.TeachingRequirement.academic_year_id == year_id)
+        select(orm.TeachingRequirement).where(
+            orm.TeachingRequirement.academic_year_id == year_id,
+            orm.TeachingRequirement.configuration_revision_id == revision_id,
+        )
     ).scalars().all()
     reserved_block_rows = session.execute(
-        select(orm.ReservedBlock).where(orm.ReservedBlock.academic_year_id == year_id)
+        select(orm.ReservedBlock).where(
+            orm.ReservedBlock.academic_year_id == year_id,
+            orm.ReservedBlock.configuration_revision_id == revision_id,
+        )
     ).scalars().all()
 
     lookup = mp.NaturalIdLookup.build(

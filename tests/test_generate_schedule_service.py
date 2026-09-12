@@ -87,6 +87,7 @@ class _FakeScheduleRepository:
             created_at=_CREATED_AT,
             entries=entries,
             locked_occurrences=frozenset(),
+            configuration_revision_number=1,
         )
 
 
@@ -109,7 +110,7 @@ def test_existing_schedule_precheck_raises_and_skips_everything(monkeypatch):
     active = ActiveScheduleVersion(
         version_number=1, solver_status=SolverStatus.OPTIMAL, total_soft_penalty=0,
         wall_time_seconds=1.0, random_seed=None, created_at=_CREATED_AT,
-        entries=(), locked_occurrences=frozenset(),
+        entries=(), locked_occurrences=frozenset(), configuration_revision_number=1,
     )
     problem_repo = _FakeProblemRepository()
     schedule_repo = _FakeScheduleRepository(active=active)

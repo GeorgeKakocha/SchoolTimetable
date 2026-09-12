@@ -29,6 +29,14 @@ class ActiveScheduleVersion:
     created_at: datetime
     entries: tuple[ScheduleEntry, ...]
     locked_occurrences: frozenset[OccurrenceKey]
+    configuration_revision_number: int
+    """Safe Configuration Changes, Slice A: the natural `revision_number`
+    (never a persistence surrogate ID) of the `ConfigurationRevision`
+    this version's entries were generated/edited against -- a caller
+    resolving the `SchedulingProblem` this schedule is valid against
+    must use `SchedulingProblemRepository.load_for_revision` with THIS
+    value, never `load_by_school_and_year`'s own "whatever is currently
+    relevant" resolution."""
 
 
 @dataclass(frozen=True)
@@ -67,5 +75,10 @@ class ScheduleVersionSnapshot:
     created_at: datetime
     is_active: bool
     parent_version_number: int | None
+    configuration_revision_number: int
+    """See `ActiveScheduleVersion.configuration_revision_number` --
+    identical meaning. Historical class/teacher timetable projection
+    must resolve `SchedulingProblem` from THIS value via `load_for_
+    revision`, never from whatever is currently published/draft."""
     entries: tuple[ScheduleEntry, ...]
     locked_occurrences: frozenset[OccurrenceKey]

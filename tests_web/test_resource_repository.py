@@ -31,7 +31,7 @@ from school_timetable.persistence import models as m
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.resource_repository import SqlAlchemyResourceRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
-from tests_web.support.problem_writer import write_scheduling_problem
+from tests_web.support.problem_writer import create_draft_configuration_revision, write_scheduling_problem
 
 
 @pytest.fixture
@@ -298,7 +298,11 @@ def test_reserved_block_reference_detection(seeded_db, live_db_engine):
 
     connection = live_db_engine.connect()
     session = Session(bind=connection)
-    session.add(m.Resource(academic_year_id=year_id, natural_id="hall", name="Assembly Hall", capacity=1, ordinal=999))
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
+    session.add(m.Resource(
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="hall", name="Assembly Hall", capacity=1, ordinal=999,
+    ))
     session.flush()
     activity_row = session.execute(
         select(m.Activity).where(m.Activity.academic_year_id == year_id, m.Activity.natural_id == "club_chess")
@@ -316,16 +320,19 @@ def test_reserved_block_reference_detection(seeded_db, live_db_engine):
         select(m.Resource).where(m.Resource.academic_year_id == year_id, m.Resource.natural_id == "hall")
     ).scalar_one()
     block_row = m.ReservedBlock(
-        academic_year_id=year_id, natural_id="rb_assembly", name="Assembly", activity_id=activity_row.id,
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="rb_assembly", name="Assembly", activity_id=activity_row.id,
         teacher_id=None, resource_id=resource_row.id, ordinal=999,
     )
     session.add(block_row)
     session.flush()
     session.add(m.ReservedBlockClassSection(
-        academic_year_id=year_id, reserved_block_id=block_row.id, class_section_id=class_row.id, ordinal=0,
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        reserved_block_id=block_row.id, class_section_id=class_row.id, ordinal=0,
     ))
     session.add(m.ReservedBlockSlot(
-        academic_year_id=year_id, reserved_block_id=block_row.id, day_id=day_row.id, period_id=period_row.id,
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        reserved_block_id=block_row.id, day_id=day_row.id, period_id=period_row.id,
         ordinal=0,
     ))
     session.commit()
@@ -357,8 +364,9 @@ def test_same_natural_id_isolation_across_academic_years(seeded_db, live_db_engi
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
+    revision2_id = create_draft_configuration_revision(session, year2.id)
     session.add(m.Resource(
-        academic_year_id=year2.id, natural_id="resource_test_create",
+        academic_year_id=year2.id, configuration_revision_id=revision2_id, natural_id="resource_test_create",
         name="Other Room", capacity=1, ordinal=0,
     ))
     session.commit()
@@ -419,8 +427,9 @@ def test_update_cannot_target_a_resource_in_a_different_academic_year(seeded_db,
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
+    revision2_id = create_draft_configuration_revision(session, year2.id)
     session.add(m.Resource(
-        academic_year_id=year2.id, natural_id="resource_cross_ay_target",
+        academic_year_id=year2.id, configuration_revision_id=revision2_id, natural_id="resource_cross_ay_target",
         name="Cross AY Room", capacity=1, ordinal=0,
     ))
     session.commit()
@@ -473,8 +482,9 @@ def test_delete_cannot_target_a_resource_in_a_different_academic_year(seeded_db,
     year2 = m.AcademicYear(school_id=school2.id, natural_id="other-year", label="Other Year")
     session.add(year2)
     session.flush()
+    revision2_id = create_draft_configuration_revision(session, year2.id)
     session.add(m.Resource(
-        academic_year_id=year2.id, natural_id="resource_cross_ay_delete_target",
+        academic_year_id=year2.id, configuration_revision_id=revision2_id, natural_id="resource_cross_ay_delete_target",
         name="Cross AY Room", capacity=1, ordinal=0,
     ))
     session.commit()

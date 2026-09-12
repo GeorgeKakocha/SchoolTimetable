@@ -356,17 +356,21 @@ def test_rename_synchronizes_multiple_blocks_referencing_the_same_activity(seede
             m.ClassSection.academic_year_id == year_id, m.ClassSection.natural_id == "9a",
         )
     ).scalar_one()
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
     extra_block = m.ReservedBlock(
-        academic_year_id=year_id, natural_id="club_chess_extra", name="Chess Club", activity_id=activity_row.id,
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="club_chess_extra", name="Chess Club", activity_id=activity_row.id,
         ordinal=999,
     )
     session.add(extra_block)
     session.flush()
     session.add(m.ReservedBlockClassSection(
-        academic_year_id=year_id, reserved_block_id=extra_block.id, class_section_id=class_row.id, ordinal=0,
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        reserved_block_id=extra_block.id, class_section_id=class_row.id, ordinal=0,
     ))
     session.add(m.ReservedBlockSlot(
-        academic_year_id=year_id, reserved_block_id=extra_block.id, day_id=day_row.id, period_id=period_row.id,
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        reserved_block_id=extra_block.id, day_id=day_row.id, period_id=period_row.id,
         ordinal=0,
     ))
     session.commit()

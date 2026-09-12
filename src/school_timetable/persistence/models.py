@@ -33,6 +33,31 @@ are enforced by PostgreSQL itself via composite foreign keys of the form
 `FOREIGN KEY (academic_year_id, x_id) REFERENCES x (academic_year_id,
 id)` -- every table that is a valid FK target additionally carries
 `UNIQUE(academic_year_id, id)` to serve as that composite target.
+
+Safe Configuration Changes, Slice A (`ConfigurationRevision` foundation):
+every one of the fifteen `SchedulingProblem` configuration tables above
+(`Day`, `Period`, `ClassSection`, `ParticipantGroup`,
+`ParticipantGroupClassSection`, `Teacher`, `TeacherAvailability`,
+`Activity`, `Resource`, `TeachingRequirement`, `TimePreference`,
+`ReservedBlock`, `ReservedBlockClassSection`, `ReservedBlockSlot`,
+`FixedPlacement` -- exactly the fifteen models `SchedulingProblemRepository`
+loads) additionally carries `configuration_revision_id`, and every
+composite FK between two of THESE tables (never a schedule-side FK --
+`ScheduleEntry`/`LockedOccurrence`'s own references to `Day`/`Period`/
+`TeachingRequirement`/`ReservedBlock` are deliberately left unchanged,
+see `ScheduleVersion.configuration_revision_id`'s own docstring) is
+widened to include it, so that a row in one revision can never
+structurally reference a row in another -- a DB constraint, not an
+application convention. `AcademicYear.published_revision_id`/
+`draft_revision_id` identify the one currently-active and (at most one)
+currently-editable revision; `ScheduleVersion.configuration_revision_id`
+permanently records which revision its entries were generated/edited
+against. See `ConfigurationRevision`'s own docstring for the full
+lifecycle and `docs/DECISIONS.md`'s Safe Configuration Changes entry for
+the complete design rationale. This slice adds the schema/foundation
+only -- no application code yet lets an admin actually fork/edit a
+second revision (that is Slice B); today, every `AcademicYear` still
+only ever has exactly one revision across its whole lifetime.
 """
 from __future__ import annotations
 
@@ -74,17 +99,107 @@ class School(Base):
 
 
 class AcademicYear(Base):
-    __tablename__ = "academic_year"
-
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     school_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     label: Mapped[str] = mapped_column(Text, nullable=False)
+    published_revision_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    """The currently PUBLISHED `ConfigurationRevision` -- null only
+    before this year's first successful `Generate` has ever run."""
+    draft_revision_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    """The currently-editable `ConfigurationRevision`, if one exists.
+    Always set for a brand-new year (before its first `Generate`);
+    cleared the moment that first `Generate` publishes it. A future
+    Slice B "Edit scheduling configuration" command is the only other
+    thing that ever sets it again, by forking a new draft from the
+    published revision."""
+
+    __tablename__ = "academic_year"
 
     __table_args__ = (
         UniqueConstraint("school_id", "natural_id", name="uq_academic_year_school_natural_id"),
         ForeignKeyConstraint(
             ["school_id"], ["school.id"], ondelete="CASCADE", name="fk_academic_year_school"
+        ),
+        # Circular reference: `academic_year` <-> `configuration_revision`
+        # mutually reference each other (a revision belongs to a year; a
+        # year points at its current published/draft revision) --
+        # `use_alter=True` mirrors `Schedule.fk_schedule_active_version`'s
+        # own established pattern for exactly this kind of two-table
+        # cycle. No `ondelete`: PostgreSQL's default `NO ACTION` --
+        # application code always clears/repoints these before a
+        # revision could ever be deleted (a PUBLISHED revision is never
+        # deleted at all; discarding a DRAFT clears `draft_revision_id`
+        # in the same transaction that deletes its row).
+        ForeignKeyConstraint(
+            ["id", "published_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            name="fk_academic_year_published_revision",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["id", "draft_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            name="fk_academic_year_draft_revision",
+            use_alter=True,
+        ),
+    )
+
+
+class ConfigurationRevision(Base):
+    """First-class scheduling-configuration revision (Safe Configuration
+    Changes, Slice A). Every one of the fifteen `SchedulingProblem`
+    configuration tables is scoped by `(academic_year_id,
+    configuration_revision_id, ...)`, so a revision's rows are correct
+    by construction forever, regardless of how many later edits happen
+    to a *different* revision -- never dependent on remembering to
+    snapshot at the right moment.
+
+    Lifecycle: `DRAFT` -> `PUBLISHED`, exactly two states, no third.
+    `AcademicYear.draft_revision_id`/`published_revision_id` each point
+    to at most one revision of the matching status; the two partial
+    unique indexes below additionally guarantee at the database level
+    that a year can never somehow end up with two drafts or two
+    published revisions. A `DRAFT` that has never been referenced by any
+    `ScheduleVersion` may always be safely hard-deleted (Slice B's
+    future "discard draft"); the moment a revision is `PUBLISHED` it is
+    permanently immutable in practice -- this slice's application code
+    never writes to a revision's rows once it stops being the draft
+    (Slice B narrows `configuration_write_lock.py`'s existing Owner-
+    Decision-#35 "does a Schedule exist" check to "is this specific
+    revision still the draft" -- not implemented yet in this slice).
+
+    `revision_number` is meaningful only within one `AcademicYear` --
+    the natural, app-facing identifier for a revision (never `id`),
+    mirroring `ScheduleVersion.version_number`'s own discipline exactly;
+    no persistence surrogate ID for a revision is ever exposed outside
+    `persistence/`."""
+
+    __tablename__ = "configuration_revision"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+    __table_args__ = (
+        UniqueConstraint("academic_year_id", "revision_number", name="uq_configuration_revision_ay_number"),
+        UniqueConstraint("academic_year_id", "id", name="uq_configuration_revision_ay_id"),
+        CheckConstraint("status IN ('DRAFT', 'PUBLISHED')", name="ck_configuration_revision_status"),
+        ForeignKeyConstraint(
+            ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
+            name="fk_configuration_revision_academic_year",
+        ),
+        Index(
+            "uq_configuration_revision_one_published", "academic_year_id", unique=True,
+            postgresql_where=text("status = 'PUBLISHED'"),
+        ),
+        Index(
+            "uq_configuration_revision_one_draft", "academic_year_id", unique=True,
+            postgresql_where=text("status = 'DRAFT'"),
         ),
     )
 
@@ -98,16 +213,26 @@ class Day(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     idx: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_day_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "idx", name="uq_day_ay_idx"),
+        UniqueConstraint("academic_year_id", "configuration_revision_id", "natural_id", name="uq_day_ay_natural_id"),
+        UniqueConstraint("academic_year_id", "configuration_revision_id", "idx", name="uq_day_ay_idx"),
         UniqueConstraint("academic_year_id", "id", name="uq_day_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_day_ay_crid_id",
+        ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_day_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_day_configuration_revision",
         ),
     )
 
@@ -121,6 +246,7 @@ class Period(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     idx: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -133,13 +259,24 @@ class Period(Base):
     end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_period_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "idx", name="uq_period_ay_idx"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id", name="uq_period_ay_natural_id",
+        ),
+        UniqueConstraint("academic_year_id", "configuration_revision_id", "idx", name="uq_period_ay_idx"),
         UniqueConstraint("academic_year_id", "id", name="uq_period_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_period_ay_crid_id",
+        ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_period_academic_year"
         ),
-        Index("ix_period_ay_block", "academic_year_id", "block_id"),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_period_configuration_revision",
+        ),
+        Index("ix_period_ay_block", "academic_year_id", "configuration_revision_id", "block_id"),
     )
 
 
@@ -148,16 +285,30 @@ class ClassSection(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_class_section_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_class_section_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id", name="uq_class_section_ay_natural_id",
+        ),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "ordinal", name="uq_class_section_ay_ordinal",
+        ),
         UniqueConstraint("academic_year_id", "id", name="uq_class_section_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_class_section_ay_crid_id",
+        ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_class_section_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_class_section_configuration_revision",
         ),
     )
 
@@ -167,6 +318,7 @@ class ParticipantGroup(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
@@ -176,15 +328,29 @@ class ParticipantGroup(Base):
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_participant_group_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_participant_group_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id",
+            name="uq_participant_group_ay_natural_id",
+        ),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "ordinal", name="uq_participant_group_ay_ordinal",
+        ),
         UniqueConstraint("academic_year_id", "id", name="uq_participant_group_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_participant_group_ay_crid_id",
+        ),
         CheckConstraint(
             "role IN ('WHOLE_CLASS', 'SUBGROUP', 'MERGED_CLASSES')", name="ck_participant_group_role",
         ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
             name="fk_participant_group_academic_year",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_participant_group_configuration_revision",
         ),
     )
 
@@ -198,6 +364,7 @@ class ParticipantGroupClassSection(Base):
     __tablename__ = "participant_group_class_section"
 
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     participant_group_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     class_section_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -211,14 +378,20 @@ class ParticipantGroupClassSection(Base):
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_pgcs_academic_year"
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "participant_group_id"],
-            ["participant_group.academic_year_id", "participant_group.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_pgcs_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "participant_group_id"],
+            ["participant_group.academic_year_id", "participant_group.configuration_revision_id", "participant_group.id"],
             ondelete="CASCADE",
             name="fk_pgcs_participant_group",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "class_section_id"],
-            ["class_section.academic_year_id", "class_section.id"],
+            ["academic_year_id", "configuration_revision_id", "class_section_id"],
+            ["class_section.academic_year_id", "class_section.configuration_revision_id", "class_section.id"],
             ondelete="RESTRICT",
             name="fk_pgcs_class_section",
         ),
@@ -230,6 +403,7 @@ class Teacher(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     first_name: Mapped[str] = mapped_column(Text, nullable=False)
     last_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -239,11 +413,22 @@ class Teacher(Base):
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_teacher_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_teacher_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id", name="uq_teacher_ay_natural_id",
+        ),
+        UniqueConstraint("academic_year_id", "configuration_revision_id", "ordinal", name="uq_teacher_ay_ordinal"),
         UniqueConstraint("academic_year_id", "id", name="uq_teacher_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_teacher_ay_crid_id",
+        ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_teacher_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_teacher_configuration_revision",
         ),
     )
 
@@ -256,6 +441,7 @@ class TeacherAvailability(Base):
     __tablename__ = "teacher_availability"
 
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     teacher_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     period_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -264,7 +450,9 @@ class TeacherAvailability(Base):
 
     __table_args__ = (
         PrimaryKeyConstraint("teacher_id", "day_id", "period_id", name="pk_teacher_availability"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_teacher_availability_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "ordinal", name="uq_teacher_availability_ay_ordinal",
+        ),
         CheckConstraint(
             "status IN ('AVAILABLE', 'PREFER_NOT', 'UNAVAILABLE')",
             name="ck_teacher_availability_status",
@@ -274,20 +462,26 @@ class TeacherAvailability(Base):
             name="fk_teacher_availability_academic_year",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "teacher_id"],
-            ["teacher.academic_year_id", "teacher.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_teacher_availability_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "teacher_id"],
+            ["teacher.academic_year_id", "teacher.configuration_revision_id", "teacher.id"],
             ondelete="CASCADE",
             name="fk_teacher_availability_teacher",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "day_id"],
-            ["day.academic_year_id", "day.id"],
+            ["academic_year_id", "configuration_revision_id", "day_id"],
+            ["day.academic_year_id", "day.configuration_revision_id", "day.id"],
             ondelete="RESTRICT",
             name="fk_teacher_availability_day",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "period_id"],
-            ["period.academic_year_id", "period.id"],
+            ["academic_year_id", "configuration_revision_id", "period_id"],
+            ["period.academic_year_id", "period.configuration_revision_id", "period.id"],
             ondelete="RESTRICT",
             name="fk_teacher_availability_period",
         ),
@@ -300,18 +494,30 @@ class Activity(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="ORDINARY")
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_activity_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_activity_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id", name="uq_activity_ay_natural_id",
+        ),
+        UniqueConstraint("academic_year_id", "configuration_revision_id", "ordinal", name="uq_activity_ay_ordinal"),
         UniqueConstraint("academic_year_id", "id", name="uq_activity_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_activity_ay_crid_id",
+        ),
         CheckConstraint("kind IN ('ORDINARY', 'CLUB')", name="ck_activity_kind"),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_activity_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_activity_configuration_revision",
         ),
     )
 
@@ -321,18 +527,30 @@ class Resource(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_resource_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_resource_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id", name="uq_resource_ay_natural_id",
+        ),
+        UniqueConstraint("academic_year_id", "configuration_revision_id", "ordinal", name="uq_resource_ay_ordinal"),
         UniqueConstraint("academic_year_id", "id", name="uq_resource_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_resource_ay_crid_id",
+        ),
         CheckConstraint("capacity > 0", name="ck_resource_capacity_positive"),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_resource_academic_year"
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_resource_configuration_revision",
         ),
     )
 
@@ -349,6 +567,7 @@ class TeachingRequirement(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     teacher_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     activity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -365,9 +584,17 @@ class TeachingRequirement(Base):
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_teaching_requirement_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_teaching_requirement_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id",
+            name="uq_teaching_requirement_ay_natural_id",
+        ),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "ordinal", name="uq_teaching_requirement_ay_ordinal",
+        ),
         UniqueConstraint("academic_year_id", "id", name="uq_teaching_requirement_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_teaching_requirement_ay_crid_id",
+        ),
         CheckConstraint("weekly_periods > 0", name="ck_teaching_requirement_weekly_periods_positive"),
         CheckConstraint(
             "block_mode IN ('REQUIRED', 'PREFERRED', 'FLEXIBLE')", name="ck_teaching_requirement_block_mode"
@@ -377,26 +604,32 @@ class TeachingRequirement(Base):
             name="fk_teaching_requirement_academic_year",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "teacher_id"],
-            ["teacher.academic_year_id", "teacher.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_teaching_requirement_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "teacher_id"],
+            ["teacher.academic_year_id", "teacher.configuration_revision_id", "teacher.id"],
             ondelete="RESTRICT",
             name="fk_teaching_requirement_teacher",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "activity_id"],
-            ["activity.academic_year_id", "activity.id"],
+            ["academic_year_id", "configuration_revision_id", "activity_id"],
+            ["activity.academic_year_id", "activity.configuration_revision_id", "activity.id"],
             ondelete="RESTRICT",
             name="fk_teaching_requirement_activity",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "participant_group_id"],
-            ["participant_group.academic_year_id", "participant_group.id"],
+            ["academic_year_id", "configuration_revision_id", "participant_group_id"],
+            ["participant_group.academic_year_id", "participant_group.configuration_revision_id", "participant_group.id"],
             ondelete="RESTRICT",
             name="fk_teaching_requirement_participant_group",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "resource_id"],
-            ["resource.academic_year_id", "resource.id"],
+            ["academic_year_id", "configuration_revision_id", "resource_id"],
+            ["resource.academic_year_id", "resource.configuration_revision_id", "resource.id"],
             ondelete="RESTRICT",
             name="fk_teaching_requirement_resource",
         ),
@@ -420,6 +653,7 @@ class TimePreference(Base):
     __tablename__ = "time_preference"
 
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     teaching_requirement_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     preferred_period_indexes: Mapped[list[int]] = mapped_column(ARRAY(SmallInteger), nullable=False)
@@ -433,8 +667,18 @@ class TimePreference(Base):
             name="fk_time_preference_academic_year",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "teaching_requirement_id"],
-            ["teaching_requirement.academic_year_id", "teaching_requirement.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_time_preference_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "teaching_requirement_id"],
+            [
+                "teaching_requirement.academic_year_id",
+                "teaching_requirement.configuration_revision_id",
+                "teaching_requirement.id",
+            ],
             ondelete="CASCADE",
             name="fk_time_preference_teaching_requirement",
         ),
@@ -446,6 +690,7 @@ class ReservedBlock(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     activity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -454,28 +699,41 @@ class ReservedBlock(Base):
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_reserved_block_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_reserved_block_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id", name="uq_reserved_block_ay_natural_id",
+        ),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "ordinal", name="uq_reserved_block_ay_ordinal",
+        ),
         UniqueConstraint("academic_year_id", "id", name="uq_reserved_block_ay_id"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "id", name="uq_reserved_block_ay_crid_id",
+        ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
             name="fk_reserved_block_academic_year",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "activity_id"],
-            ["activity.academic_year_id", "activity.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_reserved_block_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "activity_id"],
+            ["activity.academic_year_id", "activity.configuration_revision_id", "activity.id"],
             ondelete="RESTRICT",
             name="fk_reserved_block_activity",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "teacher_id"],
-            ["teacher.academic_year_id", "teacher.id"],
+            ["academic_year_id", "configuration_revision_id", "teacher_id"],
+            ["teacher.academic_year_id", "teacher.configuration_revision_id", "teacher.id"],
             ondelete="RESTRICT",
             name="fk_reserved_block_teacher",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "resource_id"],
-            ["resource.academic_year_id", "resource.id"],
+            ["academic_year_id", "configuration_revision_id", "resource_id"],
+            ["resource.academic_year_id", "resource.configuration_revision_id", "resource.id"],
             ondelete="RESTRICT",
             name="fk_reserved_block_resource",
         ),
@@ -488,6 +746,7 @@ class ReservedBlockClassSection(Base):
     __tablename__ = "reserved_block_class_section"
 
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     reserved_block_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     class_section_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -499,14 +758,20 @@ class ReservedBlockClassSection(Base):
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_rbcs_academic_year"
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "reserved_block_id"],
-            ["reserved_block.academic_year_id", "reserved_block.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_rbcs_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "reserved_block_id"],
+            ["reserved_block.academic_year_id", "reserved_block.configuration_revision_id", "reserved_block.id"],
             ondelete="CASCADE",
             name="fk_rbcs_reserved_block",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "class_section_id"],
-            ["class_section.academic_year_id", "class_section.id"],
+            ["academic_year_id", "configuration_revision_id", "class_section_id"],
+            ["class_section.academic_year_id", "class_section.configuration_revision_id", "class_section.id"],
             ondelete="RESTRICT",
             name="fk_rbcs_class_section",
         ),
@@ -519,6 +784,7 @@ class ReservedBlockSlot(Base):
     __tablename__ = "reserved_block_slot"
 
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     reserved_block_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     period_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -531,20 +797,26 @@ class ReservedBlockSlot(Base):
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE", name="fk_rbs_academic_year"
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "reserved_block_id"],
-            ["reserved_block.academic_year_id", "reserved_block.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_rbs_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "reserved_block_id"],
+            ["reserved_block.academic_year_id", "reserved_block.configuration_revision_id", "reserved_block.id"],
             ondelete="CASCADE",
             name="fk_rbs_reserved_block",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "day_id"],
-            ["day.academic_year_id", "day.id"],
+            ["academic_year_id", "configuration_revision_id", "day_id"],
+            ["day.academic_year_id", "day.configuration_revision_id", "day.id"],
             ondelete="RESTRICT",
             name="fk_rbs_day",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "period_id"],
-            ["period.academic_year_id", "period.id"],
+            ["academic_year_id", "configuration_revision_id", "period_id"],
+            ["period.academic_year_id", "period.configuration_revision_id", "period.id"],
             ondelete="RESTRICT",
             name="fk_rbs_period",
         ),
@@ -558,6 +830,7 @@ class FixedPlacement(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     academic_year_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     natural_id: Mapped[str] = mapped_column(Text, nullable=False)
     teaching_requirement_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     day_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -565,27 +838,41 @@ class FixedPlacement(Base):
     ordinal: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("academic_year_id", "natural_id", name="uq_fixed_placement_ay_natural_id"),
-        UniqueConstraint("academic_year_id", "ordinal", name="uq_fixed_placement_ay_ordinal"),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "natural_id", name="uq_fixed_placement_ay_natural_id",
+        ),
+        UniqueConstraint(
+            "academic_year_id", "configuration_revision_id", "ordinal", name="uq_fixed_placement_ay_ordinal",
+        ),
         ForeignKeyConstraint(
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
             name="fk_fixed_placement_academic_year",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "teaching_requirement_id"],
-            ["teaching_requirement.academic_year_id", "teaching_requirement.id"],
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="CASCADE",
+            name="fk_fixed_placement_configuration_revision",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id", "teaching_requirement_id"],
+            [
+                "teaching_requirement.academic_year_id",
+                "teaching_requirement.configuration_revision_id",
+                "teaching_requirement.id",
+            ],
             ondelete="CASCADE",
             name="fk_fixed_placement_teaching_requirement",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "day_id"],
-            ["day.academic_year_id", "day.id"],
+            ["academic_year_id", "configuration_revision_id", "day_id"],
+            ["day.academic_year_id", "day.configuration_revision_id", "day.id"],
             ondelete="RESTRICT",
             name="fk_fixed_placement_day",
         ),
         ForeignKeyConstraint(
-            ["academic_year_id", "period_id"],
-            ["period.academic_year_id", "period.id"],
+            ["academic_year_id", "configuration_revision_id", "period_id"],
+            ["period.academic_year_id", "period.configuration_revision_id", "period.id"],
             ondelete="RESTRICT",
             name="fk_fixed_placement_period",
         ),
@@ -653,6 +940,18 @@ class ScheduleVersion(Base):
     schedule_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parent_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    """Safe Configuration Changes, Slice A: permanently records the
+    exact `ConfigurationRevision` this version's entries were generated
+    or edited against -- always the year's PUBLISHED revision, never a
+    mutable draft (a `ScheduleVersion` is only ever created by
+    `persist_initial_version` immediately after it publishes the draft
+    it just solved against, or by `persist_edited_version`, which always
+    copies this value forward unchanged from the base version it edits
+    from -- manual editing, locking, re-optimizing, and same-revision
+    restoring never change which revision a version belongs to).
+    Historical projection must resolve `SchedulingProblem` from THIS
+    column, never from whatever is currently published."""
     solver_status: Mapped[str] = mapped_column(Text, nullable=False)
     total_soft_penalty: Mapped[int] = mapped_column(Integer, nullable=False)
     wall_time_seconds: Mapped[float] = mapped_column(Double, nullable=False)
@@ -677,6 +976,12 @@ class ScheduleVersion(Base):
             ["schedule.academic_year_id", "schedule.id"],
             ondelete="CASCADE",
             name="fk_schedule_version_schedule",
+        ),
+        ForeignKeyConstraint(
+            ["academic_year_id", "configuration_revision_id"],
+            ["configuration_revision.academic_year_id", "configuration_revision.id"],
+            ondelete="RESTRICT",
+            name="fk_schedule_version_configuration_revision",
         ),
         # Self-referential lineage FK -- not the schedule<->schedule_version
         # cycle above, so no `use_alter` is needed (a table may always

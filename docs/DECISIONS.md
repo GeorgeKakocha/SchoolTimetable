@@ -4708,3 +4708,122 @@ are made under a controlled mode -> the existing active schedule
 becomes clearly stale/out-of-date -> the admin must regenerate/
 re-optimize against the new configuration -> no silent mutation of any
 historical `ScheduleVersion`. Not implemented in this task.
+
+## SAFE CONFIGURATION CHANGES -- SLICE A -- CONFIGURATION REVISION
+FOUNDATION CLOSED ON MAIN
+
+**Owner Decision #39 -- Safe Configuration Changes is built on a
+first-class `ConfigurationRevision` model (Option C from the prior
+architecture study), Slice A implements the schema/persistence
+foundation only (LOCKED; IMPLEMENTED, REVIEWED, COMMITTED to `main` --
+CLOSED. Not pushed.).**
+
+Four owner decisions for the *overall* safe-configuration-changes
+product area were locked by the prior (research-only) architecture
+study and are recorded here as accepted but **not yet implemented**:
+(1) stale-timetable UX = A -- a banner plus disabled editing, never a
+blocking interstitial (the UI itself is deferred to a later slice); (2)
+Discard Draft = B -- requires an explicit confirmation (the backend
+lifecycle for discarding a draft is deferred); (3) draft-editing MVP
+scope = A -- when implemented, editing must eventually cover every
+`SchedulingProblem` entity (Teachers, Classes, Participant Groups,
+Subjects/Activities, Teaching Assignments, Teacher Availability,
+Resources, Reserved Activities, Calendar Days/Periods, Time
+Preferences, block policies, split/merged config), never just
+Teacher+Assignment; (4) incompatible locks during a future regeneration
+= B -- identify affected locks, show the admin, require explicit
+confirmation before continuing without them. None of the four is
+implemented behaviorally in Slice A; Slice A exists to make them
+possible to implement safely later without a schema rewrite.
+
+**The architecture decision itself:** every `SchedulingProblem`
+configuration table (all fifteen: `Day`, `Period`, `ClassSection`,
+`ParticipantGroup`, `ParticipantGroupClassSection`, `Teacher`,
+`TeacherAvailability`, `Activity`, `Resource`, `TeachingRequirement`,
+`TimePreference`, `ReservedBlock`, `ReservedBlockClassSection`,
+`ReservedBlockSlot`, `FixedPlacement`) and `ScheduleVersion` now carry a
+non-nullable `configuration_revision_id`, referencing a new first-class
+`ConfigurationRevision` row (surrogate PK, `academic_year_id`,
+`revision_number` unique within the year, `status` DRAFT/PUBLISHED,
+`created_at`). `AcademicYear` gained `published_revision_id`/
+`draft_revision_id` (nullable, circular FKs via `use_alter=True`,
+mirroring the existing `Schedule.active_version_id` pattern). At most
+one PUBLISHED and one DRAFT revision per year is enforced by the
+database itself via two partial unique indexes -- not application
+discipline alone. Natural IDs remain the stable logical identity of an
+entity across revisions and stay unique *within* one revision, never
+globally: two revisions of the same year may permanently contain rows
+sharing the same natural ID (this is precisely what will let Slice B
+clone a published revision's rows into a new draft under identical
+natural IDs). Every composite FK between two config tables was widened
+to include `configuration_revision_id` on both sides, so the database
+structurally rejects a row in one revision referencing a row from a
+different revision -- proven by a dedicated persistence test, not just
+asserted. `ScheduleVersion.configuration_revision_id` (RESTRICT on
+delete) means every version -- initial generation, manual edit,
+lock/unlock, re-optimize, restore -- permanently and immutably
+identifies the exact revision it was built against; manual editing and
+same-revision restore never change it.
+
+**Initial-setup / first-Generate semantics (the one behavioral change
+this slice makes):** a new `AcademicYear` now always receives an
+initial editable DRAFT revision transactionally at creation.
+Configuration writes before the first successful Generate target this
+draft, exactly as before from the caller's perspective. The FIRST
+successful Generate, at final persist (inside the same short
+transaction that already holds the Owner-Decision-#36 `AcademicYear`
+row lock and re-verifies the solved configuration didn't change),
+atomically publishes that exact draft, sets it as the year's
+`published_revision`, clears `draft_revision`, and creates the first
+`ScheduleVersion` referencing the now-published revision -- no
+`ScheduleVersion` is ever created referencing a still-mutable revision.
+A failed solve/comparison leaves the draft fully DRAFT and editable,
+nothing persisted. `SchedulingProblemRepository` gained
+`load_for_revision(school, year, revision_number)` (natural revision
+number only, never a surrogate DB ID across any domain/API boundary);
+historical and active class/teacher projection and manual-
+editing/reoptimize now resolve a `ScheduleVersion`'s *own* revision
+first, then load that exact revision's `SchedulingProblem` -- never
+"whatever is currently published."
+
+**Explicitly NOT implemented in Slice A** (all deferred to Slice B or
+later, per this decision's own scope): the "Edit scheduling
+configuration" action, forking a draft from a published revision,
+discarding a draft, the stale-timetable banner, Regenerate-after-
+config-change, and any incompatible-lock detection/confirmation UI.
+Configuration write behavior is otherwise completely unchanged: writes
+before a Schedule exists still succeed (now targeting the draft
+internally); the existing `SCHEDULING_CONFIGURATION_LOCKED` behavior
+after a Schedule exists is untouched. Zero frontend files changed.
+
+**Migration `83434054f9d2`** (revises `e0f73eda567b`) backfills every
+pre-existing `AcademicYear` with exactly one `ConfigurationRevision`
+(`revision_number=1`), PUBLISHED if the year already has a `Schedule`
+else DRAFT, and backfills every existing config row and
+`ScheduleVersion` to it -- an exact historical backfill, no schedule
+data rewritten, nothing deleted. Applied to the real local development
+database (pre-migration `pg_dump` backup taken first) and independently
+verified read-only: all 14 `AcademicYear` rows (3 tracked datasets plus
+11 other local review/CRUD datasets) each landed with exactly one
+correctly-classified revision and zero NULLs in any
+`configuration_revision_id` column anywhere.
+`generation-review-school`/`ay-generation-review-2026` (1
+`ScheduleVersion`, active Version 1, OPTIMAL, penalty 0),
+`editing-review-school`/`ay-editing-review-2026` (10 `ScheduleVersion`
+rows, active Version 10, all reference revision 1, independent verifier
+re-passed against active Version 10 with zero violations), and
+`synthetic-school`/`ay-2026` (7 `ScheduleVersion` rows, active pointer
+and history unchanged, all reference revision 1) all preserved exactly.
+
+**Regression:** focused migration-safety tests green (`tests_web/
+test_persistence_schema.py` 12/12, `tests_web/test_schedule_schema.py`
+15/15); full `tests -m "not slow"` 593/593; full `tests_web` 592/592;
+frontend `npm test -- --run` 572/572 (zero frontend files changed) and
+`npm run build` clean; `alembic check` reports zero drift post-
+migration.
+
+**SAFE CONFIGURATION CHANGES -- SLICE A ACCEPTANCE CLOSED ON MAIN --
+schema/persistence foundation only. No safe post-generation
+configuration editing exists yet. Slice B (draft fork/discard
+lifecycle, stale-timetable UI, "Edit scheduling configuration") is not
+started.**

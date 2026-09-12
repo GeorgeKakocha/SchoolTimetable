@@ -61,7 +61,8 @@ def _seed_schedule_v1(session: Session, seeded: dict) -> dict:
 
     version = m.ScheduleVersion(
         academic_year_id=year.id, schedule_id=schedule.id, version_number=1,
-        parent_version_id=None, solver_status="OPTIMAL", total_soft_penalty=0,
+        parent_version_id=None, configuration_revision_id=seeded["revision"].id,
+        solver_status="OPTIMAL", total_soft_penalty=0,
         wall_time_seconds=1.5, random_seed=None,
     )
     session.add(version)
@@ -129,8 +130,8 @@ def test_version_number_uniqueness_scoped_to_schedule(db_session):
     # Duplicate version_number=1 within schedule A is rejected.
     _fails(db_session, m.ScheduleVersion(
         academic_year_id=seeded_a["year"].id, schedule_id=built_a["schedule"].id,
-        version_number=1, parent_version_id=None, solver_status="OPTIMAL",
-        total_soft_penalty=0, wall_time_seconds=1.0, random_seed=None,
+        version_number=1, parent_version_id=None, configuration_revision_id=seeded_a["revision"].id,
+        solver_status="OPTIMAL", total_soft_penalty=0, wall_time_seconds=1.0, random_seed=None,
     ))
 
     # version_number=1 already exists for both schedule A and schedule B
@@ -153,6 +154,7 @@ def test_parent_version_must_belong_to_same_schedule(db_session):
     _fails(db_session, m.ScheduleVersion(
         academic_year_id=seeded_a["year"].id, schedule_id=built_a["schedule"].id,
         version_number=2, parent_version_id=built_b["version"].id,
+        configuration_revision_id=seeded_a["revision"].id,
         solver_status="OPTIMAL", total_soft_penalty=0, wall_time_seconds=1.0,
         random_seed=None,
     ))
@@ -172,7 +174,8 @@ def test_cross_academic_year_references_are_rejected(db_session):
     built_a = _seed_schedule_v1(db_session, year_a)
 
     reserved_b = m.ReservedBlock(
-        academic_year_id=year_b["year"].id, natural_id="club_chess_b", name="Chess Club B",
+        academic_year_id=year_b["year"].id, configuration_revision_id=year_b["revision"].id,
+        natural_id="club_chess_b", name="Chess Club B",
         activity_id=year_b["activity"].id, teacher_id=year_b["teacher"].id, ordinal=0,
     )
     db_session.add(reserved_b)
@@ -181,8 +184,8 @@ def test_cross_academic_year_references_are_rejected(db_session):
     # schedule_version -> schedule (wrong year)
     _fails(db_session, m.ScheduleVersion(
         academic_year_id=year_b["year"].id, schedule_id=built_a["schedule"].id,
-        version_number=1, parent_version_id=None, solver_status="OPTIMAL",
-        total_soft_penalty=0, wall_time_seconds=1.0, random_seed=None,
+        version_number=1, parent_version_id=None, configuration_revision_id=year_b["revision"].id,
+        solver_status="OPTIMAL", total_soft_penalty=0, wall_time_seconds=1.0, random_seed=None,
     ))
 
     # schedule_entry -> schedule_version (wrong year)
@@ -252,7 +255,8 @@ def test_schedule_entry_source_check_constraints(db_session):
     year, day, period, requirement = seeded["year"], seeded["day"], seeded["period"], seeded["requirement"]
 
     reserved = m.ReservedBlock(
-        academic_year_id=year.id, natural_id="club_chess", name="Chess Club",
+        academic_year_id=year.id, configuration_revision_id=seeded["revision"].id,
+        natural_id="club_chess", name="Chess Club",
         activity_id=seeded["activity"].id, teacher_id=seeded["teacher"].id, ordinal=0,
     )
     db_session.add(reserved)
@@ -331,7 +335,8 @@ def test_schedule_version_solver_status_accepts_valid_values(db_session, solver_
 
     db_session.add(m.ScheduleVersion(
         academic_year_id=seeded["year"].id, schedule_id=schedule.id, version_number=1,
-        parent_version_id=None, solver_status=solver_status, total_soft_penalty=0,
+        parent_version_id=None, configuration_revision_id=seeded["revision"].id,
+        solver_status=solver_status, total_soft_penalty=0,
         wall_time_seconds=1.0, random_seed=None,
     ))
     db_session.flush()
@@ -349,7 +354,8 @@ def test_schedule_version_solver_status_rejects_non_persistable_values(db_sessio
 
     _fails(db_session, m.ScheduleVersion(
         academic_year_id=seeded["year"].id, schedule_id=schedule.id, version_number=1,
-        parent_version_id=None, solver_status=solver_status, total_soft_penalty=0,
+        parent_version_id=None, configuration_revision_id=seeded["revision"].id,
+        solver_status=solver_status, total_soft_penalty=0,
         wall_time_seconds=1.0, random_seed=None,
     ))
 
@@ -375,7 +381,8 @@ def test_direct_delete_of_active_or_referenced_parent_version_rejected(db_sessio
     # parent, no longer active) -- still rejected.
     version2 = m.ScheduleVersion(
         academic_year_id=seeded["year"].id, schedule_id=built["schedule"].id, version_number=2,
-        parent_version_id=built["version"].id, solver_status="OPTIMAL", total_soft_penalty=0,
+        parent_version_id=built["version"].id, configuration_revision_id=seeded["revision"].id,
+        solver_status="OPTIMAL", total_soft_penalty=0,
         wall_time_seconds=2.0, random_seed=None,
     )
     db_session.add(version2)

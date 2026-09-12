@@ -314,8 +314,10 @@ def test_period_update_preserves_legacy_is_instructional_false(seeded_db, live_d
 
     connection = live_db_engine.connect()
     session = Session(bind=connection)
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
     session.add(m.Period(
-        academic_year_id=year_id, natural_id="p_break", name="Break", idx=8,
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="p_break", name="Break", idx=8,
         block_id="legacy_break", is_instructional=False,
     ))
     session.commit()
@@ -446,8 +448,9 @@ def test_period_move_blocked_when_time_preference_exists(seeded_db):
         requirement = session_setup.execute(
             select(orm.TeachingRequirement).where(orm.TeachingRequirement.academic_year_id == year_id).limit(1)
         ).scalar_one()
+        revision_id = session_setup.get(orm.AcademicYear, year_id).draft_revision_id
         session_setup.add(orm.TimePreference(
-            academic_year_id=year_id, teaching_requirement_id=requirement.id,
+            academic_year_id=year_id, configuration_revision_id=revision_id, teaching_requirement_id=requirement.id,
             preferred_period_indexes=[0], weight="MEDIUM", ordinal=0,
         ))
         session_setup.commit()

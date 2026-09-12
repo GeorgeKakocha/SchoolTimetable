@@ -40,6 +40,7 @@ from school_timetable.persistence import models as orm
 from school_timetable.persistence.configuration_write_lock import (
     lock_academic_year,
     reject_if_configuration_locked,
+    resolve_draft_revision_id,
     resolve_year_id,
 )
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
@@ -114,8 +115,10 @@ class SqlAlchemyCalendarDayRepository:
             validate(current_problem)
 
             next_index = len(current_problem.days)
+            revision_id = resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
             session.add(orm.Day(
-                academic_year_id=year_id, natural_id=day_natural_id, name=name, idx=next_index,
+                academic_year_id=year_id, configuration_revision_id=revision_id,
+                natural_id=day_natural_id, name=name, idx=next_index,
             ))
             session.commit()
             return DayWriteResult(id=day_natural_id, name=name, index=next_index)
@@ -263,8 +266,10 @@ class SqlAlchemyCalendarPeriodRepository:
             markers = derive_starts_new_block(current_problem.periods)
             markers[period_natural_id] = fields.starts_new_block
 
+            revision_id = resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
             new_row = orm.Period(
-                academic_year_id=year_id, natural_id=period_natural_id, name=fields.name,
+                academic_year_id=year_id, configuration_revision_id=revision_id,
+                natural_id=period_natural_id, name=fields.name,
                 idx=len(current_problem.periods), block_id="", is_instructional=True,
                 start_time=fields.start_time, end_time=fields.end_time,
             )

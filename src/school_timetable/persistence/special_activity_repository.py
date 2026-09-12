@@ -45,6 +45,7 @@ from school_timetable.persistence import models as orm
 from school_timetable.persistence.configuration_write_lock import (
     lock_academic_year,
     reject_if_configuration_locked,
+    resolve_draft_revision_id,
     resolve_year_id,
 )
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
@@ -78,8 +79,10 @@ class SqlAlchemySpecialActivityRepository:
             )
             validate(current_problem)
 
+            revision_id = resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
             session.add(orm.Activity(
-                academic_year_id=year_id, natural_id=special_activity_natural_id,
+                academic_year_id=year_id, configuration_revision_id=revision_id,
+                natural_id=special_activity_natural_id,
                 name=name, kind=_CLUB, ordinal=_next_activity_ordinal(session, year_id),
             ))
             session.commit()

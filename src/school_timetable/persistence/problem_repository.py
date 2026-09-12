@@ -39,7 +39,21 @@ from school_timetable.persistence import models as orm
 
 class SqlAlchemySchedulingProblemRepository:
     """Implements `application.ports.SchedulingProblemRepository`
-    structurally (a `Protocol` -- no inheritance needed)."""
+    structurally (a `Protocol` -- no inheritance needed).
+
+    Safe Configuration Changes, Slice A: every one of the fifteen
+    scoped tables now additionally carries `configuration_revision_id`,
+    so loading always resolves one specific `ConfigurationRevision`
+    first and scopes every query to it -- never "whatever exists for
+    this academic_year_id" (today, with only one revision per year,
+    that distinction is invisible; it becomes load-bearing the moment a
+    second revision -- a draft -- exists, Slice B). `load_by_school_
+    and_year` resolves "the currently relevant revision" (published if
+    one exists, else the year's draft -- exactly the pre-first-Generate
+    case); `load_for_revision` resolves one SPECIFIC revision by its
+    natural `revision_number`, for historical `ScheduleVersion`
+    projection, which must never silently fall back to "whatever is
+    current"."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -50,27 +64,64 @@ class SqlAlchemySchedulingProblemRepository:
         academic_year_natural_id: str,
     ) -> SchedulingProblem:
         session = self._session
+        school_row, year_row = _resolve_school_and_year(session, school_natural_id, academic_year_natural_id)
 
-        school_row = session.execute(
-            select(orm.School).where(orm.School.natural_id == school_natural_id)
-        ).scalar_one_or_none()
-        if school_row is None:
-            raise SchedulingProblemNotFoundError(school_natural_id, academic_year_natural_id)
+        revision_id = year_row.published_revision_id if year_row.published_revision_id is not None else year_row.draft_revision_id
+        if revision_id is None:
+            # Unreachable for any correctly-migrated/created AcademicYear
+            # (Slice A's own invariant: every year always has at least a
+            # draft) -- guarded rather than silently treated as "no
+            # configuration at all".
+            raise RuntimeError(
+                f"AcademicYear school={school_natural_id!r}, academic_year={academic_year_natural_id!r} "
+                "has neither a published nor a draft configuration revision"
+            )
+        return self._load_for_revision_id(session, school_row, year_row, revision_id)
 
-        year_row = session.execute(
-            select(orm.AcademicYear).where(
-                orm.AcademicYear.school_id == school_row.id,
-                orm.AcademicYear.natural_id == academic_year_natural_id,
+    def load_for_revision(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        revision_number: int,
+    ) -> SchedulingProblem:
+        session = self._session
+        school_row, year_row = _resolve_school_and_year(session, school_natural_id, academic_year_natural_id)
+
+        revision_row = session.execute(
+            select(orm.ConfigurationRevision).where(
+                orm.ConfigurationRevision.academic_year_id == year_row.id,
+                orm.ConfigurationRevision.revision_number == revision_number,
             )
         ).scalar_one_or_none()
-        if year_row is None:
-            raise SchedulingProblemNotFoundError(school_natural_id, academic_year_natural_id)
+        if revision_row is None:
+            # Every `ScheduleVersion.configuration_revision_id` -- the
+            # only source `revision_number` is ever sourced from for
+            # this method -- always references a revision that still
+            # exists (revisions are never deleted once referenced;
+            # Slice A never deletes any revision at all) -- guarded
+            # rather than silently falling back to "current".
+            raise RuntimeError(
+                f"no ConfigurationRevision {revision_number!r} exists for school={school_natural_id!r}, "
+                f"academic_year={academic_year_natural_id!r}"
+            )
+        return self._load_for_revision_id(session, school_row, year_row, revision_row.id)
 
+    def _load_for_revision_id(
+        self,
+        session: Session,
+        school_row: orm.School,
+        year_row: orm.AcademicYear,
+        revision_id: int,
+    ) -> SchedulingProblem:
         year_id = year_row.id
 
         def _scoped(model):
             return list(
-                session.execute(select(model).where(model.academic_year_id == year_id)).scalars()
+                session.execute(
+                    select(model).where(
+                        model.academic_year_id == year_id, model.configuration_revision_id == revision_id,
+                    )
+                ).scalars()
             )
 
         day_rows = _scoped(orm.Day)
@@ -160,6 +211,27 @@ def _group_by(rows: list, parent_attr: str) -> dict[int, list]:
     return grouped
 
 
+def _resolve_school_and_year(
+    session: Session, school_natural_id: str, academic_year_natural_id: str,
+) -> tuple[orm.School, orm.AcademicYear]:
+    school_row = session.execute(
+        select(orm.School).where(orm.School.natural_id == school_natural_id)
+    ).scalar_one_or_none()
+    if school_row is None:
+        raise SchedulingProblemNotFoundError(school_natural_id, academic_year_natural_id)
+
+    year_row = session.execute(
+        select(orm.AcademicYear).where(
+            orm.AcademicYear.school_id == school_row.id,
+            orm.AcademicYear.natural_id == academic_year_natural_id,
+        )
+    ).scalar_one_or_none()
+    if year_row is None:
+        raise SchedulingProblemNotFoundError(school_natural_id, academic_year_natural_id)
+
+    return school_row, year_row
+
+
 class SessionFactorySchedulingProblemRepository:
     """Session-factory-backed implementation of `application.ports.
     SchedulingProblemRepository` (Phase 3A3.2, Decision #31's
@@ -191,6 +263,20 @@ class SessionFactorySchedulingProblemRepository:
         try:
             return SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
                 school_natural_id, academic_year_natural_id
+            )
+        finally:
+            session.close()
+
+    def load_for_revision(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        revision_number: int,
+    ) -> SchedulingProblem:
+        session = self._session_factory()
+        try:
+            return SqlAlchemySchedulingProblemRepository(session).load_for_revision(
+                school_natural_id, academic_year_natural_id, revision_number,
             )
         finally:
             session.close()

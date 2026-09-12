@@ -52,22 +52,30 @@ class ClassTimetableService:
         academic_year_natural_id: str,
         class_section_id: str,
     ) -> ClassTimetableView | None:
-        # (1) Load config. SchedulingProblemNotFoundError propagates
-        # unchanged if the school/year itself does not resolve.
-        problem = self._problem_repository.load_by_school_and_year(
-            school_natural_id, academic_year_natural_id,
-        )
-        class_section = _resolve_class_section(
-            problem, school_natural_id, academic_year_natural_id, class_section_id,
-        )
-
-        # Load the active schedule. None means "no Schedule has been
-        # generated yet" -- an ordinary, expected outcome, not an error.
+        # Load the active schedule first (Safe Configuration Changes,
+        # Slice A: the active version's own configuration revision is
+        # what this projection must resolve config from, never
+        # "whatever is currently published/draft" -- see `_build_view`'s
+        # caller-supplied problem below). SchedulingProblemNotFoundError
+        # propagates unchanged if the school/year itself does not
+        # resolve. None means "no Schedule has been generated yet" -- an
+        # ordinary, expected outcome, not an error.
         active = self._schedule_repository.get_active_schedule(
             school_natural_id, academic_year_natural_id,
         )
         if active is None:
+            problem = self._problem_repository.load_by_school_and_year(
+                school_natural_id, academic_year_natural_id,
+            )
+            _resolve_class_section(problem, school_natural_id, academic_year_natural_id, class_section_id)
             return None
+
+        problem = self._problem_repository.load_for_revision(
+            school_natural_id, academic_year_natural_id, active.configuration_revision_number,
+        )
+        class_section = _resolve_class_section(
+            problem, school_natural_id, academic_year_natural_id, class_section_id,
+        )
 
         return _build_view(
             problem, class_section, active.entries, active.version_number, active.solver_status,
@@ -85,23 +93,30 @@ class ClassTimetableService:
         possibly-inactive `ScheduleVersion` (schedule version history +
         restore slice) instead of always the current active one -- the
         exact same projection rules (membership, grouping, ordering,
-        name resolution), never duplicated. Returns `None` only if no
+        name resolution), never duplicated. Resolves `SchedulingProblem`
+        from THIS version's own `configuration_revision_number`, never
+        "whatever is currently published/draft" -- correct even once a
+        later revision exists (Slice B). Returns `None` only if no
         `Schedule` exists at all yet for this school/year (mirrors
         `project`'s own convention); raises `school_timetable.
         application.errors.ScheduleVersionNotFoundError` if a `Schedule`
         exists but this `version_number` does not."""
-        problem = self._problem_repository.load_by_school_and_year(
-            school_natural_id, academic_year_natural_id,
-        )
-        class_section = _resolve_class_section(
-            problem, school_natural_id, academic_year_natural_id, class_section_id,
-        )
-
         snapshot = self._schedule_repository.get_version(
             school_natural_id, academic_year_natural_id, version_number,
         )
         if snapshot is None:
+            problem = self._problem_repository.load_by_school_and_year(
+                school_natural_id, academic_year_natural_id,
+            )
+            _resolve_class_section(problem, school_natural_id, academic_year_natural_id, class_section_id)
             return None
+
+        problem = self._problem_repository.load_for_revision(
+            school_natural_id, academic_year_natural_id, snapshot.configuration_revision_number,
+        )
+        class_section = _resolve_class_section(
+            problem, school_natural_id, academic_year_natural_id, class_section_id,
+        )
 
         return _build_view(
             problem, class_section, snapshot.entries, snapshot.version_number, snapshot.solver_status,
