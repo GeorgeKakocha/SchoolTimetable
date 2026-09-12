@@ -1242,3 +1242,61 @@ class RestoreVerificationFailedError(Exception):
             f"against the current configuration for school={school_natural_id!r}, "
             f"academic_year={academic_year_natural_id!r}; restore refused"
         )
+
+
+class NoConfigurationDraftError(Exception):
+    """Safe Configuration Changes, Slice B: `discard_draft` (or any
+    future draft-only command) was called for a school/year with no
+    open `ConfigurationRevision` draft. Never silently a no-op --
+    surfaced as a clear, non-2xx application error rather than
+    performing zero writes and returning success. Carries only natural
+    IDs."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        super().__init__(
+            f"no configuration draft exists for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}"
+        )
+
+
+class InitialDraftCannotBeDiscardedError(Exception):
+    """Safe Configuration Changes, Slice B: `discard_draft` was called
+    for a school/year that has never had a successful `Generate` --
+    the year's one and only `ConfigurationRevision` is the initial,
+    pre-first-Generate DRAFT, which is the year's only editable
+    configuration and is required for that first `Generate` to ever
+    succeed. Discarding it would leave the year with no configuration
+    revision at all, violating Slice A's own invariant that every
+    `AcademicYear` always has a draft or a published revision. Carries
+    only natural IDs."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        super().__init__(
+            f"the initial pre-first-Generate configuration draft cannot be discarded for "
+            f"school={school_natural_id!r}, academic_year={academic_year_natural_id!r}"
+        )
+
+
+class ScheduleOutOfDateError(Exception):
+    """Safe Configuration Changes, Slice B, Owner Decision 1: the active
+    `Schedule` is read-only while a configuration draft is open for this
+    `AcademicYear` -- `Move`/`Lock`/`Unlock`/`Reoptimize`/`Restore` are
+    all rejected until the draft is discarded or a future regeneration
+    (Slice C) succeeds. Historical/active timetable GETs and Version
+    History remain unaffected -- this error is only ever raised by a
+    *mutating* schedule command. Carries only natural IDs, never a
+    persistence surrogate ID."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        super().__init__(
+            f"the active schedule is out of date for school={school_natural_id!r}, "
+            f"academic_year={academic_year_natural_id!r}: scheduling configuration is "
+            "currently being edited; the existing timetable is read-only until the draft "
+            "is discarded or a future regeneration succeeds"
+        )

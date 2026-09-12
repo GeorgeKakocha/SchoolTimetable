@@ -2,7 +2,7 @@
 use case -- create, update, delete, and reorder (`move`) a
 `domain.calendar.Day`/`Period`.
 
-Depends only on the four application-owned repository ports
+Depends only on the three application-owned repository ports
 (`application.ports`) plus the pure `calendar_rules` module -- never
 SQLAlchemy, persistence concrete adapters, ORM models, or FastAPI, even
 transitively, matching `ResourceService`'s own discipline.
@@ -28,11 +28,9 @@ from school_timetable.application.calendar_models import (
     PeriodFields,
     PeriodWriteResult,
 )
-from school_timetable.application.errors import ConfigurationLockedError
 from school_timetable.application.ports import (
     CalendarDayRepository,
     CalendarPeriodRepository,
-    ScheduleVersionRepository,
     SchedulingProblemRepository,
 )
 from school_timetable.domain.calendar import Period
@@ -64,14 +62,12 @@ class CalendarService:
         problem_repository: SchedulingProblemRepository,
         day_repository: CalendarDayRepository,
         period_repository: CalendarPeriodRepository,
-        schedule_repository: ScheduleVersionRepository,
         day_id_factory=_default_day_id_factory,
         period_id_factory=_default_period_id_factory,
     ) -> None:
         self._problem_repository = problem_repository
         self._day_repository = day_repository
         self._period_repository = period_repository
-        self._schedule_repository = schedule_repository
         self._day_id_factory = day_id_factory
         self._period_id_factory = period_id_factory
 
@@ -81,8 +77,6 @@ class CalendarService:
         self, school_natural_id: str, academic_year_natural_id: str, fields: DayFields,
     ) -> DayWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
         day_natural_id = self._day_id_factory()
 
@@ -99,8 +93,6 @@ class CalendarService:
         self, school_natural_id: str, academic_year_natural_id: str, day_id: str, fields: DayFields,
     ) -> DayWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
 
         def validate(current_problem: SchedulingProblem) -> None:
@@ -115,8 +107,6 @@ class CalendarService:
         )
 
     def day_delete(self, school_natural_id: str, academic_year_natural_id: str, day_id: str) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
 
         def validate(current_problem: SchedulingProblem) -> None:
@@ -129,8 +119,6 @@ class CalendarService:
     def day_move(
         self, school_natural_id: str, academic_year_natural_id: str, day_id: str, direction: str,
     ) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
 
         def validate(current_problem: SchedulingProblem) -> None:
@@ -146,8 +134,6 @@ class CalendarService:
         self, school_natural_id: str, academic_year_natural_id: str, fields: PeriodFields,
     ) -> PeriodWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
         period_natural_id = self._period_id_factory()
         normalized_fields = PeriodFields(
@@ -177,8 +163,6 @@ class CalendarService:
         self, school_natural_id: str, academic_year_natural_id: str, period_id: str, fields: PeriodFields,
     ) -> PeriodWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
         normalized_fields = PeriodFields(
             name=name, start_time=fields.start_time, end_time=fields.end_time,
@@ -203,8 +187,6 @@ class CalendarService:
         )
 
     def period_delete(self, school_natural_id: str, academic_year_natural_id: str, period_id: str) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
 
         def validate(current_problem: SchedulingProblem) -> None:
@@ -217,8 +199,6 @@ class CalendarService:
     def period_move(
         self, school_natural_id: str, academic_year_natural_id: str, period_id: str, direction: str,
     ) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(school_natural_id, academic_year_natural_id)
 
         def validate(current_problem: SchedulingProblem) -> None:
@@ -231,12 +211,3 @@ class CalendarService:
         self._period_repository.move(
             school_natural_id, academic_year_natural_id, period_id, direction, validate=validate,
         )
-
-    def _precheck_not_locked(self, school_natural_id: str, academic_year_natural_id: str) -> None:
-        # Fast, un-locked precheck only -- avoids unnecessary work for
-        # the common case, but is explicitly NOT the concurrency
-        # guarantee (Owner Decision #36): the authoritative recheck
-        # happens inside the write port, under its `AcademicYear` lock.
-        existing = self._schedule_repository.get_active_schedule(school_natural_id, academic_year_natural_id)
-        if existing is not None:
-            raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)

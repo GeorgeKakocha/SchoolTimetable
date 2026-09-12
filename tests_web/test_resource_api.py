@@ -30,6 +30,9 @@ from school_timetable.application.resource_service import ResourceService
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.db import get_session
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.resource_repository import SqlAlchemyResourceRepository
@@ -73,14 +76,13 @@ def _client(session_factory) -> TestClient:
     def override_resources_projection_service():
         return ResourceProjectionService(
             SessionFactorySchedulingProblemRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
+            SqlAlchemyConfigurationRevisionRepository(session_factory),
         )
 
     def override_resource_service():
         return ResourceService(
             SessionFactorySchedulingProblemRepository(session_factory),
             SqlAlchemyResourceRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
         )
 
     app.dependency_overrides[get_session] = override_get_session
@@ -414,15 +416,28 @@ def test_delete_teaching_requirement_reference_returns_409(client, db):
 def test_delete_locked_configuration_returns_409(client, db):
     session, _session_factory = db
     problem = _seed(session)
+    year_id = session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+    revision_id = session.get(m.AcademicYear, year_id).draft_revision_id
+    # An unreferenced Resource, so the service's OWN validate-precheck
+    # (which now runs before the write port is ever reached -- Safe
+    # Configuration Changes, Slice B removed the service's own fast
+    # lock-only precheck) passes -- otherwise ResourceInUseError would
+    # fire first for "gym", never exercising the repository's lock
+    # rejection at all.
+    session.add(m.Resource(
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        natural_id="unused_resource", name="Spare Room", capacity=1, ordinal=999,
+    ))
+    session.flush()
 
     generate_response = client.post(
         f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/generate"
     )
     assert generate_response.status_code == 201
 
-    # The fast lock precheck runs before any existence check, so this
-    # rejects with the lock error regardless of "gym" being referenced.
-    response = client.delete(_url(problem, "gym"))
+    response = client.delete(_url(problem, "unused_resource"))
     assert response.status_code == 409
     assert response.json()["code"] == "SCHEDULING_CONFIGURATION_LOCKED"
 

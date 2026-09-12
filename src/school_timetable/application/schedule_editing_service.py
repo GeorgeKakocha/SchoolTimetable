@@ -5,10 +5,16 @@ domain/scheduling editing core (`scheduling/editing.py`,
 `ScheduleVersionRepository.persist_edited_version` port.
 
 Mirrors `GenerateScheduleService`'s exact shape and dependency
-discipline: depends only on the two existing repository ports plus
+discipline: depends only on repository ports plus
 `domain`/`scheduling`/`verification` -- never SQLAlchemy, persistence
 concrete adapters, ORM models, or FastAPI, even transitively. No DB
 `Session` is held by this service itself at any point.
+
+Safe Configuration Changes, Slice B, Owner Decision 1: also depends on
+`ConfigurationRevisionRepository`, used by every MUTATING command
+(never by the read-only `preview_move`) to reject with
+`ScheduleOutOfDateError` while a configuration draft is open alongside
+an existing `Schedule` -- see `_reject_if_out_of_date`.
 
 Every mutating command (`move`/`lock`/`unlock`/`reoptimize`) follows the
 same four-step shape:
@@ -54,10 +60,15 @@ from school_timetable.application.errors import (
     ReoptimizationInfeasibleError,
     ReoptimizationInvalidInputError,
     RestoreVerificationFailedError,
+    ScheduleOutOfDateError,
     StaleScheduleVersionError,
     VersionAlreadyActiveError,
 )
-from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.ports import (
+    ConfigurationRevisionRepository,
+    ScheduleVersionRepository,
+    SchedulingProblemRepository,
+)
 from school_timetable.application.schedule_editing_models import MovePreviewResult, MovePreviewTarget
 from school_timetable.application.schedule_models import ActiveScheduleVersion
 from school_timetable.domain.indexing import ProblemIndex
@@ -102,9 +113,11 @@ class ScheduleEditingService:
         self,
         problem_repository: SchedulingProblemRepository,
         schedule_repository: ScheduleVersionRepository,
+        configuration_revision_repository: ConfigurationRevisionRepository,
     ) -> None:
         self._problem_repository = problem_repository
         self._schedule_repository = schedule_repository
+        self._configuration_revision_repository = configuration_revision_repository
 
     def move(
         self,
@@ -117,6 +130,7 @@ class ScheduleEditingService:
         target_day_id: str,
         target_period_id: str,
     ) -> ActiveScheduleVersion:
+        self._reject_if_out_of_date(school_natural_id, academic_year_natural_id)
         problem, schedule, index, _active = self._load_active_for_edit(
             school_natural_id, academic_year_natural_id, base_version_number,
         )
@@ -224,6 +238,7 @@ class ScheduleEditingService:
         day_id: str,
         period_id: str,
     ) -> ActiveScheduleVersion:
+        self._reject_if_out_of_date(school_natural_id, academic_year_natural_id)
         problem, schedule, index, active = self._load_active_for_edit(
             school_natural_id, academic_year_natural_id, base_version_number,
         )
@@ -253,6 +268,7 @@ class ScheduleEditingService:
         day_id: str,
         period_id: str,
     ) -> ActiveScheduleVersion:
+        self._reject_if_out_of_date(school_natural_id, academic_year_natural_id)
         problem, schedule, index, active = self._load_active_for_edit(
             school_natural_id, academic_year_natural_id, base_version_number,
         )
@@ -278,6 +294,7 @@ class ScheduleEditingService:
         *,
         solver_options: SolverOptions | None = None,
     ) -> ActiveScheduleVersion:
+        self._reject_if_out_of_date(school_natural_id, academic_year_natural_id)
         problem, schedule, _index, _active = self._load_active_for_edit(
             school_natural_id, academic_year_natural_id, base_version_number,
         )
@@ -346,6 +363,7 @@ class ScheduleEditingService:
         version was created, so this should always pass; if it somehow
         does not, `RestoreVerificationFailedError` is raised and nothing
         is persisted, rather than promoting a known-invalid schedule."""
+        self._reject_if_out_of_date(school_natural_id, academic_year_natural_id)
         problem, _schedule, _index, _active = self._load_active_for_edit(
             school_natural_id, academic_year_natural_id, base_version_number,
         )
@@ -382,6 +400,20 @@ class ScheduleEditingService:
             school_natural_id, academic_year_natural_id, base_version_number, candidate,
             source.solver_status, source.total_soft_penalty, wall_time_seconds=0.0, random_seed=None,
         )
+
+    def _reject_if_out_of_date(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        """Safe Configuration Changes, Slice B, Owner Decision 1: called
+        by every MUTATING command (`move`/`lock`/`unlock`/`reoptimize`/
+        `restore`) before `_load_active_for_edit` -- deliberately never
+        by `preview_move`, which stays read-only and technically
+        callable even while stale (the future UI simply will not offer
+        Move while a draft is open). One shared guard here instead of
+        duplicating the same check in each of the five API routes."""
+        state = self._configuration_revision_repository.get_state(
+            school_natural_id, academic_year_natural_id,
+        )
+        if state.timetable_out_of_date:
+            raise ScheduleOutOfDateError(school_natural_id, academic_year_natural_id)
 
     def _load_active_for_edit(
         self, school_natural_id: str, academic_year_natural_id: str, base_version_number: int,

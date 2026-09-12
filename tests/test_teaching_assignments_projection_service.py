@@ -16,6 +16,7 @@ from dataclasses import replace
 
 import pytest
 
+from school_timetable.application.configuration_revision_models import ConfigurationRevisionState
 from school_timetable.application.errors import SchedulingProblemNotFoundError
 from school_timetable.application.teaching_assignments_projection_service import (
     TeachingAssignmentsProjectionService,
@@ -40,17 +41,25 @@ class _FakeProblemRepository:
         return self._problem
 
 
-class _FakeScheduleRepository:
-    def __init__(self, active=None) -> None:
-        self._active = active
+class _FakeConfigurationRevisionRepository:
+    def __init__(self, locked: bool = False) -> None:
+        self._locked = locked
 
-    def get_active_schedule(self, school_natural_id: str, academic_year_natural_id: str):
-        return self._active
+    def get_state(self, school_natural_id: str, academic_year_natural_id: str) -> ConfigurationRevisionState:
+        return ConfigurationRevisionState(
+            published_revision_number=1,
+            draft_revision_number=None if self._locked else 2,
+            has_schedule=True,
+            configuration_locked=self._locked,
+            timetable_out_of_date=False,
+        )
 
 
-def _service(problem: SchedulingProblem | None = None, active=None) -> TeachingAssignmentsProjectionService:
+def _service(problem: SchedulingProblem | None = None, locked: bool = False) -> TeachingAssignmentsProjectionService:
     problem = problem if problem is not None else build_valid_fixture()
-    return TeachingAssignmentsProjectionService(_FakeProblemRepository(problem), _FakeScheduleRepository(active))
+    return TeachingAssignmentsProjectionService(
+        _FakeProblemRepository(problem), _FakeConfigurationRevisionRepository(locked=locked),
+    )
 
 
 def _by_id(items, item_id: str):
@@ -228,19 +237,19 @@ def test_assignments_ordered_by_teaching_requirement_tuple_order():
 
 # -- configuration_locked --------------------------------------------------
 
-def test_configuration_locked_false_when_no_active_schedule():
-    view = _service(active=None).project(_SCHOOL, _YEAR)
+def test_configuration_locked_false_when_draft_open():
+    view = _service(locked=False).project(_SCHOOL, _YEAR)
     assert view.configuration_locked is False
 
 
-def test_configuration_locked_true_when_active_schedule_exists():
-    view = _service(active="anything-non-none").project(_SCHOOL, _YEAR)
+def test_configuration_locked_true_when_no_draft_open():
+    view = _service(locked=True).project(_SCHOOL, _YEAR)
     assert view.configuration_locked is True
 
 
 def test_configuration_locked_true_still_returns_full_assignment_list():
     problem = build_valid_fixture()
-    view = _service(problem, active="anything-non-none").project(_SCHOOL, _YEAR)
+    view = _service(problem, locked=True).project(_SCHOOL, _YEAR)
     assert view.configuration_locked is True
     assert len(view.assignments) == len(problem.teaching_requirements)
 

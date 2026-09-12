@@ -10,7 +10,7 @@ and update/delete only ever resolve an existing `CLUB` target -- an
 (`SpecialActivityNotFoundError`), never as a wrong-kind conflict,
 mirroring `SubjectService`'s own filtered-resource-surface contract.
 
-Depends only on the three application-owned repository ports
+Depends only on the two application-owned repository ports
 (`application.ports`) plus the pure `special_activity_rules` module --
 never SQLAlchemy, persistence concrete adapters, ORM models, or
 FastAPI, even transitively, matching `SubjectService`'s own
@@ -35,9 +35,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from school_timetable.application import special_activity_rules as rules
-from school_timetable.application.errors import ConfigurationLockedError
 from school_timetable.application.ports import (
-    ScheduleVersionRepository,
     SchedulingProblemRepository,
     SpecialActivityRepository,
 )
@@ -67,12 +65,10 @@ class SpecialActivityService:
         self,
         problem_repository: SchedulingProblemRepository,
         special_activity_repository: SpecialActivityRepository,
-        schedule_repository: ScheduleVersionRepository,
         activity_id_factory: Callable[[], str] = _default_activity_id_factory,
     ) -> None:
         self._problem_repository = problem_repository
         self._special_activity_repository = special_activity_repository
-        self._schedule_repository = schedule_repository
         self._activity_id_factory = activity_id_factory
 
     def create(
@@ -82,8 +78,6 @@ class SpecialActivityService:
         fields: SpecialActivityFields,
     ) -> SpecialActivityWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -110,8 +104,6 @@ class SpecialActivityService:
         fields: SpecialActivityFields,
     ) -> SpecialActivityWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -134,8 +126,6 @@ class SpecialActivityService:
         academic_year_natural_id: str,
         special_activity_id: str,
     ) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -148,12 +138,3 @@ class SpecialActivityService:
         self._special_activity_repository.delete(
             school_natural_id, academic_year_natural_id, special_activity_id, validate=validate,
         )
-
-    def _precheck_not_locked(self, school_natural_id: str, academic_year_natural_id: str) -> None:
-        # Fast, un-locked precheck only -- avoids unnecessary work for
-        # the common case, but is explicitly NOT the concurrency
-        # guarantee (Owner Decision #36): the authoritative recheck
-        # happens inside the write port, under its `AcademicYear` lock.
-        existing = self._schedule_repository.get_active_schedule(school_natural_id, academic_year_natural_id)
-        if existing is not None:
-            raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)

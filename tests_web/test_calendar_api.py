@@ -31,6 +31,9 @@ from school_timetable.persistence.calendar_repository import (
     SqlAlchemyCalendarDayRepository,
     SqlAlchemyCalendarPeriodRepository,
 )
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.db import get_session
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
@@ -78,7 +81,7 @@ def _client(session_factory) -> TestClient:
     def override_calendar_projection_service():
         return CalendarProjectionService(
             SessionFactorySchedulingProblemRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
+            SqlAlchemyConfigurationRevisionRepository(session_factory),
         )
 
     def override_calendar_service():
@@ -86,7 +89,6 @@ def _client(session_factory) -> TestClient:
             SessionFactorySchedulingProblemRepository(session_factory),
             SqlAlchemyCalendarDayRepository(session_factory),
             SqlAlchemyCalendarPeriodRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
         )
 
     app.dependency_overrides[get_session] = override_get_session

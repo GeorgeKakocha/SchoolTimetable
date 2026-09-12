@@ -9,7 +9,7 @@ adapters, ORM models, or FastAPI, even transitively.
 """
 from __future__ import annotations
 
-from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.ports import ConfigurationRevisionRepository, SchedulingProblemRepository
 from school_timetable.application.calendar_projection_models import (
     CalendarDayItem,
     CalendarPeriodItem,
@@ -25,10 +25,10 @@ class CalendarProjectionService:
     def __init__(
         self,
         problem_repository: SchedulingProblemRepository,
-        schedule_repository: ScheduleVersionRepository,
+        configuration_revision_repository: ConfigurationRevisionRepository,
     ) -> None:
         self._problem_repository = problem_repository
-        self._schedule_repository = schedule_repository
+        self._configuration_revision_repository = configuration_revision_repository
 
     def project(self, school_natural_id: str, academic_year_natural_id: str) -> CalendarProjectionView:
         # (1) Load config. SchedulingProblemNotFoundError propagates
@@ -37,12 +37,12 @@ class CalendarProjectionService:
             school_natural_id, academic_year_natural_id,
         )
 
-        # (2) Decision #35's existing gate, reused verbatim -- reads
+        # (2) Safe Configuration Changes, Slice B: `configuration_locked`
+        # is `True` exactly when no draft is currently open -- reads
         # remain available regardless of lock state; only writes reject.
-        active = self._schedule_repository.get_active_schedule(
+        configuration_locked = self._configuration_revision_repository.get_state(
             school_natural_id, academic_year_natural_id,
-        )
-        configuration_locked = active is not None
+        ).configuration_locked
 
         # (3) Build the view purely in memory -- no further DB access.
         # `problem.days`/`problem.periods` are already loaded in `idx`

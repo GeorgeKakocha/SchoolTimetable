@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from school_timetable.api.calendar_routes import router as calendar_router
 from school_timetable.api.class_section_routes import router as class_section_router
 from school_timetable.api.config_routes import router as config_router
+from school_timetable.api.configuration_revision_routes import router as configuration_revision_router
 from school_timetable.api.reserved_activity_routes import router as reserved_activity_router
 from school_timetable.api.resource_routes import router as resource_router
 from school_timetable.api.schedule_routes import router as schedule_router
@@ -46,6 +47,7 @@ from school_timetable.persistence.db import get_session
 
 app = FastAPI(title="School Timetable API")
 app.include_router(config_router)
+app.include_router(configuration_revision_router)
 app.include_router(schedule_router)
 app.include_router(teaching_assignment_router)
 app.include_router(teacher_router)

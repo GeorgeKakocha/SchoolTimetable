@@ -46,34 +46,36 @@ class _FakeProblemRepository:
         return self._problem
 
 
-class _FakeScheduleRepository:
-    def __init__(self, active=None):
-        self._active = active
-
-    def get_active_schedule(self, school_natural_id, academic_year_natural_id):
-        return self._active
-
-
 class _FakeDayWritePort:
     """Simulates the authoritative, lock-protected recheck by simply
     re-invoking `validate` against the same (unchanged) problem -- the
     genuine lock/reload-under-lock mechanics are proven for real against
-    PostgreSQL in `tests_web/test_calendar_repository.py`."""
+    PostgreSQL in `tests_web/test_calendar_repository.py`.
 
-    def __init__(self, problem):
+    `locked=True` simulates the real repository's own authoritative
+    lock-rejection outcome -- raised BEFORE `validate` is ever invoked
+    (Safe Configuration Changes, Slice B: `CalendarService` itself no
+    longer has any fast, un-locked precheck of its own)."""
+
+    def __init__(self, problem, locked: bool = False):
         self._problem = problem
+        self._locked = locked
         self.create_calls: list[tuple] = []
         self.update_calls: list[tuple] = []
         self.delete_calls: list[str] = []
         self.move_calls: list[tuple] = []
 
     def create(self, school, year, day_natural_id, name, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.create_calls.append((day_natural_id, name))
         from school_timetable.application.calendar_models import DayWriteResult
         return DayWriteResult(id=day_natural_id, name=name, index=len(self._problem.days))
 
     def update(self, school, year, day_natural_id, name, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.update_calls.append((day_natural_id, name))
         from school_timetable.application.calendar_models import DayWriteResult
@@ -81,23 +83,30 @@ class _FakeDayWritePort:
         return DayWriteResult(id=day_natural_id, name=name, index=day.index)
 
     def delete(self, school, year, day_natural_id, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.delete_calls.append(day_natural_id)
 
     def move(self, school, year, day_natural_id, direction, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.move_calls.append((day_natural_id, direction))
 
 
 class _FakePeriodWritePort:
-    def __init__(self, problem):
+    def __init__(self, problem, locked: bool = False):
         self._problem = problem
+        self._locked = locked
         self.create_calls: list[tuple] = []
         self.update_calls: list[tuple] = []
         self.delete_calls: list[str] = []
         self.move_calls: list[tuple] = []
 
     def create(self, school, year, period_natural_id, fields, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.create_calls.append((period_natural_id, fields))
         from school_timetable.application.calendar_models import PeriodWriteResult
@@ -108,6 +117,8 @@ class _FakePeriodWritePort:
         )
 
     def update(self, school, year, period_natural_id, fields, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.update_calls.append((period_natural_id, fields))
         from school_timetable.application.calendar_models import PeriodWriteResult
@@ -119,10 +130,14 @@ class _FakePeriodWritePort:
         )
 
     def delete(self, school, year, period_natural_id, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.delete_calls.append(period_natural_id)
 
     def move(self, school, year, period_natural_id, direction, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.move_calls.append((period_natural_id, direction))
 
@@ -135,19 +150,16 @@ def _fixture_without_time_preferences():
     )
 
 
-def _service(problem=None, active_schedule=None, day_id_factory=None, period_id_factory=None):
+def _service(problem=None, locked=False, day_id_factory=None, period_id_factory=None):
     problem = problem if problem is not None else _fixture_without_time_preferences()
-    day_port = _FakeDayWritePort(problem)
-    period_port = _FakePeriodWritePort(problem)
+    day_port = _FakeDayWritePort(problem, locked=locked)
+    period_port = _FakePeriodWritePort(problem, locked=locked)
     kwargs = {}
     if day_id_factory is not None:
         kwargs["day_id_factory"] = day_id_factory
     if period_id_factory is not None:
         kwargs["period_id_factory"] = period_id_factory
-    service = CalendarService(
-        _FakeProblemRepository(problem), day_port, period_port, _FakeScheduleRepository(active=active_schedule),
-        **kwargs,
-    )
+    service = CalendarService(_FakeProblemRepository(problem), day_port, period_port, **kwargs)
     return service, day_port, period_port
 
 
@@ -192,8 +204,8 @@ def test_day_create_uses_injected_deterministic_id_factory():
     assert result.id == "day_deterministic"
 
 
-def test_day_create_rejected_once_schedule_exists():
-    service, _, _ = _service(active_schedule="anything-non-none")
+def test_day_create_rejected_when_configuration_locked():
+    service, _, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.day_create(_SCHOOL, _YEAR, DayFields(name="Saturday"))
 
@@ -256,10 +268,15 @@ def test_day_delete_referenced_by_teacher_availability_blocked():
     assert "TEACHER_AVAILABILITY" in exc_info.value.referenced_by
 
 
-def test_day_delete_rejected_once_schedule_exists():
-    service, _, _ = _service(active_schedule="anything-non-none")
+def test_day_delete_rejected_when_configuration_locked():
+    # An unreferenced Day, so the service's OWN validate-precheck (which
+    # runs before the write port is ever reached) passes -- otherwise
+    # DayInUseError would fire first.
+    problem = _fixture_without_time_preferences()
+    problem = replace(problem, days=problem.days + (Day(id="sat", name="Saturday", index=5),))
+    service, _, _ = _service(problem=problem, locked=True)
     with pytest.raises(ConfigurationLockedError):
-        service.day_delete(_SCHOOL, _YEAR, "mon")
+        service.day_delete(_SCHOOL, _YEAR, "sat")
 
 
 def test_day_move_up_and_down_succeed():
@@ -289,8 +306,8 @@ def test_day_move_missing_id_rejected():
         service.day_move(_SCHOOL, _YEAR, "no-such-day", "up")
 
 
-def test_day_move_rejected_once_schedule_exists():
-    service, _, _ = _service(active_schedule="anything-non-none")
+def test_day_move_rejected_when_configuration_locked():
+    service, _, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.day_move(_SCHOOL, _YEAR, "tue", "up")
 
@@ -550,7 +567,7 @@ def test_period_move_missing_id_rejected():
         service.period_move(_SCHOOL, _YEAR, "no-such-period", "up")
 
 
-def test_period_move_rejected_once_schedule_exists():
-    service, _, _ = _service(active_schedule="anything-non-none")
+def test_period_move_rejected_when_configuration_locked():
+    service, _, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.period_move(_SCHOOL, _YEAR, "p3", "up")

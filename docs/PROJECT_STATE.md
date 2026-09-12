@@ -4123,3 +4123,169 @@ may coexist and that the future regeneration publish transition is
 schema-valid. Applied to the local dev database and independently
 re-verified: all three tracked datasets and the eleven other local
 datasets unchanged. Full detail in `docs/DECISIONS.md`.
+
+## SAFE CONFIGURATION CHANGES -- SLICE B -- CONFIGURATION DRAFT
+LIFECYCLE IMPLEMENTED, REVIEWED, VERIFIED -- READY TO COMMIT
+
+**Scope:** the draft configuration lifecycle itself -- opening an
+editable draft after Generate, eagerly cloning the published
+configuration into it, redirecting configuration reads/writes to it,
+discarding it, and making the active timetable read-only while it is
+open. Builds entirely on Slice A's `ConfigurationRevision` schema; no
+migration was needed.
+
+**New port, single lock/state authority:** `ConfigurationRevisionRepository`
+(`get_state`/`begin_draft`/`discard_draft`), implemented by
+`SqlAlchemyConfigurationRevisionRepository`, replaces the old "does a
+Schedule exist" signal every configuration writer and every Setup
+projection used. `configuration_write_lock.reject_if_configuration_locked`
+now means exactly: **locked iff no draft is open** -- not "iff a
+Schedule exists." Before Slice B those two conditions were identical
+(a draft was cleared the moment Generate published it, and never set
+again); Slice B's `begin_draft` reopens a draft for a year that already
+has a Schedule, and writes must succeed again once it does, redirected
+to that draft, never to the immutable published revision. All 9
+configuration write services (Teacher, Class Section, Subject, Special
+Activity, Resource, Calendar, Teaching Assignment, Teacher
+Availability, Reserved Activity) and all 9 Setup projection services
+were updated to this single authority -- each write service's own
+redundant fast "is it locked" precheck was deleted outright (the
+repository is the sole source of truth; a service-level precheck of
+"is a draft open" would have been pure duplication).
+
+**Eager clone.** `begin_draft`, on a published/no-draft year, creates a
+new `ConfigurationRevision` (next `revision_number`, `status=DRAFT`)
+and copies every one of the fifteen `SchedulingProblem` configuration
+tables (Day, Period, ClassSection, ParticipantGroup,
+ParticipantGroupClassSection, Teacher, TeacherAvailability, Activity,
+Resource, TeachingRequirement, TimePreference, ReservedBlock,
+ReservedBlockClassSection, ReservedBlockSlot, FixedPlacement) from the
+published revision into it, in dependency order. Every one of the 21
+intra-configuration FK edges is remapped to the NEW draft's own rows
+via old-surrogate-id -> new-surrogate-id maps built as each table is
+cloned -- never a raw copy of a published-revision surrogate FK value.
+Natural IDs and every scalar field are preserved byte-for-byte. The
+whole clone runs under the same `AcademicYear` `SELECT ... FOR UPDATE`
+row lock (Owner Decision #36) every configuration writer already uses,
+held from before the first insert through the final `commit()` --
+proven under genuine concurrent load (two real, independently
+committed PostgreSQL sessions racing via `threading.Barrier`, with
+direct timing evidence showing ~87ms of overlap out of a ~90ms total
+duration) to serialize two simultaneous `begin_draft` calls into
+exactly one draft, zero duplicate revisions, zero duplicate clone rows,
+no deadlock. `begin_draft` is idempotent: called again while a draft is
+already open (or before the year's first Generate, when the initial
+draft already exists), it returns the existing draft unchanged --
+no re-clone, no second revision.
+
+**Draft-first reads and writes.** `SchedulingProblemRepository.
+load_by_school_and_year` now resolves the year's open DRAFT first, its
+PUBLISHED revision otherwise (previously published-first, a
+distinction invisible until a second revision could ever coexist).
+Every Setup screen and every configuration writer's own `validate`
+closure therefore see the configuration actually being edited, never
+the frozen published one, the moment a draft is open. The published
+revision remains completely untouched throughout -- proven both by
+direct row-snapshot equality in the repository tests and by a real
+HTTP acceptance test (create a Teacher while a draft is open; the new
+row belongs to the draft revision; the published revision's own
+Teacher rows are verified byte-for-byte unchanged; `GET .../teachers`
+reflects the new teacher while the draft is open and reverts to
+exactly the pre-draft list once it is discarded).
+
+**Discard lifecycle.** `discard_draft` clears the draft pointer and
+hard-deletes the draft revision (cascading to all fifteen tables'
+draft-scoped rows), restoring the published-only state -- the
+published revision and every `Schedule`/`ScheduleVersion`/
+`ScheduleEntry`/`LockedOccurrence` row are untouched. Guarded: refuses
+with `NoConfigurationDraftError` if no draft is open, with
+`InitialDraftCannotBeDiscardedError` if the year's only revision is its
+initial pre-first-Generate draft (required for that first Generate to
+ever succeed), and -- defense-in-depth, a bare `RuntimeError`, since
+Slice A's own invariant makes this state unreachable through any
+legitimate call path -- if a draft is somehow still referenced by a
+`ScheduleVersion`. Every rejected discard performs zero mutation.
+
+**Stale-timetable mutation guard (Owner Decision 1).** `Configuration
+RevisionState.timetable_out_of_date` is `True` exactly when a Schedule
+exists AND a draft is open. `ScheduleEditingService` gained a
+`ConfigurationRevisionRepository` dependency and a shared
+`_reject_if_out_of_date` guard, called by `move`/`lock`/`unlock`/
+`reoptimize`/`restore` -- every one of the five rejects with the new
+`ScheduleOutOfDateError` while a draft is open, with zero mutation
+(verified by real-DB tests asserting `ScheduleVersion`/
+`LockedOccurrence` counts are unchanged after each rejected attempt).
+`preview_move` deliberately never calls this guard and remains
+callable throughout -- it is read-only and persists nothing regardless
+of staleness. Mutations succeed again immediately once the draft is
+discarded (the guard reads live state on every call, not a cached
+flag). **A real production gap was found and fixed while adding this
+guard's own integration coverage:** `ScheduleOutOfDateError` had never
+actually been wired into `api/schedule_routes.py`'s exception handling
+for the five mutating routes, so it would have surfaced as an
+uncaught 500 rather than the intended `409 SCHEDULE_OUT_OF_DATE` --
+caught by the new tests before this slice was ever considered done,
+fixed the same session, and reconfirmed with 7 new real-HTTP
+integration tests plus the existing 33 unaffected.
+
+**New HTTP surface:** `GET/POST/DELETE /schools/{school_id}/years/
+{year_id}/configuration/{state,draft}` -- read revision state, open a
+draft, discard a draft. Response body: `{published_revision_number,
+draft_revision_number, configuration_locked, timetable_out_of_date}`,
+never a persistence surrogate ID. New stable error codes: `409
+NO_CONFIGURATION_DRAFT`, `409 INITIAL_DRAFT_CANNOT_BE_DISCARDED`, `409
+SCHEDULE_OUT_OF_DATE` (the last one shared with the five schedule-
+editing routes above).
+
+**Historical published revisions remain valid.** Slice B's own code
+never creates or mutates a `PUBLISHED` row -- `begin_draft`/
+`discard_draft` only ever touch the DRAFT. The multi-published-revision
+invariant this depends on was fixed and tested in the Slice A
+correction above; nothing in Slice B's diff can regress it.
+
+**No migration, zero frontend change.** Slice B is built entirely on
+Slice A's existing schema (`alembic check` reports zero drift
+throughout); no new migration was needed or created. Zero frontend
+files changed -- no draft banner, no Discard button, no Regenerate
+button, no Out-of-date banner exist yet; these routes exist only so a
+later UI slice has something to call.
+
+**Regression (chronology, stated accurately):** the full baseline below
+was captured BEFORE this closure's two small audit-cleanup edits (a
+docstring clarification and one strengthened test assertion, both
+non-functional); only the one directly affected file was re-run after
+those two edits, and stayed green (13/13).
+- Core `tests -m "not slow"`: **600 passed, 5 deselected**.
+- `tests_web` (full): **627 passed**.
+- Frontend: `npm test` **572/572 passed**; `npm run build` clean.
+- Alembic: `current` = `heads` = `398b05641152` (one head); `alembic
+  check` reports no new upgrade operations.
+- Real dev-database datasets: `generation-review-school` (1 version,
+  active v1, OPTIMAL, penalty 0), `editing-review-school` (10 versions,
+  active v10), `synthetic-school` (7 versions, active v7) -- all still
+  exactly matching the Slice A/correction baseline, all still revision
+  1; the other 11 local datasets and the migration state (`398b05641152`)
+  also unchanged. Zero data mutation performed during verification.
+- Test database (`school_timetable_test`): confirmed empty (0 schools,
+  0 years) after the full integration/concurrency run -- every test's
+  cleanup, including the concurrency test's manual cascade delete,
+  left zero residue.
+- Concurrency: two independent, genuinely overlapping PostgreSQL
+  transactions (real threads, real row lock, not sleep-based timing)
+  converged on exactly one draft revision, with every one of the
+  fifteen tables cloned exactly once -- no duplicate revision, no
+  duplicate clone rows, no deadlock.
+- Final diff audit (54 changed files: 30 production, 24 tests, 0 docs,
+  0 migration, 0 frontend): no blocker found; all 14 Slice B acceptance
+  items verified PASS with direct evidence.
+
+**SAFE CONFIGURATION CHANGES -- SLICE B ACCEPTANCE VERIFIED, NOT YET
+COMMITTED -- the draft configuration lifecycle (begin/clone/discard,
+draft-first reads/writes, stale-timetable mutation guard) is complete
+and fully verified in the working tree, pending commit. Safe
+post-generation configuration EDITING is now possible end-to-end for
+every configuration entity through existing CRUD APIs while a draft is
+open. Regeneration after a configuration edit (Slice C) is explicitly
+NOT started -- there is still no way to re-solve a schedule against an
+edited draft and publish it as a new revision; a discarded draft simply
+reverts to the unchanged published schedule.**

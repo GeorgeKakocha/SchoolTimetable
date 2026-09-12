@@ -52,11 +52,23 @@ def reject_if_configuration_locked(
     """Authoritative Decision #35 recheck -- performed *after* acquiring
     the Decision #36 lock, never relying solely on an earlier, un-locked
     caller precheck (each service's own fast-fail check is exactly
-    that: a precheck, not the concurrency guarantee)."""
-    schedule_exists = session.execute(
-        select(orm.Schedule.id).where(orm.Schedule.academic_year_id == year_id)
-    ).scalar_one_or_none() is not None
-    if schedule_exists:
+    that: a precheck, not the concurrency guarantee).
+
+    Safe Configuration Changes, Slice B: configuration is locked exactly
+    when this `AcademicYear` has no open DRAFT `ConfigurationRevision`
+    -- NOT whenever a `Schedule` exists. Before Slice B those two
+    conditions were identical (a year's draft was cleared the moment
+    its first `Generate` published it, and never set again); Slice B's
+    "Begin editing configuration" (`ConfigurationRevisionRepository.
+    begin_draft`) reopens a draft for a year that already has a
+    `Schedule`, and configuration writes must succeed again once it
+    does -- redirected to that draft by `resolve_draft_revision_id`
+    below, never touching the immutable published revision or any
+    `Schedule`/`ScheduleVersion` row."""
+    draft_exists = session.execute(
+        select(orm.AcademicYear.draft_revision_id).where(orm.AcademicYear.id == year_id)
+    ).scalar_one() is not None
+    if not draft_exists:
         session.rollback()
         raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)
 
@@ -64,18 +76,12 @@ def reject_if_configuration_locked(
 def resolve_draft_revision_id(
     session: Session, year_id: int, school_natural_id: str, academic_year_natural_id: str,
 ) -> int:
-    """Safe Configuration Changes, Slice A: the `ConfigurationRevision`
-    every configuration write must stamp its new/edited row with.
-    Called only after `reject_if_configuration_locked` has already
-    confirmed no `Schedule` exists for this year -- in Slice A that is
-    exactly the condition under which `AcademicYear.draft_revision_id`
-    is guaranteed set (publishing only ever happens atomically with a
-    year's first `Generate`, which is precisely what creates its first
-    `Schedule` row) -- so this never returns `None` on any reachable
-    path. Slice B's future "Edit scheduling configuration" command is
-    the only other thing that will ever set a draft; this function's
-    contract (resolve the year's current draft) does not change then,
-    only the set of moments a draft can exist grows."""
+    """The `ConfigurationRevision` every configuration write must stamp
+    its new/edited row with. Called only after
+    `reject_if_configuration_locked` has already confirmed a draft is
+    open for this year, so this never returns `None` on any reachable
+    path -- guarded below anyway rather than silently writing a row
+    under no revision at all."""
     draft_revision_id = session.execute(
         select(orm.AcademicYear.draft_revision_id).where(orm.AcademicYear.id == year_id)
     ).scalar_one()

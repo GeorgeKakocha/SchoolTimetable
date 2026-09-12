@@ -22,10 +22,12 @@ from school_timetable.application.errors import (
     NoActiveScheduleError,
     ReoptimizationInfeasibleError,
     RestoreVerificationFailedError,
+    ScheduleOutOfDateError,
     ScheduleVersionNotFoundError,
     StaleScheduleVersionError,
     VersionAlreadyActiveError,
 )
+from school_timetable.application.configuration_revision_models import ConfigurationRevisionState
 from school_timetable.application.schedule_editing_service import ScheduleEditingService
 from school_timetable.application import schedule_editing_service as svc_mod
 from school_timetable.application.schedule_models import ActiveScheduleVersion, ScheduleVersionSnapshot
@@ -146,6 +148,27 @@ class _FakeScheduleRepository:
         return new_version
 
 
+class _FakeConfigurationRevisionRepository:
+    """Safe Configuration Changes, Slice B: `out_of_date=False` by
+    default (every pre-existing test in this file expects ordinary,
+    unaffected mutation) -- only the dedicated stale-timetable guard
+    tests below construct one with `out_of_date=True`."""
+
+    def __init__(self, out_of_date: bool = False):
+        self.out_of_date = out_of_date
+        self.calls: list[tuple[str, str]] = []
+
+    def get_state(self, school_natural_id: str, academic_year_natural_id: str):
+        self.calls.append((school_natural_id, academic_year_natural_id))
+        return ConfigurationRevisionState(
+            published_revision_number=1,
+            draft_revision_number=2 if self.out_of_date else None,
+            has_schedule=True,
+            configuration_locked=False,
+            timetable_out_of_date=self.out_of_date,
+        )
+
+
 def _seed_v1():
     problem = build_valid_fixture()
     result = solve(problem, SolverOptions(random_seed=11, num_search_workers=1))
@@ -199,7 +222,7 @@ def test_move_success_creates_new_active_version_with_truthful_metadata():
     schedule = Schedule(entries=v1.entries)
     r1, d1, p1, d2, p2 = _find_simple_move(problem, index, schedule)
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     v2 = service.move(_SCHOOL, _YEAR, 1, r1, d1, p1, d2, p2)
 
     assert v2.version_number == 2
@@ -217,7 +240,7 @@ def test_move_rejection_for_a_fixed_placement_raises_and_persists_nothing():
     problem, v1 = _seed_v1()
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     with pytest.raises(MoveNotAllowedError) as exc_info:
         service.move(_SCHOOL, _YEAR, 1, "art_8b", "mon", "p1", "tue", "p1")
@@ -231,7 +254,7 @@ def test_move_with_stale_base_version_raises_immediately_without_loading_problem
     problem, v1 = _seed_v1()
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     with pytest.raises(StaleScheduleVersionError) as exc_info:
         service.move(_SCHOOL, _YEAR, 999, "art_8b", "mon", "p1", "tue", "p1")
@@ -246,7 +269,7 @@ def test_move_with_stale_base_version_raises_immediately_without_loading_problem
 def test_move_with_no_active_schedule_raises_no_active_schedule_error():
     problem_repo = _FakeProblemRepository(build_valid_fixture())
     schedule_repo = _FakeScheduleRepository(active=None)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     with pytest.raises(NoActiveScheduleError):
         service.move(_SCHOOL, _YEAR, 1, "art_8b", "mon", "p1", "tue", "p1")
@@ -261,7 +284,7 @@ def test_lock_creates_new_version_with_unchanged_entries_and_stored_lock():
     schedule_repo = _FakeScheduleRepository(v1)
     entry = next(e for e in v1.entries if e.requirement_id == "math_8a")
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     v2 = service.lock(_SCHOOL, _YEAR, 1, "math_8a", entry.day_id, entry.period_id)
 
     assert v2.version_number == 2
@@ -279,7 +302,7 @@ def test_lock_a_split_group_branch_locks_both_siblings():
     schedule_repo = _FakeScheduleRepository(v1)
     entry = next(e for e in v1.entries if e.requirement_id == "german_8a")
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     v2 = service.lock(_SCHOOL, _YEAR, 1, "german_8a", entry.day_id, entry.period_id)
 
     locked_req_ids = {k.requirement_id for k in v2.locked_occurrences}
@@ -291,7 +314,7 @@ def test_unlock_produces_a_new_version_while_the_historical_locked_version_is_un
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
     entry = next(e for e in v1.entries if e.requirement_id == "german_8a")
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     v2 = service.lock(_SCHOOL, _YEAR, 1, "german_8a", entry.day_id, entry.period_id)
     v2_locks_snapshot = v2.locked_occurrences  # captured before v3 exists
@@ -316,7 +339,7 @@ def test_reoptimize_success_honors_locks_and_persists_actual_solver_metadata():
 
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     v2 = service.lock(_SCHOOL, _YEAR, 1, "german_8a", entry.day_id, entry.period_id)
 
@@ -360,7 +383,7 @@ def test_reoptimize_infeasible_persists_nothing(monkeypatch):
     problem, v1 = _seed_v1()
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     monkeypatch.setattr(
         svc_mod, "_reoptimize", lambda p, s, o: SchedulingResult(status=SolverStatus.INFEASIBLE),
@@ -400,7 +423,7 @@ def test_move_with_a_race_between_read_and_persist_is_still_rejected():
     )
     schedule_repo.write_check_active = v2
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     with pytest.raises(StaleScheduleVersionError) as exc_info:
         service.move(_SCHOOL, _YEAR, 1, r1, d1, p1, d2, p2)
 
@@ -422,7 +445,7 @@ def test_preview_move_reports_every_other_instructional_slot_exactly_once():
     index = ProblemIndex(problem)
     entry = next(e for e in v1.entries if e.requirement_id == "math_8a")
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     preview = service.preview_move(_SCHOOL, _YEAR, 1, "math_8a", entry.day_id, entry.period_id)
 
     expected_slots = {
@@ -443,7 +466,7 @@ def test_preview_move_allowed_target_matches_validate_move_directly():
     schedule = Schedule(entries=v1.entries)
     r1, d1, p1, d2, p2 = _find_simple_move(problem, index, schedule)
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     preview = service.preview_move(_SCHOOL, _YEAR, 1, r1, d1, p1)
 
     target = next(t for t in preview.targets if (t.day_id, t.period_id) == (d2, p2))
@@ -463,7 +486,7 @@ def test_preview_move_rejected_target_carries_the_same_violation_as_validate_mov
     index = ProblemIndex(problem)
     schedule = Schedule(entries=v1.entries)
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     preview = service.preview_move(_SCHOOL, _YEAR, 1, "art_8b", "mon", "p1")
 
     assert preview.targets  # non-empty
@@ -509,7 +532,7 @@ def test_preview_move_required_block_breaking_target_reports_required_block_viol
 
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     preview = service.preview_move(_SCHOOL, _YEAR, 1, source.requirement_id, source.day_id, source.period_id)
 
     target = next(
@@ -536,7 +559,7 @@ def test_preview_move_split_group_source_uses_real_logical_occurrence_semantics(
     schedule = Schedule(entries=v1.entries)
     entry = next(e for e in v1.entries if e.requirement_id == "german_8a")
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     preview = service.preview_move(_SCHOOL, _YEAR, 1, "german_8a", entry.day_id, entry.period_id)
 
     assert preview.targets
@@ -553,7 +576,7 @@ def test_preview_move_with_stale_base_version_raises_immediately_without_loading
     problem, v1 = _seed_v1()
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     with pytest.raises(StaleScheduleVersionError) as exc_info:
         service.preview_move(_SCHOOL, _YEAR, 999, "art_8b", "mon", "p1")
@@ -568,7 +591,7 @@ def test_preview_move_with_unresolvable_source_raises_invalid_edit_target_error(
     problem, v1 = _seed_v1()
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     with pytest.raises(InvalidEditTargetError):
         service.preview_move(_SCHOOL, _YEAR, 1, "does_not_exist", "mon", "p1")
@@ -581,7 +604,7 @@ def test_preview_move_performs_zero_persistence_writes():
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
     entry = next(e for e in v1.entries if e.requirement_id == "math_8a")
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     service.preview_move(_SCHOOL, _YEAR, 1, "math_8a", entry.day_id, entry.period_id)
 
@@ -601,7 +624,7 @@ def test_preview_move_does_not_change_actual_move_behavior():
     schedule = Schedule(entries=v1.entries)
     r1, d1, p1, d2, p2 = _find_simple_move(problem, index, schedule)
 
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     service.preview_move(_SCHOOL, _YEAR, 1, r1, d1, p1)
     v2 = service.move(_SCHOOL, _YEAR, 1, r1, d1, p1, d2, p2)
 
@@ -621,7 +644,7 @@ def _restore_setup():
     problem, v1 = _seed_v1()
     problem_repo = _FakeProblemRepository(problem)
     schedule_repo = _FakeScheduleRepository(v1)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
     index = ProblemIndex(problem)
 
     r1, d1, p1, d2, p2 = _find_simple_move(problem, index, Schedule(entries=v1.entries))
@@ -715,7 +738,7 @@ def test_restore_unknown_version_raises_schedule_version_not_found():
 def test_restore_with_no_active_schedule_raises_no_active_schedule_error():
     problem_repo = _FakeProblemRepository(build_valid_fixture())
     schedule_repo = _FakeScheduleRepository(active=None)
-    service = ScheduleEditingService(problem_repo, schedule_repo)
+    service = ScheduleEditingService(problem_repo, schedule_repo, _FakeConfigurationRevisionRepository())
 
     with pytest.raises(NoActiveScheduleError):
         service.restore(_SCHOOL, _YEAR, 1, 1)
@@ -752,3 +775,94 @@ def test_restore_does_not_disturb_a_subsequent_normal_move():
 
     assert v5.version_number == 5
     assert v5.entries != v4.entries
+
+
+# == Safe Configuration Changes, Slice B: stale-timetable mutation guard ====
+
+def _out_of_date_setup():
+    problem, v1 = _seed_v1()
+    problem_repo = _FakeProblemRepository(problem)
+    schedule_repo = _FakeScheduleRepository(v1)
+    revision_repo = _FakeConfigurationRevisionRepository(out_of_date=True)
+    service = ScheduleEditingService(problem_repo, schedule_repo, revision_repo)
+    return problem, problem_repo, schedule_repo, revision_repo, service, v1
+
+
+def test_move_rejected_while_configuration_draft_is_open():
+    problem, problem_repo, schedule_repo, revision_repo, service, v1 = _out_of_date_setup()
+    index = ProblemIndex(problem)
+    r1, d1, p1, d2, p2 = _find_simple_move(problem, index, Schedule(entries=v1.entries))
+
+    with pytest.raises(ScheduleOutOfDateError):
+        service.move(_SCHOOL, _YEAR, 1, r1, d1, p1, d2, p2)
+
+    assert schedule_repo.persist_calls == []
+    assert problem_repo.calls == []  # rejected before ever loading the problem
+
+
+def test_lock_rejected_while_configuration_draft_is_open():
+    _problem, problem_repo, schedule_repo, _revision_repo, service, _v1 = _out_of_date_setup()
+
+    with pytest.raises(ScheduleOutOfDateError):
+        service.lock(_SCHOOL, _YEAR, 1, "german_8a", "mon", "p1")
+
+    assert schedule_repo.persist_calls == []
+    assert problem_repo.calls == []
+
+
+def test_unlock_rejected_while_configuration_draft_is_open():
+    _problem, problem_repo, schedule_repo, _revision_repo, service, _v1 = _out_of_date_setup()
+
+    with pytest.raises(ScheduleOutOfDateError):
+        service.unlock(_SCHOOL, _YEAR, 1, "german_8a", "mon", "p1")
+
+    assert schedule_repo.persist_calls == []
+    assert problem_repo.calls == []
+
+
+def test_reoptimize_rejected_while_configuration_draft_is_open():
+    _problem, problem_repo, schedule_repo, _revision_repo, service, _v1 = _out_of_date_setup()
+
+    with pytest.raises(ScheduleOutOfDateError):
+        service.reoptimize(_SCHOOL, _YEAR, 1)
+
+    assert schedule_repo.persist_calls == []
+    assert problem_repo.calls == []
+
+
+def test_restore_rejected_while_configuration_draft_is_open():
+    _problem, problem_repo, schedule_repo, _revision_repo, service, _v1 = _out_of_date_setup()
+
+    with pytest.raises(ScheduleOutOfDateError):
+        service.restore(_SCHOOL, _YEAR, 1, 1)
+
+    assert schedule_repo.persist_calls == []
+    assert problem_repo.calls == []
+
+
+def test_preview_move_still_allowed_while_configuration_draft_is_open():
+    """Move preview stays read-only and technically callable even while
+    stale -- only the five MUTATING commands are rejected."""
+    problem, problem_repo, _schedule_repo, revision_repo, service, v1 = _out_of_date_setup()
+    index = ProblemIndex(problem)
+    r1, d1, p1, _d2, _p2 = _find_simple_move(problem, index, Schedule(entries=v1.entries))
+
+    result = service.preview_move(_SCHOOL, _YEAR, 1, r1, d1, p1)
+
+    assert result.version_number == 1
+    assert revision_repo.calls == []  # preview never even consults revision state
+
+
+def test_move_succeeds_normally_once_configuration_is_no_longer_out_of_date():
+    """The guard checks LIVE state on every call -- once the fake
+    revision repository reports no more open draft, the exact same
+    service instance allows the move again."""
+    problem, problem_repo, schedule_repo, revision_repo, service, v1 = _out_of_date_setup()
+    revision_repo.out_of_date = False
+    index = ProblemIndex(problem)
+    r1, d1, p1, d2, p2 = _find_simple_move(problem, index, Schedule(entries=v1.entries))
+
+    result = service.move(_SCHOOL, _YEAR, 1, r1, d1, p1, d2, p2)
+
+    assert result.version_number == 2
+    assert len(schedule_repo.persist_calls) == 1

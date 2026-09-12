@@ -1,7 +1,7 @@
 """`TeacherService` (Real-School Setup MVP Slice B): the narrow Teacher
 write use case -- create, update, and delete a `Teacher`.
 
-Depends only on the three application-owned repository ports
+Depends only on the two application-owned repository ports
 (`application.ports`) plus the pure `teacher_rules` module -- never
 SQLAlchemy, persistence concrete adapters, ORM models, or FastAPI, even
 transitively, matching `TeachingAssignmentService`'s own discipline.
@@ -21,9 +21,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from school_timetable.application import teacher_rules as rules
-from school_timetable.application.errors import ConfigurationLockedError
 from school_timetable.application.ports import (
-    ScheduleVersionRepository,
     SchedulingProblemRepository,
     TeacherRepository,
 )
@@ -47,12 +45,10 @@ class TeacherService:
         self,
         problem_repository: SchedulingProblemRepository,
         teacher_repository: TeacherRepository,
-        schedule_repository: ScheduleVersionRepository,
         id_factory: Callable[[], str] = _default_id_factory,
     ) -> None:
         self._problem_repository = problem_repository
         self._teacher_repository = teacher_repository
-        self._schedule_repository = schedule_repository
         self._id_factory = id_factory
 
     def create(
@@ -62,8 +58,6 @@ class TeacherService:
         fields: TeacherFields,
     ) -> TeacherWriteResult:
         first_name, last_name = rules.normalize_fields(fields.first_name, fields.last_name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -97,8 +91,6 @@ class TeacherService:
         fields: TeacherFields,
     ) -> TeacherWriteResult:
         first_name, last_name = rules.normalize_fields(fields.first_name, fields.last_name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -126,8 +118,6 @@ class TeacherService:
         academic_year_natural_id: str,
         teacher_id: str,
     ) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -140,12 +130,3 @@ class TeacherService:
         self._teacher_repository.delete(
             school_natural_id, academic_year_natural_id, teacher_id, validate=validate,
         )
-
-    def _precheck_not_locked(self, school_natural_id: str, academic_year_natural_id: str) -> None:
-        # Fast, un-locked precheck only -- avoids unnecessary work for
-        # the common case, but is explicitly NOT the concurrency
-        # guarantee (Owner Decision #36): the authoritative recheck
-        # happens inside the write port, under its `AcademicYear` lock.
-        existing = self._schedule_repository.get_active_schedule(school_natural_id, academic_year_natural_id)
-        if existing is not None:
-            raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)

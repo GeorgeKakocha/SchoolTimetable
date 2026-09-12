@@ -9,7 +9,7 @@ update/delete only ever resolve an existing `ORDINARY` target -- a
 never as a wrong-kind conflict, matching the filtered-resource-surface
 contract locked in the Slice D design gate.
 
-Depends only on the three application-owned repository ports
+Depends only on the two application-owned repository ports
 (`application.ports`) plus the pure `subject_rules` module -- never
 SQLAlchemy, persistence concrete adapters, ORM models, or FastAPI, even
 transitively, matching `ClassSectionService`'s own discipline.
@@ -29,10 +29,8 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from school_timetable.application import subject_rules as rules
-from school_timetable.application.errors import ConfigurationLockedError
 from school_timetable.application.ports import (
     ActivityRepository,
-    ScheduleVersionRepository,
     SchedulingProblemRepository,
 )
 from school_timetable.application.subject_models import SubjectFields, SubjectWriteResult
@@ -57,12 +55,10 @@ class SubjectService:
         self,
         problem_repository: SchedulingProblemRepository,
         activity_repository: ActivityRepository,
-        schedule_repository: ScheduleVersionRepository,
         activity_id_factory: Callable[[], str] = _default_activity_id_factory,
     ) -> None:
         self._problem_repository = problem_repository
         self._activity_repository = activity_repository
-        self._schedule_repository = schedule_repository
         self._activity_id_factory = activity_id_factory
 
     def create(
@@ -72,8 +68,6 @@ class SubjectService:
         fields: SubjectFields,
     ) -> SubjectWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -100,8 +94,6 @@ class SubjectService:
         fields: SubjectFields,
     ) -> SubjectWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -124,8 +116,6 @@ class SubjectService:
         academic_year_natural_id: str,
         subject_id: str,
     ) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -138,12 +128,3 @@ class SubjectService:
         self._activity_repository.delete(
             school_natural_id, academic_year_natural_id, subject_id, validate=validate,
         )
-
-    def _precheck_not_locked(self, school_natural_id: str, academic_year_natural_id: str) -> None:
-        # Fast, un-locked precheck only -- avoids unnecessary work for
-        # the common case, but is explicitly NOT the concurrency
-        # guarantee (Owner Decision #36): the authoritative recheck
-        # happens inside the write port, under its `AcademicYear` lock.
-        existing = self._schedule_repository.get_active_schedule(school_natural_id, academic_year_natural_id)
-        if existing is not None:
-            raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)

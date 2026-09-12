@@ -39,14 +39,6 @@ class _FakeProblemRepository:
         return self._problem
 
 
-class _FakeScheduleRepository:
-    def __init__(self, active=None):
-        self._active = active
-
-    def get_active_schedule(self, school_natural_id, academic_year_natural_id):
-        return self._active
-
-
 class _FakeWritePort:
     """Simulates the authoritative, lock-protected recheck by simply
     re-invoking `validate` against the same (unchanged) problem -- the
@@ -54,34 +46,44 @@ class _FakeWritePort:
     `ReservedBlock` synchronization) are proven for real against
     PostgreSQL in `tests_web/test_special_activity_repository.py`;
     this fake exists only to exercise `SpecialActivityService`'s own
-    orchestration and error propagation."""
+    orchestration and error propagation.
 
-    def __init__(self, problem):
+    `locked=True` simulates the real repository's own authoritative
+    lock-rejection outcome -- raised BEFORE `validate` is ever invoked
+    (Safe Configuration Changes, Slice B: `SpecialActivityService`
+    itself no longer has any fast, un-locked precheck of its own)."""
+
+    def __init__(self, problem, locked: bool = False):
         self._problem = problem
+        self._locked = locked
         self.create_calls: list[tuple] = []
         self.update_calls: list[tuple] = []
         self.delete_calls: list[str] = []
 
     def create(self, school, year, special_activity_natural_id, name, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.create_calls.append((special_activity_natural_id, name))
 
     def update(self, school, year, special_activity_natural_id, name, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.update_calls.append((special_activity_natural_id, name))
 
     def delete(self, school, year, special_activity_natural_id, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.delete_calls.append(special_activity_natural_id)
 
 
-def _service(problem=None, active_schedule=None, activity_id_factory=None):
+def _service(problem=None, locked=False, activity_id_factory=None):
     problem = problem if problem is not None else build_valid_fixture()
-    write_port = _FakeWritePort(problem)
+    write_port = _FakeWritePort(problem, locked=locked)
     kwargs = {} if activity_id_factory is None else {"activity_id_factory": activity_id_factory}
-    service = SpecialActivityService(
-        _FakeProblemRepository(problem), write_port, _FakeScheduleRepository(active=active_schedule), **kwargs,
-    )
+    service = SpecialActivityService(_FakeProblemRepository(problem), write_port, **kwargs)
     return service, write_port
 
 
@@ -158,8 +160,8 @@ def test_create_uses_injected_deterministic_id_factory():
     assert write_port.create_calls[0] == ("activity_deterministic_test_id", "Debate Club")
 
 
-def test_create_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_create_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.create(_SCHOOL, _YEAR, SpecialActivityFields(name="Debate Club"))
 
@@ -217,8 +219,8 @@ def test_update_ordinary_id_rejected_as_not_found():
         service.update(_SCHOOL, _YEAR, "math", SpecialActivityFields(name="Renamed"))
 
 
-def test_update_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_update_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.update(_SCHOOL, _YEAR, "club_chess", SpecialActivityFields(name="Renamed"))
 
@@ -275,7 +277,11 @@ def test_delete_unreferenced_club_with_no_reserved_block_succeeds():
     assert write_port.delete_calls == ["unused_special_activity"]
 
 
-def test_delete_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_delete_rejected_when_configuration_locked():
+    # An unreferenced club, so the service's OWN validate-precheck
+    # (which runs before the write port is ever reached) passes --
+    # otherwise SpecialActivityInUseError would fire first.
+    problem = _problem_with_unused_special_activity(build_valid_fixture())
+    service, _ = _service(problem=problem, locked=True)
     with pytest.raises(ConfigurationLockedError):
-        service.delete(_SCHOOL, _YEAR, "club_chess")
+        service.delete(_SCHOOL, _YEAR, "unused_special_activity")

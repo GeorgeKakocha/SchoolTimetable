@@ -38,6 +38,9 @@ from school_timetable.application.teaching_assignments_projection_service import
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.db import get_session
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
@@ -78,14 +81,13 @@ def _client(session_factory, *, raise_server_exceptions: bool = True) -> TestCli
     def override_projection_service():
         return TeachingAssignmentsProjectionService(
             SessionFactorySchedulingProblemRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
+            SqlAlchemyConfigurationRevisionRepository(session_factory),
         )
 
     def override_assignment_service():
         return TeachingAssignmentService(
             SessionFactorySchedulingProblemRepository(session_factory),
             SqlAlchemyTeachingAssignmentRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
         )
 
     def override_get_session():

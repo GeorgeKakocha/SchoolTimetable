@@ -62,12 +62,19 @@ class _FakeProblemRepository:
         return self._problem
 
 
-class _FakeScheduleRepository:
-    def __init__(self, active=None):
-        self._active = active
+class _FakeConfigurationRevisionRepository:
+    def __init__(self, locked=False):
+        self._locked = locked
 
-    def get_active_schedule(self, school_natural_id, academic_year_natural_id):
-        return self._active
+    def get_state(self, school_natural_id, academic_year_natural_id):
+        from school_timetable.application.configuration_revision_models import ConfigurationRevisionState
+        return ConfigurationRevisionState(
+            published_revision_number=1,
+            draft_revision_number=None if self._locked else 2,
+            has_schedule=True,
+            configuration_locked=self._locked,
+            timetable_out_of_date=False,
+        )
 
 
 class _FakeWritePort:
@@ -79,23 +86,30 @@ class _FakeWritePort:
     only to exercise `ReservedActivityService`'s own orchestration and
     error propagation."""
 
-    def __init__(self, problem):
+    def __init__(self, problem, locked: bool = False):
         self._problem = problem
+        self._locked = locked
         self.create_calls: list[tuple] = []
         self.update_calls: list[tuple] = []
         self.delete_calls: list[str] = []
 
     def create(self, school, year, reserved_activity_id, fields, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.create_calls.append((reserved_activity_id, fields))
         return _fake_result(reserved_activity_id, fields)
 
     def update(self, school, year, reserved_activity_id, fields, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.update_calls.append((reserved_activity_id, fields))
         return _fake_result(reserved_activity_id, fields)
 
     def delete(self, school, year, reserved_activity_id, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.delete_calls.append(reserved_activity_id)
 
@@ -112,19 +126,19 @@ def _fake_result(reserved_activity_id, fields):
     )
 
 
-def _service(problem=None, active_schedule=None, id_factory=None):
+def _service(problem=None, locked=False, id_factory=None):
     problem = problem if problem is not None else build_valid_fixture()
-    write_port = _FakeWritePort(problem)
+    write_port = _FakeWritePort(problem, locked=locked)
     kwargs = {} if id_factory is None else {"reserved_activity_id_factory": id_factory}
-    service = ReservedActivityService(
-        _FakeProblemRepository(problem), write_port, _FakeScheduleRepository(active=active_schedule), **kwargs,
-    )
+    service = ReservedActivityService(_FakeProblemRepository(problem), write_port, **kwargs)
     return service, write_port
 
 
-def _projection_service(problem=None, active_schedule=None):
+def _projection_service(problem=None, locked=False):
     problem = problem if problem is not None else build_valid_fixture()
-    return ReservedActivityProjectionService(_FakeProblemRepository(problem), _FakeScheduleRepository(active_schedule))
+    return ReservedActivityProjectionService(
+        _FakeProblemRepository(problem), _FakeConfigurationRevisionRepository(locked=locked),
+    )
 
 
 # == PROJECTION ===============================================================
@@ -159,8 +173,8 @@ def test_projection_configuration_locked_false_by_default():
     assert view.configuration_locked is False
 
 
-def test_projection_configuration_locked_true_when_schedule_exists():
-    svc = _projection_service(active_schedule="anything-non-none")
+def test_projection_configuration_locked_true_when_no_draft_open():
+    svc = _projection_service(locked=True)
     view = svc.project(_SCHOOL, _YEAR)
     assert view.configuration_locked is True
 
@@ -172,7 +186,7 @@ def test_projection_missing_configuration_propagates():
         def load_by_school_and_year(self, school, year):
             raise SchedulingProblemNotFoundError(school, year)
 
-    svc = ReservedActivityProjectionService(_RaisingProblemRepository(), _FakeScheduleRepository())
+    svc = ReservedActivityProjectionService(_RaisingProblemRepository(), _FakeConfigurationRevisionRepository())
     with pytest.raises(SchedulingProblemNotFoundError):
         svc.project(_SCHOOL, _YEAR)
 
@@ -401,8 +415,8 @@ def test_create_teacher_cross_block_collision_rejected():
     assert any(e.code == "RESERVED_BLOCK_TEACHER_SLOT_COLLISION" for e in exc_info.value.validation_errors)
 
 
-def test_create_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_create_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.create(_SCHOOL, _YEAR, _fields())
 
@@ -514,8 +528,8 @@ def test_update_nested_wrong_kind_non_special_activity_target():
         service.update(_SCHOOL, _YEAR, "club_chess", _fields(special_activity_id="math"))
 
 
-def test_update_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_update_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.update(_SCHOOL, _YEAR, "club_chess", _fields())
 
@@ -534,8 +548,8 @@ def test_delete_missing_target():
         service.delete(_SCHOOL, _YEAR, "no-such-block")
 
 
-def test_delete_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_delete_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.delete(_SCHOOL, _YEAR, "club_chess")
 

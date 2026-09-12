@@ -2,7 +2,7 @@
 write use case -- create, update, and delete a `domain.resources.
 Resource`.
 
-Depends only on the three application-owned repository ports
+Depends only on the two application-owned repository ports
 (`application.ports`) plus the pure `resource_rules` module -- never
 SQLAlchemy, persistence concrete adapters, ORM models, or FastAPI, even
 transitively, matching `SpecialActivityService`'s own discipline.
@@ -22,10 +22,8 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from school_timetable.application import resource_rules as rules
-from school_timetable.application.errors import ConfigurationLockedError
 from school_timetable.application.ports import (
     ResourceRepository,
-    ScheduleVersionRepository,
     SchedulingProblemRepository,
 )
 from school_timetable.application.resource_models import ResourceFields, ResourceWriteResult
@@ -49,12 +47,10 @@ class ResourceService:
         self,
         problem_repository: SchedulingProblemRepository,
         resource_repository: ResourceRepository,
-        schedule_repository: ScheduleVersionRepository,
         resource_id_factory: Callable[[], str] = _default_resource_id_factory,
     ) -> None:
         self._problem_repository = problem_repository
         self._resource_repository = resource_repository
-        self._schedule_repository = schedule_repository
         self._resource_id_factory = resource_id_factory
 
     def create(
@@ -65,8 +61,6 @@ class ResourceService:
     ) -> ResourceWriteResult:
         name = rules.normalize_name(fields.name)
         capacity = fields.capacity
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -96,8 +90,6 @@ class ResourceService:
     ) -> ResourceWriteResult:
         name = rules.normalize_name(fields.name)
         capacity = fields.capacity
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -121,8 +113,6 @@ class ResourceService:
         academic_year_natural_id: str,
         resource_id: str,
     ) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -135,12 +125,3 @@ class ResourceService:
         self._resource_repository.delete(
             school_natural_id, academic_year_natural_id, resource_id, validate=validate,
         )
-
-    def _precheck_not_locked(self, school_natural_id: str, academic_year_natural_id: str) -> None:
-        # Fast, un-locked precheck only -- avoids unnecessary work for
-        # the common case, but is explicitly NOT the concurrency
-        # guarantee (Owner Decision #36): the authoritative recheck
-        # happens inside the write port, under its `AcademicYear` lock.
-        existing = self._schedule_repository.get_active_schedule(school_natural_id, academic_year_natural_id)
-        if existing is not None:
-            raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)

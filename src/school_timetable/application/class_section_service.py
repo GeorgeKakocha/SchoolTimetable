@@ -3,7 +3,7 @@ Class write use case -- create, update, and delete a `ClassSection`
 together with its owned canonical `WHOLE_CLASS` `ParticipantGroup`
 (Owner Decision #33).
 
-Depends only on the three application-owned repository ports
+Depends only on the two application-owned repository ports
 (`application.ports`) plus the pure `class_section_rules` module --
 never SQLAlchemy, persistence concrete adapters, ORM models, or
 FastAPI, even transitively, matching `TeacherService`'s own discipline.
@@ -29,10 +29,8 @@ from uuid import uuid4
 
 from school_timetable.application import class_section_rules as rules
 from school_timetable.application.class_section_models import ClassSectionFields, ClassSectionWriteResult
-from school_timetable.application.errors import ConfigurationLockedError
 from school_timetable.application.ports import (
     ClassSectionRepository,
-    ScheduleVersionRepository,
     SchedulingProblemRepository,
 )
 from school_timetable.domain.problem import SchedulingProblem
@@ -62,13 +60,11 @@ class ClassSectionService:
         self,
         problem_repository: SchedulingProblemRepository,
         class_repository: ClassSectionRepository,
-        schedule_repository: ScheduleVersionRepository,
         class_id_factory: Callable[[], str] = _default_class_id_factory,
         group_id_factory: Callable[[], str] = _default_group_id_factory,
     ) -> None:
         self._problem_repository = problem_repository
         self._class_repository = class_repository
-        self._schedule_repository = schedule_repository
         self._class_id_factory = class_id_factory
         self._group_id_factory = group_id_factory
 
@@ -79,8 +75,6 @@ class ClassSectionService:
         fields: ClassSectionFields,
     ) -> ClassSectionWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -109,8 +103,6 @@ class ClassSectionService:
         fields: ClassSectionFields,
     ) -> ClassSectionWriteResult:
         name = rules.normalize_name(fields.name)
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -133,8 +125,6 @@ class ClassSectionService:
         academic_year_natural_id: str,
         class_id: str,
     ) -> None:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -147,12 +137,3 @@ class ClassSectionService:
         self._class_repository.delete(
             school_natural_id, academic_year_natural_id, class_id, validate=validate,
         )
-
-    def _precheck_not_locked(self, school_natural_id: str, academic_year_natural_id: str) -> None:
-        # Fast, un-locked precheck only -- avoids unnecessary work for
-        # the common case, but is explicitly NOT the concurrency
-        # guarantee (Owner Decision #36): the authoritative recheck
-        # happens inside the write port, under its `AcademicYear` lock.
-        existing = self._schedule_repository.get_active_schedule(school_natural_id, academic_year_natural_id)
-        if existing is not None:
-            raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)

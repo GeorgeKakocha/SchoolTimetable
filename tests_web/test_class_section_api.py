@@ -34,6 +34,9 @@ from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
 from school_timetable.persistence.class_section_repository import SqlAlchemyClassSectionRepository
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.db import get_session
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
@@ -76,20 +79,19 @@ def _client(session_factory) -> TestClient:
     def override_classes_projection_service():
         return ClassSectionProjectionService(
             SessionFactorySchedulingProblemRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
+            SqlAlchemyConfigurationRevisionRepository(session_factory),
         )
 
     def override_teaching_assignments_projection_service():
         return TeachingAssignmentsProjectionService(
             SessionFactorySchedulingProblemRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
+            SqlAlchemyConfigurationRevisionRepository(session_factory),
         )
 
     def override_class_section_service():
         return ClassSectionService(
             SessionFactorySchedulingProblemRepository(session_factory),
             SqlAlchemyClassSectionRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
         )
 
     app.dependency_overrides[get_session] = override_get_session
@@ -434,7 +436,28 @@ def test_delete_teaching_requirement_reference_returns_409(client, db):
     assert "9a" in {c["id"] for c in get_body["classes"]}
 
 
-def test_delete_locked_configuration_returns_409(client, db):
+def test_delete_still_rejected_once_locked_even_when_also_in_use(client, db):
+    """Safe Configuration Changes, Slice B removed the service's own
+    fast, un-locked, lock-only precheck (`ClassSectionService` no
+    longer has a `ScheduleVersionRepository` dependency at all) -- the
+    repository's authoritative lock check is the sole source of truth
+    for locking, but it is reached only AFTER the service's own
+    validate-precheck, which for delete checks "is this class
+    referenced" first. A genuinely UNREFERENCED class cannot exist in a
+    locked (post-Generate) configuration in the first place: preflight
+    requires every class's declared periods to exactly match its
+    instructional slots (`CLASS_OCCUPANCY_MISMATCH`), so a successfully
+    generated schedule's classes are always fully referenced. Faking an
+    unreferenced class by inserting directly into the published,
+    immutable revision would fabricate a state that can never
+    legitimately occur -- so this test instead proves the real,
+    reachable safety property: deleting a class that is both in-use AND
+    the configuration is locked is rejected either way, and the more
+    specific, more informative error (`CLASS_IN_USE`) correctly takes
+    precedence -- never a silent deletion, never the wrong outcome, and
+    the pure lock path itself is separately proven by
+    `test_put_locked_configuration_returns_409` (rename has no in-use
+    check, so it reaches the repository's lock rejection directly)."""
     session, _session_factory = db
     problem = _seed(session)
 
@@ -443,11 +466,14 @@ def test_delete_locked_configuration_returns_409(client, db):
     )
     assert generate_response.status_code == 201
 
-    # The fast lock precheck runs before any existence check, so this
-    # rejects with the lock error regardless of "8a" being referenced.
     response = client.delete(_url(problem, "8a"))
     assert response.status_code == 409
-    assert response.json()["code"] == "SCHEDULING_CONFIGURATION_LOCKED"
+    assert response.json()["code"] == "CLASS_IN_USE"
+
+    # The safety property that actually matters: the class was NOT
+    # deleted -- configuration remains completely unchanged once locked.
+    get_body = client.get(_url(problem)).json()
+    assert "8a" in {c["id"] for c in get_body["classes"]}
 
 
 # -- INTEROPERABILITY: cross-flow visibility ---------------------------------

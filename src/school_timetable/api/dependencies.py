@@ -39,7 +39,11 @@ from school_timetable.application.class_section_service import ClassSectionServi
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.schedule_editing_service import ScheduleEditingService
-from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.ports import (
+    ConfigurationRevisionRepository,
+    ScheduleVersionRepository,
+    SchedulingProblemRepository,
+)
 from school_timetable.application.reserved_activity_projection_service import ReservedActivityProjectionService
 from school_timetable.application.reserved_activity_service import ReservedActivityService
 from school_timetable.application.resource_projection_service import ResourceProjectionService
@@ -61,6 +65,9 @@ from school_timetable.application.teaching_assignments_projection_service import
 )
 from school_timetable.persistence.activity_repository import SqlAlchemyActivityRepository
 from school_timetable.persistence.class_section_repository import SqlAlchemyClassSectionRepository
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.db import SessionLocal, get_session
 from school_timetable.persistence.problem_repository import (
     SessionFactorySchedulingProblemRepository,
@@ -110,14 +117,26 @@ def get_generate_schedule_service() -> GenerateScheduleService:
     )
 
 
+def get_configuration_revision_repository() -> ConfigurationRevisionRepository:
+    """Session-factory-backed, never request-scoped: every call
+    (`get_state`/`begin_draft`/`discard_draft`) opens and closes its own
+    short `Session` against `SessionLocal`, exactly like
+    `get_schedule_version_repository` (Safe Configuration Changes,
+    Slice B)."""
+    return SqlAlchemyConfigurationRevisionRepository(SessionLocal)
+
+
 def get_schedule_editing_service() -> ScheduleEditingService:
-    """Composes the exact same two session-factory-backed adapters
-    `GenerateScheduleService` uses -- never a request-scoped `Session`,
-    so a re-optimization's CP-SAT solve runs with no DB connection held
-    open either."""
+    """Composes the same two session-factory-backed adapters
+    `GenerateScheduleService` uses, plus `ConfigurationRevisionRepository`
+    (Safe Configuration Changes, Slice B, Owner Decision 1's stale-
+    timetable mutation guard) -- never a request-scoped `Session`, so a
+    re-optimization's CP-SAT solve runs with no DB connection held open
+    either."""
     return ScheduleEditingService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
@@ -149,12 +168,12 @@ def get_teaching_assignments_projection_service() -> TeachingAssignmentsProjecti
     (Phase 3C.2b)."""
     return TeachingAssignmentsProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_teaching_assignment_service() -> TeachingAssignmentService:
-    """Composes `TeachingAssignmentService`'s three session-factory-backed
+    """Composes `TeachingAssignmentService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so the
     `SqlAlchemyTeachingAssignmentRepository`'s own short
     lock/reload/validate transactions (Decision #36) stay entirely its
@@ -162,7 +181,6 @@ def get_teaching_assignment_service() -> TeachingAssignmentService:
     return TeachingAssignmentService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyTeachingAssignmentRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -172,12 +190,12 @@ def get_teachers_projection_service() -> TeacherProjectionService:
     (Real-School Setup MVP Slice B)."""
     return TeacherProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_teacher_service() -> TeacherService:
-    """Composes `TeacherService`'s three session-factory-backed
+    """Composes `TeacherService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemyTeacherRepository`'s own short lock/reload/validate
     transactions (Decision #36) stay entirely its own (Real-School
@@ -185,7 +203,6 @@ def get_teacher_service() -> TeacherService:
     return TeacherService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyTeacherRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -195,12 +212,12 @@ def get_classes_projection_service() -> ClassSectionProjectionService:
     (Real-School Setup MVP Slice C)."""
     return ClassSectionProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_class_section_service() -> ClassSectionService:
-    """Composes `ClassSectionService`'s three session-factory-backed
+    """Composes `ClassSectionService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemyClassSectionRepository`'s own short lock/reload/validate
     transactions (Decision #36) stay entirely its own (Real-School
@@ -208,7 +225,6 @@ def get_class_section_service() -> ClassSectionService:
     return ClassSectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyClassSectionRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -218,12 +234,12 @@ def get_subjects_projection_service() -> SubjectProjectionService:
     (Real-School Setup MVP Slice D)."""
     return SubjectProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_subject_service() -> SubjectService:
-    """Composes `SubjectService`'s three session-factory-backed
+    """Composes `SubjectService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemyActivityRepository`'s own short lock/reload/validate
     transactions (Decision #36) stay entirely its own (Real-School
@@ -231,7 +247,6 @@ def get_subject_service() -> SubjectService:
     return SubjectService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyActivityRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -241,12 +256,12 @@ def get_special_activities_projection_service() -> SpecialActivityProjectionServ
     (Reserved Activities Slice A1)."""
     return SpecialActivityProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_special_activity_service() -> SpecialActivityService:
-    """Composes `SpecialActivityService`'s three session-factory-backed
+    """Composes `SpecialActivityService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemySpecialActivityRepository`'s own short lock/reload/
     validate transactions (Decision #36) stay entirely its own
@@ -254,7 +269,6 @@ def get_special_activity_service() -> SpecialActivityService:
     return SpecialActivityService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemySpecialActivityRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -264,12 +278,12 @@ def get_resources_projection_service() -> ResourceProjectionService:
     `Session` (Resources Slice A)."""
     return ResourceProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_resource_service() -> ResourceService:
-    """Composes `ResourceService`'s three session-factory-backed
+    """Composes `ResourceService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemyResourceRepository`'s own short lock/reload/validate
     transactions (Decision #36) stay entirely its own (Resources
@@ -277,7 +291,6 @@ def get_resource_service() -> ResourceService:
     return ResourceService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyResourceRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -287,12 +300,12 @@ def get_calendar_projection_service() -> CalendarProjectionService:
     `Session` (Calendar A)."""
     return CalendarProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_calendar_service() -> CalendarService:
-    """Composes `CalendarService`'s four session-factory-backed
+    """Composes `CalendarService`'s three session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemyCalendarDayRepository`/`SqlAlchemyCalendarPeriodRepository`'s
     own short lock/reload/validate transactions (Decision #36) stay
@@ -301,7 +314,6 @@ def get_calendar_service() -> CalendarService:
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyCalendarDayRepository(SessionLocal),
         SqlAlchemyCalendarPeriodRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -311,12 +323,12 @@ def get_reserved_activities_projection_service() -> ReservedActivityProjectionSe
     `Session` (Reserved Activities Slice A2)."""
     return ReservedActivityProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_reserved_activity_service() -> ReservedActivityService:
-    """Composes `ReservedActivityService`'s three session-factory-backed
+    """Composes `ReservedActivityService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemyReservedActivityRepository`'s own short lock/reload/
     validate transactions (Decision #36) stay entirely its own
@@ -324,7 +336,6 @@ def get_reserved_activity_service() -> ReservedActivityService:
     return ReservedActivityService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyReservedActivityRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )
 
 
@@ -334,12 +345,12 @@ def get_teacher_availability_projection_service() -> TeacherAvailabilityProjecti
     (Owner Decision #38)."""
     return TeacherAvailabilityProjectionService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 
 def get_teacher_availability_service() -> TeacherAvailabilityService:
-    """Composes `TeacherAvailabilityService`'s three session-factory-backed
+    """Composes `TeacherAvailabilityService`'s two session-factory-backed
     dependencies -- never a request-scoped `Session`, so
     `SqlAlchemyTeacherAvailabilityRepository`'s own short
     lock/reload/validate transactions (Decision #36) stay entirely its
@@ -347,5 +358,4 @@ def get_teacher_availability_service() -> TeacherAvailabilityService:
     return TeacherAvailabilityService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyTeacherAvailabilityRepository(SessionLocal),
-        SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

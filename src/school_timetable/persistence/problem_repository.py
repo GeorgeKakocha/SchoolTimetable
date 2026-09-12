@@ -41,19 +41,24 @@ class SqlAlchemySchedulingProblemRepository:
     """Implements `application.ports.SchedulingProblemRepository`
     structurally (a `Protocol` -- no inheritance needed).
 
-    Safe Configuration Changes, Slice A: every one of the fifteen
-    scoped tables now additionally carries `configuration_revision_id`,
-    so loading always resolves one specific `ConfigurationRevision`
-    first and scopes every query to it -- never "whatever exists for
-    this academic_year_id" (today, with only one revision per year,
-    that distinction is invisible; it becomes load-bearing the moment a
-    second revision -- a draft -- exists, Slice B). `load_by_school_
-    and_year` resolves "the currently relevant revision" (published if
-    one exists, else the year's draft -- exactly the pre-first-Generate
-    case); `load_for_revision` resolves one SPECIFIC revision by its
-    natural `revision_number`, for historical `ScheduleVersion`
-    projection, which must never silently fall back to "whatever is
-    current"."""
+    Safe Configuration Changes, Slice A/B: every one of the fifteen
+    scoped tables carries `configuration_revision_id`, so loading always
+    resolves one specific `ConfigurationRevision` first and scopes every
+    query to it -- never "whatever exists for this academic_year_id".
+    `load_by_school_and_year` resolves "the currently EDITABLE/relevant
+    revision" -- the year's open DRAFT if one exists, else its PUBLISHED
+    revision (Slice A's pre-first-Generate case, where only a draft
+    exists, is the special case of this same rule where there is no
+    published revision yet). This is deliberately DRAFT-first, not
+    published-first: every Setup/config-read caller and every
+    configuration writer's own `validate` closure need to see the
+    configuration that is ACTUALLY being edited once Slice B's "Begin
+    editing configuration" reopens a draft alongside an existing
+    published revision -- reading the (now-frozen) published revision
+    instead would validate/display stale state. `load_for_revision`
+    resolves one SPECIFIC revision by its natural `revision_number`, for
+    historical `ScheduleVersion` projection, which must never silently
+    fall back to "whatever is current/editable"."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -66,7 +71,7 @@ class SqlAlchemySchedulingProblemRepository:
         session = self._session
         school_row, year_row = _resolve_school_and_year(session, school_natural_id, academic_year_natural_id)
 
-        revision_id = year_row.published_revision_id if year_row.published_revision_id is not None else year_row.draft_revision_id
+        revision_id = year_row.draft_revision_id if year_row.draft_revision_id is not None else year_row.published_revision_id
         if revision_id is None:
             # Unreachable for any correctly-migrated/created AcademicYear
             # (Slice A's own invariant: every year always has at least a

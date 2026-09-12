@@ -30,6 +30,9 @@ from school_timetable.application.teacher_availability_projection_service import
 from school_timetable.application.teacher_availability_service import TeacherAvailabilityService
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.db import get_session
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
@@ -73,14 +76,13 @@ def _client(session_factory) -> TestClient:
     def override_projection_service():
         return TeacherAvailabilityProjectionService(
             SessionFactorySchedulingProblemRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
+            SqlAlchemyConfigurationRevisionRepository(session_factory),
         )
 
     def override_write_service():
         return TeacherAvailabilityService(
             SessionFactorySchedulingProblemRepository(session_factory),
             SqlAlchemyTeacherAvailabilityRepository(session_factory),
-            SqlAlchemyScheduleVersionRepository(session_factory),
         )
 
     app.dependency_overrides[get_session] = override_get_session

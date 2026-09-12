@@ -36,6 +36,9 @@ from school_timetable.domain.result import EntrySource, ScheduleEntry
 from school_timetable.domain.schedule import Schedule
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.scheduling.editing import find_logical_occurrence, validate_move
@@ -73,6 +76,7 @@ def _client(session_factory) -> TestClient:
         return ScheduleEditingService(
             SessionFactorySchedulingProblemRepository(session_factory),
             SqlAlchemyScheduleVersionRepository(session_factory),
+            SqlAlchemyConfigurationRevisionRepository(session_factory),
         )
 
     def override_class_timetable_service():
@@ -873,3 +877,187 @@ def test_restore_then_a_subsequent_normal_move_still_works(client, db):
     )
     assert move_response.status_code == 200
     assert move_response.json()["version_number"] == 5
+
+
+# == Safe Configuration Changes, Slice B, Owner Decision 1: stale-timetable
+#    mutation guard =========================================================
+#
+# `_open_draft` calls the REAL persistence-layer `SqlAlchemyConfiguration
+# RevisionRepository.begin_draft` directly (never a fake) -- the exact
+# production code path a future "Edit scheduling configuration" command
+# will call -- to put the year into the precise state Owner Decision 1
+# protects against: a `Schedule` already exists AND a configuration draft
+# is open. Every test below proves the SAME thing `test_..._success_...`
+# above it already proves for the "no draft open" case: with no draft
+# open, every one of these five commands succeeds (that is exactly what
+# every other test in this file already demonstrates, against the same
+# real `ScheduleEditingService`/`SqlAlchemyConfigurationRevisionRepository`
+# wiring) -- these tests isolate the other half: once a draft opens
+# alongside the Schedule, the identical command is rejected with `409
+# SCHEDULE_OUT_OF_DATE`, and -- critically -- zero rows are mutated by the
+# rejected attempt.
+
+def _open_draft(session_factory, problem) -> None:
+    SqlAlchemyConfigurationRevisionRepository(session_factory).begin_draft(
+        problem.school.id, problem.academic_year.id,
+    )
+
+
+def test_move_rejected_when_configuration_draft_is_open(client, db):
+    session, session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    r1, d1, p1, d2, p2 = _find_move(problem, entries)
+
+    _open_draft(session_factory, problem)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move",
+        json={
+            "base_version_number": 1, "requirement_id": r1,
+            "source_day_id": d1, "source_period_id": p1,
+            "target_day_id": d2, "target_period_id": p2,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "SCHEDULE_OUT_OF_DATE"
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 1
+
+
+def test_lock_rejected_when_configuration_draft_is_open(client, db):
+    session, session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    entry = next(e for e in entries if e.requirement_id == "math_8a")
+
+    _open_draft(session_factory, problem)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/lock",
+        json={"base_version_number": 1, "requirement_id": "math_8a", "day_id": entry.day_id, "period_id": entry.period_id},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "SCHEDULE_OUT_OF_DATE"
+
+    year_id = _year_id(session, problem.academic_year.id)
+    counts = _counts(session, year_id)
+    assert counts["schedule_version"] == 1
+    assert counts["locked_occurrence"] == 0
+
+
+def test_unlock_rejected_when_configuration_draft_is_open(client, db):
+    session, session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    entry = next(e for e in entries if e.requirement_id == "german_8a")
+
+    lock_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/lock",
+        json={"base_version_number": 1, "requirement_id": "german_8a", "day_id": entry.day_id, "period_id": entry.period_id},
+    )
+    assert lock_response.status_code == 200
+
+    _open_draft(session_factory, problem)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/unlock",
+        json={"base_version_number": 2, "requirement_id": "german_8a", "day_id": entry.day_id, "period_id": entry.period_id},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "SCHEDULE_OUT_OF_DATE"
+
+    year_id = _year_id(session, problem.academic_year.id)
+    counts = _counts(session, year_id)
+    assert counts["schedule_version"] == 2
+    assert counts["locked_occurrence"] == 2  # german_8a + split sibling russian_8a, still locked on v2
+
+
+def test_reoptimize_rejected_when_configuration_draft_is_open(client, db):
+    session, session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+
+    _open_draft(session_factory, problem)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/reoptimize",
+        json={"base_version_number": 1},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "SCHEDULE_OUT_OF_DATE"
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 1
+
+
+def test_restore_rejected_when_configuration_draft_is_open(client, db):
+    session, session_factory = db
+    problem = _seed_generate_move_lock(client, session)
+
+    _open_draft(session_factory, problem)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/versions/1/restore",
+        json={"base_version_number": 3},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "SCHEDULE_OUT_OF_DATE"
+
+    year_id = _year_id(session, problem.academic_year.id)
+    assert _counts(session, year_id)["schedule_version"] == 3
+
+
+def test_preview_move_still_allowed_when_configuration_draft_is_open(client, db):
+    """Move preview stays read-only and technically callable even while
+    stale -- only the five MUTATING commands above are rejected."""
+    session, session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    r1, d1, p1, _d2, _p2 = _find_move(problem, entries)
+
+    _open_draft(session_factory, problem)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move/preview",
+        json={"base_version_number": 1, "requirement_id": r1, "source_day_id": d1, "source_period_id": p1},
+    )
+
+    assert response.status_code == 200
+
+
+def test_move_succeeds_again_after_draft_is_discarded(client, db):
+    """The guard checks LIVE state on every call -- once the draft is
+    discarded (configuration is locked again, matching the pre-draft
+    state), the identical move succeeds exactly as it would have with
+    no draft ever having been opened."""
+    session, session_factory = db
+    problem, _generated = _seed_and_generate(client, session)
+    active = client.get(f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active").json()
+    entries = _entries_from_body(active)
+    r1, d1, p1, d2, p2 = _find_move(problem, entries)
+
+    revision_repo = SqlAlchemyConfigurationRevisionRepository(session_factory)
+    revision_repo.begin_draft(problem.school.id, problem.academic_year.id)
+    revision_repo.discard_draft(problem.school.id, problem.academic_year.id)
+
+    response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/active/move",
+        json={
+            "base_version_number": 1, "requirement_id": r1,
+            "source_day_id": d1, "source_period_id": p1,
+            "target_day_id": d2, "target_period_id": p2,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["version_number"] == 2

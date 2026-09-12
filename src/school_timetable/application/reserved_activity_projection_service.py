@@ -12,12 +12,12 @@ never composes `SpecialActivityProjectionService` or any other nested
 projection service, each of which would perform its own independent
 reload and risk an internally-incoherent page (e.g. a Special Activity
 created between two separate reads). `configuration_locked` is
-obtained through the normal, separate `ScheduleVersionRepository`
-active-schedule check, exactly like every other projection service.
+obtained through the normal, separate `ConfigurationRevisionRepository.
+get_state` call, exactly like every other projection service.
 """
 from __future__ import annotations
 
-from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.ports import ConfigurationRevisionRepository, SchedulingProblemRepository
 from school_timetable.application.reserved_activity_projection_models import (
     ReservedActivitiesProjectionView,
     ReservedActivityClassSectionOption,
@@ -39,10 +39,10 @@ class ReservedActivityProjectionService:
     def __init__(
         self,
         problem_repository: SchedulingProblemRepository,
-        schedule_repository: ScheduleVersionRepository,
+        configuration_revision_repository: ConfigurationRevisionRepository,
     ) -> None:
         self._problem_repository = problem_repository
-        self._schedule_repository = schedule_repository
+        self._configuration_revision_repository = configuration_revision_repository
 
     def project(
         self,
@@ -56,12 +56,12 @@ class ReservedActivityProjectionService:
             school_natural_id, academic_year_natural_id,
         )
 
-        # (2) Decision #35's existing gate, reused verbatim -- reads
+        # (2) Safe Configuration Changes, Slice B: `configuration_locked`
+        # is `True` exactly when no draft is currently open -- reads
         # remain available regardless of lock state; only writes reject.
-        active = self._schedule_repository.get_active_schedule(
+        configuration_locked = self._configuration_revision_repository.get_state(
             school_natural_id, academic_year_natural_id,
-        )
-        configuration_locked = active is not None
+        ).configuration_locked
 
         # (3) Build every list purely in memory from the same `problem`
         # -- no further DB access, and every order below is already

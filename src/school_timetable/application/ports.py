@@ -56,6 +56,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from school_timetable.application.calendar_models import DayWriteResult, PeriodFields, PeriodWriteResult
+from school_timetable.application.configuration_revision_models import ConfigurationRevisionState
 from school_timetable.application.reserved_activity_models import ReservedActivityFields, ReservedActivityWriteResult
 from school_timetable.application.schedule_models import (
     ActiveScheduleVersion,
@@ -79,10 +80,17 @@ class SchedulingProblemRepository(Protocol):
         `SchedulingProblem` with exact tuple order and no persistence
         surrogate ID anywhere in the result.
 
-        Safe Configuration Changes, Slice A: resolves the year's
-        currently *relevant* `ConfigurationRevision` -- its published
-        revision if one exists, else its draft (the pre-first-Generate
-        case). Never mixes rows from two different revisions.
+        Safe Configuration Changes, Slice A/B: resolves the year's
+        currently *editable* `ConfigurationRevision` -- its open DRAFT
+        if one exists, else its PUBLISHED revision (the pre-first-
+        Generate case, where only a draft exists, is the special case
+        of this same rule). Deliberately draft-first: once Slice B's
+        "Begin editing configuration" reopens a draft alongside an
+        existing published revision, every Setup/config-read caller and
+        every configuration writer's own `validate` closure must see
+        the configuration actually being edited, never the
+        now-frozen published one. Never mixes rows from two different
+        revisions.
 
         Raises `school_timetable.application.errors.
         SchedulingProblemNotFoundError` identically whether
@@ -113,6 +121,94 @@ class SchedulingProblemRepository(Protocol):
         references is never deleted, so an unresolvable
         `revision_number` here would be an internal defect, not an
         ordinary client-facing outcome, and is never disguised as one.
+        """
+        ...
+
+
+class ConfigurationRevisionRepository(Protocol):
+    """Safe Configuration Changes, Slice B: the draft configuration
+    lifecycle port -- read the current revision state, open a new
+    editable draft (eagerly cloned from the current published
+    revision), and discard an open draft. Deliberately narrow: no
+    generic `ConfigurationRevision` CRUD, no regeneration (Slice C),
+    and never exposes a persistence surrogate ID.
+
+    `api/configuration_revision_routes.py` depends on this Protocol
+    directly, the same way `api/config_routes.py`'s existing `GET
+    /config` route depends on `SchedulingProblemRepository` directly --
+    none of the three methods here has any additional application-level
+    orchestration beyond what the concrete adapter already does inside
+    its own `AcademicYear`-row-locked transaction, so no separate
+    `application/` service class wraps this port."""
+
+    def get_state(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+    ) -> ConfigurationRevisionState:
+        """Read-only. Raises `SchedulingProblemNotFoundError` if the
+        school/year itself does not resolve, matching every other
+        repository port's convention exactly."""
+        ...
+
+    def begin_draft(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+    ) -> ConfigurationRevisionState:
+        """Opens (or returns) this year's editable draft, under the
+        same `AcademicYear` row lock (Owner Decision #36) every
+        configuration writer already uses -- concurrent callers can
+        never produce two drafts.
+
+        - No published revision exists yet (pre-first-Generate): the
+          year's initial draft already exists; returned unchanged, no
+          new revision is created.
+        - A draft already exists (this method was already called, or
+          Generate has not run since): idempotent -- returned
+          unchanged, no new revision is created, no re-clone happens.
+        - A published revision exists and no draft is open: a NEW
+          `ConfigurationRevision` (the next `revision_number` for this
+          year, `status=DRAFT`) is created, and every one of the
+          fifteen `SchedulingProblem` configuration tables is eagerly,
+          atomically cloned from the published revision into it --
+          same natural IDs, same field values, every intra-
+          configuration relationship remapped to the NEW draft rows
+          (never a raw copy of the published revision's own surrogate
+          FK values). `published_revision_id` is untouched; no
+          `ScheduleVersion`/`ScheduleEntry`/`LockedOccurrence` row is
+          ever read or written. A clone failure rolls back the entire
+          new revision -- the draft pointer is never set to a
+          partially-cloned revision.
+        """
+        ...
+
+    def discard_draft(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+    ) -> ConfigurationRevisionState:
+        """Permanently deletes this year's open draft and everything in
+        it, under the same `AcademicYear` row lock, and returns the
+        resulting state (`draft_revision_number=None`,
+        `configuration_locked=True`). The published revision (if any)
+        and every `Schedule`/`ScheduleVersion`/`ScheduleEntry`/
+        `LockedOccurrence` row are completely untouched.
+
+        Raises `NoConfigurationDraftError` if no draft is currently
+        open. Raises `InitialDraftCannotBeDiscardedError` if this
+        year's only revision is its initial pre-first-Generate draft
+        (no published revision exists) -- that draft is the year's only
+        editable configuration and is required for its first Generate
+        to ever succeed. Defense-in-depth: if any `ScheduleVersion`
+        somehow references this draft (Slice A's own invariant says
+        this is unreachable -- a revision is never published in place;
+        it is atomically replaced by a *different*, freshly-published
+        revision), the discard is refused and zero writes are performed
+        rather than relying solely on the RESTRICT/CASCADE FK behavior
+        to fail loudly -- raised as a bare `RuntimeError` (never a named
+        application error), matching this codebase's convention for
+        internal-invariant guards that are unreachable in practice.
         """
         ...
 

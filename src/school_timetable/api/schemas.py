@@ -1396,3 +1396,45 @@ class PeriodInUseErrorResponse(BaseModel):
 class PeriodReorderBlockedErrorResponse(BaseModel):
     code: Literal["PERIOD_REORDER_BLOCKED_BY_TIME_PREFERENCES"]
     detail: str
+
+
+# -- Safe Configuration Changes, Slice B: draft configuration lifecycle. ----
+
+
+class ConfigurationRevisionStateResponse(BaseModel):
+    """`GET .../configuration/state`'s success body -- also returned by
+    a successful `POST .../configuration/draft`. Never a persistence
+    surrogate ID; `published_revision_number`/`draft_revision_number`
+    are natural `ConfigurationRevision.revision_number` values, `None`
+    exactly when no revision of that status exists for this year."""
+
+    published_revision_number: int | None
+    draft_revision_number: int | None
+    configuration_locked: bool
+    timetable_out_of_date: bool
+
+
+class NoConfigurationDraftErrorResponse(BaseModel):
+    """409 body for `NoConfigurationDraftError` -- `DELETE
+    .../configuration/draft` was called with no open draft."""
+
+    code: Literal["NO_CONFIGURATION_DRAFT"]
+    detail: str
+
+
+class InitialDraftCannotBeDiscardedErrorResponse(BaseModel):
+    """409 body for `InitialDraftCannotBeDiscardedError` -- the year's
+    only revision is its initial pre-first-Generate draft, required for
+    that first Generate to ever succeed."""
+
+    code: Literal["INITIAL_DRAFT_CANNOT_BE_DISCARDED"]
+    detail: str
+
+
+class ScheduleOutOfDateErrorResponse(BaseModel):
+    """409 body for `ScheduleOutOfDateError` -- Owner Decision 1: a
+    mutating schedule command (Move/Lock/Unlock/Reoptimize/Restore) was
+    rejected because a configuration draft is currently open."""
+
+    code: Literal["SCHEDULE_OUT_OF_DATE"]
+    detail: str

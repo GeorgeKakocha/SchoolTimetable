@@ -2,7 +2,7 @@
 Teacher Availability write use case -- replacing one Teacher's
 complete sparse `PREFER_NOT`/`UNAVAILABLE` exception set.
 
-Depends only on the three application-owned repository ports
+Depends only on the two application-owned repository ports
 (`application.ports`) plus the pure `teacher_availability_rules`
 module -- never SQLAlchemy, persistence concrete adapters, ORM models,
 or FastAPI, even transitively, matching `TeacherService`'s own
@@ -21,9 +21,7 @@ snapshot.
 from __future__ import annotations
 
 from school_timetable.application import teacher_availability_rules as rules
-from school_timetable.application.errors import ConfigurationLockedError
 from school_timetable.application.ports import (
-    ScheduleVersionRepository,
     SchedulingProblemRepository,
     TeacherAvailabilityRepository,
 )
@@ -43,11 +41,9 @@ class TeacherAvailabilityService:
         self,
         problem_repository: SchedulingProblemRepository,
         teacher_availability_repository: TeacherAvailabilityRepository,
-        schedule_repository: ScheduleVersionRepository,
     ) -> None:
         self._problem_repository = problem_repository
         self._teacher_availability_repository = teacher_availability_repository
-        self._schedule_repository = schedule_repository
 
     def replace_exceptions(
         self,
@@ -56,8 +52,6 @@ class TeacherAvailabilityService:
         teacher_id: str,
         fields: TeacherAvailabilityReplaceFields,
     ) -> TeacherAvailabilityWriteResult:
-        self._precheck_not_locked(school_natural_id, academic_year_natural_id)
-
         problem = self._problem_repository.load_by_school_and_year(
             school_natural_id, academic_year_natural_id,
         )
@@ -84,12 +78,3 @@ class TeacherAvailabilityService:
                 for e in exceptions
             ),
         )
-
-    def _precheck_not_locked(self, school_natural_id: str, academic_year_natural_id: str) -> None:
-        # Fast, un-locked precheck only -- avoids unnecessary work for
-        # the common case, but is explicitly NOT the concurrency
-        # guarantee (Owner Decision #36): the authoritative recheck
-        # happens inside the write port, under its `AcademicYear` lock.
-        existing = self._schedule_repository.get_active_schedule(school_natural_id, academic_year_natural_id)
-        if existing is not None:
-            raise ConfigurationLockedError(school_natural_id, academic_year_natural_id)

@@ -56,6 +56,12 @@ Error mapping (locked, no remaining owner decisions):
 - `InvalidSchedulingConfigurationError` -> 422, `{"code":
   "INVALID_CONFIGURATION", "detail": "...", "errors": [...]}` -- the
   validator's own diagnostics, in their original order.
+- (`move`/`lock`/`unlock`/`reoptimize`/`restore` only, never
+  `move/preview`) `ScheduleOutOfDateError` (Safe Configuration Changes,
+  Slice B, Owner Decision 1) -> 409, `{"code": "SCHEDULE_OUT_OF_DATE",
+  "detail": "..."}` -- a configuration draft is currently open
+  alongside this year's `Schedule`; the active timetable is read-only
+  until the draft is discarded or a future regeneration succeeds.
 
 Deliberately NOT caught here, by design: `ScheduleGenerationError`,
 `ScheduleVerificationFailedError`, `persistence.schedule_repository.
@@ -120,6 +126,7 @@ from school_timetable.api.schemas import (
     ReoptimizeRequest,
     RestoreVerificationFailedErrorResponse,
     RestoreVersionRequest,
+    ScheduleOutOfDateErrorResponse,
     ScheduleVersionHistoryResponse,
     ScheduleVersionNotFoundErrorResponse,
     StaleScheduleVersionErrorResponse,
@@ -148,6 +155,7 @@ from school_timetable.application.errors import (
     RestoreVerificationFailedError,
     ScheduleAlreadyExistsError,
     ScheduleInfeasibleError,
+    ScheduleOutOfDateError,
     ScheduleVersionNotFoundError,
     SchedulingProblemNotFoundError,
     StaleScheduleVersionError,
@@ -171,6 +179,19 @@ def _stale_version_response(exc: StaleScheduleVersionError) -> JSONResponse:
             expected_base_version_number=exc.expected_base_version_number,
             actual_active_version_number=exc.actual_active_version_number,
         ).model_dump(),
+    )
+
+
+def _out_of_date_response(exc: ScheduleOutOfDateError) -> JSONResponse:
+    """Safe Configuration Changes, Slice B, Owner Decision 1: the
+    stale-timetable mutation guard's stable HTTP contract -- every
+    mutating editing command (`move`/`lock`/`unlock`/`reoptimize`/
+    `restore`) maps `ScheduleEditingService`'s `ScheduleOutOfDateError`
+    identically. `preview_move` never raises it (stays read-only and
+    callable even while stale), so it has no handler for this error."""
+    return JSONResponse(
+        status_code=409,
+        content=ScheduleOutOfDateErrorResponse(code="SCHEDULE_OUT_OF_DATE", detail=str(exc)).model_dump(),
     )
 
 
@@ -419,6 +440,8 @@ def restore_schedule_version(
         raise HTTPException(status_code=404, detail="Active schedule not found") from None
     except StaleScheduleVersionError as exc:
         return _stale_version_response(exc)
+    except ScheduleOutOfDateError as exc:
+        return _out_of_date_response(exc)
     except VersionAlreadyActiveError as exc:
         return JSONResponse(
             status_code=409,
@@ -506,6 +529,8 @@ def move_schedule_entry(
         raise HTTPException(status_code=404, detail="Active schedule not found") from None
     except StaleScheduleVersionError as exc:
         return _stale_version_response(exc)
+    except ScheduleOutOfDateError as exc:
+        return _out_of_date_response(exc)
     except MoveNotAllowedError as exc:
         return JSONResponse(
             status_code=409,
@@ -590,6 +615,8 @@ def lock_schedule_occurrence(
         raise HTTPException(status_code=404, detail="Active schedule not found") from None
     except StaleScheduleVersionError as exc:
         return _stale_version_response(exc)
+    except ScheduleOutOfDateError as exc:
+        return _out_of_date_response(exc)
     except InvalidEditTargetError as exc:
         return JSONResponse(
             status_code=422,
@@ -619,6 +646,8 @@ def unlock_schedule_occurrence(
         raise HTTPException(status_code=404, detail="Active schedule not found") from None
     except StaleScheduleVersionError as exc:
         return _stale_version_response(exc)
+    except ScheduleOutOfDateError as exc:
+        return _out_of_date_response(exc)
     except InvalidEditTargetError as exc:
         return JSONResponse(
             status_code=422,
@@ -645,6 +674,8 @@ def reoptimize_schedule(
         raise HTTPException(status_code=404, detail="Active schedule not found") from None
     except StaleScheduleVersionError as exc:
         return _stale_version_response(exc)
+    except ScheduleOutOfDateError as exc:
+        return _out_of_date_response(exc)
     except ReoptimizationInfeasibleError:
         return JSONResponse(
             status_code=409,

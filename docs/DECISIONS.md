@@ -4905,3 +4905,209 @@ active pointers as before this correction.
 the published-history invariant is now correct. Slice B (draft
 fork/discard lifecycle, stale-timetable UI, "Edit scheduling
 configuration") is still not started.**
+
+## SAFE CONFIGURATION CHANGES -- SLICE B -- CONFIGURATION DRAFT
+LIFECYCLE IMPLEMENTED, REVIEWED, VERIFIED -- READY TO COMMIT
+
+**Owner Decision #40 -- the draft configuration lifecycle is owned by a
+single new port, `ConfigurationRevisionRepository`
+(`get_state`/`begin_draft`/`discard_draft`), which replaces "does a
+Schedule exist" as the authority for whether configuration is locked
+(LOCKED; IMPLEMENTED, REVIEWED, VERIFIED -- READY TO COMMIT. Not yet
+committed, not pushed.).**
+
+`configuration_write_lock.reject_if_configuration_locked`'s condition
+changed from "a `Schedule` exists" to "no draft `ConfigurationRevision`
+is open." Before this slice the two conditions were identical (a
+year's draft was cleared the instant its first Generate published it,
+and nothing ever set one again); this slice's `begin_draft` reopens a
+draft for a year that already has a `Schedule`, and configuration
+writes must succeed again once it does, redirected to that draft,
+never touching the immutable published revision. All 9 configuration
+write services (Teacher, Class Section, Subject, Special Activity,
+Resource, Calendar Day/Period, Teaching Assignment, Teacher
+Availability, Reserved Activity) had their own redundant, service-level
+"is it locked" fast precheck deleted outright rather than updated --
+the repository under its `AcademicYear` row lock is the sole
+authoritative source of truth, and a second, service-level draft-state
+check would have been pure duplication of that same authority. All 9
+Setup projection services (the read-only siblings of the write
+services above) were updated identically: `configuration_locked` on
+every projection view is now derived from
+`ConfigurationRevisionRepository.get_state`, never from "does a
+Schedule exist."
+
+**Eager clone, all fifteen tables, full FK remapping.** `begin_draft`,
+called on a published/no-draft year, creates a new
+`ConfigurationRevision` (next `revision_number`, `status=DRAFT`) and
+clones every one of the fifteen `SchedulingProblem` configuration
+tables (`Day`, `Period`, `ClassSection`, `ParticipantGroup`,
+`ParticipantGroupClassSection`, `Teacher`, `TeacherAvailability`,
+`Activity`, `Resource`, `TeachingRequirement`, `TimePreference`,
+`ReservedBlock`, `ReservedBlockClassSection`, `ReservedBlockSlot`,
+`FixedPlacement`) from the published revision into it, in dependency
+order (the nine tables another table's FK can reference first, then
+the six leaf/join tables). Every one of the 21 intra-configuration FK
+edges between them is remapped to the NEW draft's own rows via
+old-surrogate-id -> new-surrogate-id maps built as each table is
+cloned -- never a raw copy of a published-revision surrogate FK value
+into a draft row. Natural IDs and every scalar field are preserved
+byte-for-byte; a clone failure rolls back the entire new revision,
+leaving `draft_revision_id` unset. Called again while a draft is
+already open (or before the year's first Generate, when the initial
+draft already exists), `begin_draft` is idempotent: it returns the
+existing draft unchanged, with no re-clone and no second revision.
+
+**Concurrency proof, real PostgreSQL, no monkeypatch.** The whole clone
+runs under the same `AcademicYear` `SELECT ... FOR UPDATE` row lock
+(Owner Decision #36) every configuration writer already uses, held
+from before the first insert through the final `commit()`. Proven, not
+merely asserted: two genuinely independent, real-committed database
+sessions (never the SAVEPOINT-nested pattern used by every other test
+in this repository, which pins a test to one shared transaction and
+so cannot exhibit genuine lock contention) raced via
+`threading.Barrier` to call `begin_draft` for the same school/year at
+the same instant. Direct timing instrumentation of the identical
+scenario showed the two threads' execution windows overlapping for
+~87ms of a ~90ms total duration each -- one thread spent nearly its
+entire runtime genuinely blocked on the row lock, not merely losing a
+race by chance. Both threads converged on the identical draft state;
+independent verification found exactly one DRAFT revision, exactly one
+clone copy of every one of the fifteen tables (never duplicated), and
+the published revision completely unchanged.
+
+**Draft-first reads and writes.**
+`SchedulingProblemRepository.load_by_school_and_year` now resolves the
+year's open DRAFT first, its PUBLISHED revision otherwise -- flipped
+from the Slice A behavior (published-first), a distinction invisible
+until a second revision could ever coexist. Every Setup screen and
+every configuration writer's own `validate` closure therefore see the
+configuration actually being edited the moment a draft is open, never
+the now-frozen published one. Proven end-to-end with a real HTTP
+acceptance test: create a Teacher while a draft is open -- the new row
+belongs to the draft revision (never the published one); the
+published revision's own `Teacher` rows are verified byte-for-byte
+unchanged both immediately after the write and again after the draft
+is later discarded; `GET .../teachers` reflects the new teacher while
+the draft is open, and reverts to exactly the pre-draft list -- the new
+teacher gone, nothing else changed -- once the draft is discarded.
+
+**Discard lifecycle and its guards.** `discard_draft` clears the draft
+pointer and hard-deletes the draft `ConfigurationRevision` row
+(cascading, via the existing composite FKs' `ondelete="CASCADE"`, to
+every one of its fifteen tables' draft-scoped rows), restoring the
+published-only state; the published revision and every `Schedule`/
+`ScheduleVersion`/`ScheduleEntry`/`LockedOccurrence` row are completely
+untouched. Guarded: `NoConfigurationDraftError` if no draft is
+currently open; `InitialDraftCannotBeDiscardedError` if the year's only
+revision is its initial pre-first-Generate draft (required for that
+first Generate to ever succeed, so it must never be discardable); and,
+defense-in-depth, a bare `RuntimeError` if a draft is somehow still
+referenced by a `ScheduleVersion` -- Slice A's own invariant makes this
+state unreachable through any legitimate call path (a `ScheduleVersion`
+is only ever created atomically with publishing the exact revision it
+references, never while that revision is still a mutable draft), but
+it is not blocked by any DB constraint either, so it was proven by a
+dedicated defense-in-depth test that deliberately constructs the row
+shape via a direct, out-of-band mutation -- never by weakening any
+constraint or going through the repository's own normal API. Every
+rejected discard performs zero mutation, verified explicitly in each
+case.
+
+**Stale-timetable mutation guard (Owner Decision 1, now implemented).**
+`ConfigurationRevisionState.timetable_out_of_date` is `True` exactly
+when a `Schedule` exists AND a draft is open. `ScheduleEditingService`
+gained a `ConfigurationRevisionRepository` dependency and one shared
+`_reject_if_out_of_date` guard, called by `move`/`lock`/`unlock`/
+`reoptimize`/`restore` -- every one of these five now rejects with the
+new `ScheduleOutOfDateError` while a draft is open, with zero mutation
+(`ScheduleVersion`/`LockedOccurrence` counts independently verified
+unchanged after each rejected attempt, at both the fake-repository unit
+level and the real-database HTTP level). `preview_move` deliberately
+never calls this guard and remains callable throughout, exactly as
+Owner Decision 1 requires -- it is read-only and persists nothing
+regardless of staleness. Mutations succeed again immediately once the
+draft is discarded: the guard reads live state on every call, never a
+cached flag, proven by a test that opens a draft, discards it, and
+performs a normal move immediately afterward with the same service
+instance.
+
+**A genuine production gap was found and fixed while proving this
+guard, not assumed correct from the implementation alone.**
+`ScheduleOutOfDateError` had been wired into `ScheduleEditingService`
+but never actually caught by `api/schedule_routes.py`'s exception
+handling for the five mutating routes -- it would have surfaced as an
+uncaught `500 Internal Server Error` instead of the intended `409
+SCHEDULE_OUT_OF_DATE`. Caught by writing the guard's own real-HTTP
+integration tests before considering this slice done (no route in this
+codebase had ever exercised the error at all until then); fixed the
+same session by adding the missing `except ScheduleOutOfDateError`
+handler (mirroring the existing `StaleScheduleVersionError` -> 409
+pattern) to `restore_schedule_version`, `move_schedule_entry`,
+`lock_schedule_occurrence`, `unlock_schedule_occurrence`, and
+`reoptimize_schedule` -- deliberately not `preview_move`, which never
+raises it. Reconfirmed with 7 new real-HTTP integration tests (5
+rejection cases plus preview-still-allowed and recovery-after-discard)
+and the pre-existing 33 tests in that file, all passing.
+
+**New HTTP surface:** `GET/POST/DELETE /schools/{school_id}/years/
+{year_id}/configuration/{state,draft}` (`api/configuration_revision_
+routes.py`) -- read revision state, open a draft, discard a draft.
+Response body: `{published_revision_number, draft_revision_number,
+configuration_locked, timetable_out_of_date}`, never a persistence
+surrogate ID. Depends on `ConfigurationRevisionRepository` directly
+(the same pattern `api/config_routes.py`'s existing `GET /config` route
+already uses for `SchedulingProblemRepository`) -- none of the three
+routes has any application-level orchestration beyond what the
+repository already does inside its own locked transaction, so no
+separate `application/` service class wraps this port. New stable
+error codes: `409 NO_CONFIGURATION_DRAFT`, `409
+INITIAL_DRAFT_CANNOT_BE_DISCARDED`, `409 SCHEDULE_OUT_OF_DATE` (the
+last shared with the five schedule-editing routes above).
+
+**Historical published revisions remain valid.** Nothing in this
+slice's own code ever creates or mutates a `PUBLISHED` row --
+`begin_draft`/`discard_draft` only ever touch the DRAFT. The
+multi-published-revision invariant this guarantee depends on was fixed
+and tested in the Slice A correction immediately above; this slice's
+diff cannot regress it, since it has no code path that writes to
+`published_revision_id` at all (only reads it).
+
+**No migration, zero frontend change.** Built entirely on Slice A's
+existing schema; `alembic check` reports zero drift throughout, no new
+migration was needed or created. Zero frontend files changed -- no
+draft banner, no Discard button, no Regenerate button, no Out-of-date
+banner exist yet; the new routes exist only so a later UI slice has
+something to call.
+
+**Regression, stated chronologically and accurately:** the baseline
+below was captured in full BEFORE this closure's two small audit-
+cleanup edits (clarifying one Protocol docstring, and strengthening one
+test's exception-message assertion -- both non-functional, no
+production behavior changed); only the one directly affected test file
+was re-run after those two edits, and stayed green (13/13). Core
+`tests -m "not slow"` 600/600 (5 deselected); full `tests_web` 627/627;
+frontend `npm test` 572/572 and `npm run build` clean; `alembic
+current`/`heads` both `398b05641152` (one head), `alembic check`
+reports no new upgrade operations. All three tracked real-database
+datasets (`generation-review-school`: 1 version, active v1, OPTIMAL,
+penalty 0; `editing-review-school`: 10 versions, active v10;
+`synthetic-school`: 7 versions, active v7 -- all still revision 1) and
+the other 11 local datasets verified unchanged, zero mutation
+performed. The isolated test database confirmed empty (0 schools, 0
+years) after the full integration/concurrency run. A final pre-commit
+diff audit (54 changed files: 30 production, 24 tests, 0 docs, 0
+migration, 0 frontend) found no blocker and verified all 14 Slice B
+acceptance items PASS with direct evidence.
+
+**SAFE CONFIGURATION CHANGES -- SLICE B ACCEPTANCE VERIFIED, NOT YET
+COMMITTED -- the draft configuration lifecycle (begin/clone/discard,
+draft-first reads/writes, stale-timetable mutation guard) is complete
+and fully verified in the working tree, pending commit. Safe
+post-generation configuration EDITING is now possible end-to-end, for
+every `SchedulingProblem` configuration entity, through the existing
+CRUD APIs, while a draft is open. Regeneration after a configuration
+edit (Slice C) is explicitly NOT started -- there is still no way to
+re-solve a schedule against an edited draft and publish it as a new
+revision; discarding a draft simply reverts to the unchanged, still-
+active published schedule.**

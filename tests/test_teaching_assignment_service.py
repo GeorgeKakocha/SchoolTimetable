@@ -36,49 +36,49 @@ class _FakeProblemRepository:
         return self._problem
 
 
-class _FakeScheduleRepository:
-    def __init__(self, active=None):
-        self._active = active
-
-    def get_active_schedule(self, school_natural_id, academic_year_natural_id):
-        return self._active
-
-
 class _FakeWritePort:
     """Simulates the authoritative, lock-protected recheck by simply
     re-invoking `validate` against the same (unchanged) problem -- the
     genuine lock/reload-under-lock mechanics are proven for real against
     PostgreSQL in `tests_web/test_teaching_assignment_repository.py`;
     this fake exists only to exercise `TeachingAssignmentService`'s own
-    orchestration and error propagation."""
+    orchestration and error propagation.
 
-    def __init__(self, problem):
+    `locked=True` simulates the real repository's own authoritative
+    lock-rejection outcome -- raised BEFORE `validate` is ever invoked
+    (Safe Configuration Changes, Slice B: `TeachingAssignmentService`
+    itself no longer has any fast, un-locked precheck of its own)."""
+
+    def __init__(self, problem, locked: bool = False):
         self._problem = problem
+        self._locked = locked
         self.create_calls: list[tuple] = []
         self.update_calls: list[tuple] = []
         self.delete_calls: list[tuple] = []
 
     def create(self, school, year, natural_id, teacher_id, group_id, activity_id, weekly_periods, validate, resource_id=None):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.create_calls.append((natural_id, teacher_id, group_id, activity_id, weekly_periods, resource_id))
 
     def update(self, school, year, natural_id, teacher_id, group_id, activity_id, weekly_periods, validate, resource_id=None):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.update_calls.append((natural_id, teacher_id, group_id, activity_id, weekly_periods, resource_id))
 
     def delete(self, school, year, natural_id, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.delete_calls.append(natural_id)
 
 
-def _service(problem=None, active_schedule=None):
+def _service(problem=None, locked=False):
     problem = problem if problem is not None else build_valid_fixture()
-    write_port = _FakeWritePort(problem)
-    service = TeachingAssignmentService(
-        _FakeProblemRepository(problem),
-        write_port,
-        _FakeScheduleRepository(active=active_schedule),
-    )
+    write_port = _FakeWritePort(problem, locked=locked)
+    service = TeachingAssignmentService(_FakeProblemRepository(problem), write_port)
     return service, write_port
 
 
@@ -117,7 +117,7 @@ def test_create_uses_an_injected_id_factory_deterministically():
     problem = build_valid_fixture()
     write_port = _FakeWritePort(problem)
     service = TeachingAssignmentService(
-        _FakeProblemRepository(problem), write_port, _FakeScheduleRepository(),
+        _FakeProblemRepository(problem), write_port,
         id_factory=lambda: "req_deterministic_test_id",
     )
     result = service.create(
@@ -532,8 +532,8 @@ def test_delete_requirement_with_fixed_placement_rejected():
 
 # -- LOCK ---------------------------------------------------------------
 
-def test_create_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_create_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.create(
             _SCHOOL, _YEAR, TeachingAssignmentFields(
@@ -542,8 +542,8 @@ def test_create_rejected_once_schedule_exists():
         )
 
 
-def test_update_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_update_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.update(
             _SCHOOL, _YEAR, "science_8a", TeachingAssignmentFields(
@@ -552,8 +552,8 @@ def test_update_rejected_once_schedule_exists():
         )
 
 
-def test_delete_rejected_once_schedule_exists():
-    service, _ = _service(active_schedule="anything-non-none")
+def test_delete_rejected_when_configuration_locked():
+    service, _ = _service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.delete(_SCHOOL, _YEAR, "science_8a")
 

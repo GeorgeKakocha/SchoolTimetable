@@ -10,6 +10,7 @@ from dataclasses import replace
 
 import pytest
 
+from school_timetable.application.configuration_revision_models import ConfigurationRevisionState
 from school_timetable.application.errors import (
     ConfigurationLockedError,
     InvalidTeacherAvailabilityError,
@@ -40,42 +41,54 @@ class _FakeProblemRepository:
         return self._problem
 
 
-class _FakeScheduleRepository:
-    def __init__(self, active=None):
-        self._active = active
+class _FakeConfigurationRevisionRepository:
+    def __init__(self, locked=False):
+        self._locked = locked
 
-    def get_active_schedule(self, school_natural_id, academic_year_natural_id):
-        return self._active
+    def get_state(self, school_natural_id, academic_year_natural_id):
+        return ConfigurationRevisionState(
+            published_revision_number=1,
+            draft_revision_number=None if self._locked else 2,
+            has_schedule=True,
+            configuration_locked=self._locked,
+            timetable_out_of_date=False,
+        )
 
 
 class _FakeWritePort:
     """Simulates the authoritative, lock-protected recheck by simply
     re-invoking `validate` against the same (unchanged) problem -- the
     genuine lock/reload-under-lock mechanics are proven for real against
-    PostgreSQL in `tests_web/test_teacher_availability_repository.py`."""
+    PostgreSQL in `tests_web/test_teacher_availability_repository.py`.
 
-    def __init__(self, problem):
+    `locked=True` simulates the real repository's own authoritative
+    lock-rejection outcome -- raised BEFORE `validate` is ever invoked
+    (Safe Configuration Changes, Slice B: `TeacherAvailabilityService`
+    itself no longer has any fast, un-locked precheck of its own)."""
+
+    def __init__(self, problem, locked: bool = False):
         self._problem = problem
+        self._locked = locked
         self.replace_calls: list[tuple] = []
 
     def replace_exceptions(self, school, year, teacher_natural_id, exceptions, validate):
+        if self._locked:
+            raise ConfigurationLockedError(school, year)
         validate(self._problem)
         self.replace_calls.append((teacher_natural_id, exceptions))
 
 
-def _projection_service(problem=None, active_schedule=None):
+def _projection_service(problem=None, locked=False):
     problem = problem if problem is not None else build_valid_fixture()
     return TeacherAvailabilityProjectionService(
-        _FakeProblemRepository(problem), _FakeScheduleRepository(active=active_schedule),
+        _FakeProblemRepository(problem), _FakeConfigurationRevisionRepository(locked=locked),
     )
 
 
-def _write_service(problem=None, active_schedule=None):
+def _write_service(problem=None, locked=False):
     problem = problem if problem is not None else build_valid_fixture()
-    write_port = _FakeWritePort(problem)
-    service = TeacherAvailabilityService(
-        _FakeProblemRepository(problem), write_port, _FakeScheduleRepository(active=active_schedule),
-    )
+    write_port = _FakeWritePort(problem, locked=locked)
+    service = TeacherAvailabilityService(_FakeProblemRepository(problem), write_port)
     return service, write_port
 
 
@@ -129,8 +142,8 @@ def test_projection_configuration_locked_false_by_default():
     assert view.configuration_locked is False
 
 
-def test_projection_configuration_locked_true_once_schedule_exists():
-    view = _projection_service(active_schedule="anything-non-none").project(_SCHOOL, _YEAR)
+def test_projection_configuration_locked_true_when_no_draft_open():
+    view = _projection_service(locked=True).project(_SCHOOL, _YEAR)
     assert view.configuration_locked is True
 
 
@@ -244,8 +257,8 @@ def test_replace_unknown_period_rejected():
     assert exc_info.value.reference_id == "p99"
 
 
-def test_replace_rejected_once_schedule_exists():
-    service, _ = _write_service(active_schedule="anything-non-none")
+def test_replace_rejected_when_configuration_locked():
+    service, _ = _write_service(locked=True)
     with pytest.raises(ConfigurationLockedError):
         service.replace_exceptions(
             _SCHOOL, _YEAR, "t_math", TeacherAvailabilityReplaceFields(exceptions=(_exc("mon", "p1", "UNAVAILABLE"),)),
@@ -259,9 +272,7 @@ def test_same_validation_reused_in_authoritative_repository_callback():
     authoritative lock-protected recheck would also run."""
     problem = build_valid_fixture()
     write_port = _FakeWritePort(problem)
-    service = TeacherAvailabilityService(
-        _FakeProblemRepository(problem), write_port, _FakeScheduleRepository(),
-    )
+    service = TeacherAvailabilityService(_FakeProblemRepository(problem), write_port)
     service.replace_exceptions(
         _SCHOOL, _YEAR, "t_math", TeacherAvailabilityReplaceFields(exceptions=(_exc("mon", "p1", "UNAVAILABLE"),)),
     )
