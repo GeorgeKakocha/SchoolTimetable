@@ -4747,10 +4747,20 @@ non-nullable `configuration_revision_id`, referencing a new first-class
 `revision_number` unique within the year, `status` DRAFT/PUBLISHED,
 `created_at`). `AcademicYear` gained `published_revision_id`/
 `draft_revision_id` (nullable, circular FKs via `use_alter=True`,
-mirroring the existing `Schedule.active_version_id` pattern). At most
-one PUBLISHED and one DRAFT revision per year is enforced by the
-database itself via two partial unique indexes -- not application
-discipline alone. Natural IDs remain the stable logical identity of an
+mirroring the existing `Schedule.active_version_id` pattern). `PUBLISHED`
+means "this revision was finalized and is permanently immutable", NOT
+"this is the one currently-active published revision" -- a year may
+accumulate any number of historical PUBLISHED revisions over its
+lifetime, with `published_revision_id` alone identifying which one is
+currently authoritative. At most one DRAFT revision per year is
+enforced by the database itself via a partial unique index -- not
+application discipline alone; there is deliberately no equivalent
+constraint on PUBLISHED. (**Correction:** the originally-applied
+migration mistakenly also enforced at most one PUBLISHED revision per
+year; corrected the same day by a follow-up migration -- see the
+dedicated decision entry below, recorded before this was ever relied
+upon by Slice B or later work.) Natural IDs remain the stable logical
+identity of an
 entity across revisions and stay unique *within* one revision, never
 globally: two revisions of the same year may permanently contain rows
 sharing the same natural ID (this is precisely what will let Slice B
@@ -4827,3 +4837,71 @@ schema/persistence foundation only. No safe post-generation
 configuration editing exists yet. Slice B (draft fork/discard
 lifecycle, stale-timetable UI, "Edit scheduling configuration") is not
 started.**
+
+## SAFE CONFIGURATION CHANGES -- SLICE A CORRECTION -- PUBLISHED-HISTORY
+INVARIANT FIXED
+
+**Correction to Owner Decision #39 -- `ConfigurationRevision.status =
+'PUBLISHED'` means "this revision was finalized and is permanently
+immutable", never "this is the currently-active published revision"
+(LOCKED; IMPLEMENTED, REVIEWED, COMMITTED to `main` -- CLOSED. Not
+pushed.).**
+
+Slice A's originally-applied migration (`83434054f9d2`) mistakenly
+created a partial unique index enforcing at most one PUBLISHED
+`ConfigurationRevision` per `AcademicYear`, alongside the correct
+at-most-one-DRAFT index. That was an architectural contradiction: the
+two-state lifecycle is `DRAFT -> PUBLISHED`, and a year must be able to
+accumulate multiple historical PUBLISHED revisions over its lifetime
+(R1, R2, R3, ... -- each one finalized by a successful
+Generate/regeneration in turn, remaining permanently immutable
+afterward). `AcademicYear.published_revision_id` alone identifies
+*which* PUBLISHED revision is currently authoritative; moving that
+pointer from an older PUBLISHED revision to a newer one must never
+require, or imply, changing the older revision's `status` back to
+DRAFT, or touching it in any way. The erroneous index would have
+structurally blocked exactly the future regeneration flow Slice A was
+built to support (Slice B/C publishing a second revision while the
+first remains a valid historical reference for its own
+`ScheduleVersion`s).
+
+**Fix:** a follow-up migration, `398b05641152` (revises `83434054f9d2`,
+does not edit the already-applied migration in place), drops only
+`uq_configuration_revision_one_published`. The at-most-one-DRAFT
+partial unique index (`uq_configuration_revision_one_draft`) and
+`UNIQUE(academic_year_id, revision_number)` are both untouched and
+remain correct. No data backfill was needed or performed -- every
+already-migrated year already had at most one PUBLISHED revision
+anyway; the migration only removes a constraint that would have wrongly
+prevented a second one from ever being created. The ORM model
+(`persistence/models.py`) and its docstring were corrected to match,
+and a new persistence test
+(`test_academic_year_may_accumulate_multiple_historical_published_revisions`)
+proves one `AcademicYear` can hold three simultaneous PUBLISHED
+revisions plus one DRAFT, that a second DRAFT is still rejected, that
+`revision_number` stays unique within the year, and that moving
+`published_revision_id` from an older to a newer PUBLISHED revision
+never mutates the older revision's row. A second new test
+(`test_future_regeneration_publish_transition_is_schema_valid`) proves
+-- structurally only, no Slice B/C application code -- that the future
+regeneration flow (R1 PUBLISHED -> open R2 DRAFT -> R2 becomes
+PUBLISHED, `draft_revision_id` cleared -> R1 remains untouched and
+PUBLISHED) is valid under this schema today.
+
+**Regression:** focused schema tests green (`tests_web/
+test_persistence_schema.py` 14/14, including the two new tests;
+`tests_web/test_schedule_schema.py` 15/15); full `tests -m "not slow"`
+593/593; full `tests_web` 594/594; frontend `npm test -- --run`
+572/572 and `npm run build` clean (zero frontend files changed);
+`alembic check` reports zero drift after applying `398b05641152` to
+the local development database (pre-migration `pg_dump` backup taken
+first). All three tracked datasets (`generation-review-school`,
+`editing-review-school`, `synthetic-school`) and the eleven other local
+review/CRUD datasets verified unchanged: same published-revision
+numbers, same draft state (null), same `ScheduleVersion` counts and
+active pointers as before this correction.
+
+**SAFE CONFIGURATION CHANGES -- SLICE A CORRECTION CLOSED ON MAIN --
+the published-history invariant is now correct. Slice B (draft
+fork/discard lifecycle, stale-timetable UI, "Edit scheduling
+configuration") is still not started.**

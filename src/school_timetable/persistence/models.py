@@ -156,18 +156,31 @@ class ConfigurationRevision(Base):
     snapshot at the right moment.
 
     Lifecycle: `DRAFT` -> `PUBLISHED`, exactly two states, no third.
-    `AcademicYear.draft_revision_id`/`published_revision_id` each point
-    to at most one revision of the matching status; the two partial
-    unique indexes below additionally guarantee at the database level
-    that a year can never somehow end up with two drafts or two
-    published revisions. A `DRAFT` that has never been referenced by any
-    `ScheduleVersion` may always be safely hard-deleted (Slice B's
-    future "discard draft"); the moment a revision is `PUBLISHED` it is
-    permanently immutable in practice -- this slice's application code
-    never writes to a revision's rows once it stops being the draft
-    (Slice B narrows `configuration_write_lock.py`'s existing Owner-
-    Decision-#35 "does a Schedule exist" check to "is this specific
-    revision still the draft" -- not implemented yet in this slice).
+    `PUBLISHED` means "this revision was finalized and is permanently
+    immutable" -- NOT "this is the one currently-active published
+    revision." A year may accumulate any number of historical
+    `PUBLISHED` revisions over its lifetime (R1, R2, R3, ... each
+    finalized by a successful Generate/regeneration in turn);
+    `AcademicYear.published_revision_id` is the sole pointer identifying
+    *which* `PUBLISHED` revision is currently authoritative, and moving
+    that pointer from an older `PUBLISHED` revision to a newer one never
+    changes the older revision's `status` back to `DRAFT` or mutates it
+    in any way -- it remains `PUBLISHED` and immutable forever, exactly
+    as historical `ScheduleVersion` rows that reference it require.
+    `AcademicYear.draft_revision_id` points to the at-most-one editable
+    `DRAFT` (there is genuinely only ever zero or one of those at a
+    time); the single partial unique index below guarantees at the
+    database level that a year can never somehow end up with two
+    drafts -- there is deliberately no equivalent uniqueness constraint
+    on `PUBLISHED`, since many may coexist. A `DRAFT` that has never
+    been referenced by any `ScheduleVersion` may always be safely
+    hard-deleted (Slice B's future "discard draft"); the moment a
+    revision is `PUBLISHED` it is permanently immutable in practice --
+    this slice's application code never writes to a revision's rows
+    once it stops being the draft (Slice B narrows
+    `configuration_write_lock.py`'s existing Owner-Decision-#35 "does a
+    Schedule exist" check to "is this specific revision still the
+    draft" -- not implemented yet in this slice).
 
     `revision_number` is meaningful only within one `AcademicYear` --
     the natural, app-facing identifier for a revision (never `id`),
@@ -193,10 +206,10 @@ class ConfigurationRevision(Base):
             ["academic_year_id"], ["academic_year.id"], ondelete="CASCADE",
             name="fk_configuration_revision_academic_year",
         ),
-        Index(
-            "uq_configuration_revision_one_published", "academic_year_id", unique=True,
-            postgresql_where=text("status = 'PUBLISHED'"),
-        ),
+        # Deliberately no equivalent "one published" partial unique index:
+        # a year may accumulate any number of historical PUBLISHED
+        # revisions over its lifetime (see class docstring). Only DRAFT
+        # is capped at one per year.
         Index(
             "uq_configuration_revision_one_draft", "academic_year_id", unique=True,
             postgresql_where=text("status = 'DRAFT'"),

@@ -253,6 +253,107 @@ def test_two_revisions_may_share_natural_ids_without_uniqueness_collision(db_ses
     assert {row.configuration_revision_id for row in rows} == {seeded["revision"].id, rev2.id}
 
 
+def test_academic_year_may_accumulate_multiple_historical_published_revisions(db_session):
+    """Safe Configuration Changes, Slice A correction: `PUBLISHED` means
+    "this revision was finalized and is permanently immutable", NOT
+    "this is the one currently-active published revision". A year must
+    be able to hold any number of historical PUBLISHED revisions
+    simultaneously (R1, R2, R3, ...) -- only DRAFT is capped at one per
+    year. `AcademicYear.published_revision_id` alone identifies which
+    PUBLISHED revision is currently authoritative; moving it never
+    touches an older PUBLISHED revision's row."""
+    seeded = _seed_year(db_session, "school-multi-published", "year-multi-published")
+    year = seeded["year"]
+
+    # seeded["revision"] (R1) starts DRAFT -- publish it first so the
+    # year already has one historical PUBLISHED revision to accumulate
+    # alongside.
+    r1 = seeded["revision"]
+    r1.status = "PUBLISHED"
+    year.published_revision_id = r1.id
+    year.draft_revision_id = None
+    db_session.flush()
+
+    r2 = m.ConfigurationRevision(academic_year_id=year.id, revision_number=2, status="PUBLISHED")
+    r3 = m.ConfigurationRevision(academic_year_id=year.id, revision_number=3, status="PUBLISHED")
+    db_session.add_all([r2, r3])
+    db_session.flush()  # three PUBLISHED rows for one year -- must NOT raise IntegrityError
+
+    r4 = m.ConfigurationRevision(academic_year_id=year.id, revision_number=4, status="DRAFT")
+    db_session.add(r4)
+    db_session.flush()
+
+    year.published_revision_id = r3.id
+    year.draft_revision_id = r4.id
+    db_session.flush()
+
+    # revision_number stays unique within the year even with three
+    # PUBLISHED rows already present.
+    _fails(db_session, m.ConfigurationRevision(
+        academic_year_id=year.id, revision_number=3, status="PUBLISHED",
+    ))
+
+    # A second DRAFT is still rejected -- that cap is unchanged.
+    _fails(db_session, m.ConfigurationRevision(
+        academic_year_id=year.id, revision_number=5, status="DRAFT",
+    ))
+
+    revisions = db_session.query(m.ConfigurationRevision).filter_by(academic_year_id=year.id).all()
+    by_number = {row.revision_number: row for row in revisions}
+    assert len(by_number) == 4
+    assert by_number[1].status == "PUBLISHED"
+    assert by_number[2].status == "PUBLISHED"
+    assert by_number[3].status == "PUBLISHED"
+    assert by_number[4].status == "DRAFT"
+
+    db_session.refresh(year)
+    assert year.published_revision_id == r3.id
+    assert year.draft_revision_id == r4.id
+
+    # Moving the current-published pointer from R2 to R3 (done above)
+    # left every historical PUBLISHED row completely unchanged.
+    db_session.refresh(r1)
+    db_session.refresh(r2)
+    assert r1.status == "PUBLISHED"
+    assert r2.status == "PUBLISHED"
+
+
+def test_future_regeneration_publish_transition_is_schema_valid(db_session):
+    """Structural proof only (no Slice B/C application code implemented
+    here) that the future regeneration publish flow is valid under this
+    schema: R1 PUBLISHED -> a future draft R2 opens -> a future
+    successful regeneration against R2 publishes it (status -> PUBLISHED,
+    `published_revision_id` -> R2, `draft_revision_id` -> null) -> R1
+    remains PUBLISHED and untouched, R2 is now also PUBLISHED."""
+    seeded = _seed_year(db_session, "school-future-publish", "year-future-publish")
+    year = seeded["year"]
+
+    r1 = seeded["revision"]
+    r1.status = "PUBLISHED"
+    year.published_revision_id = r1.id
+    year.draft_revision_id = None
+    db_session.flush()
+
+    r2 = m.ConfigurationRevision(academic_year_id=year.id, revision_number=2, status="DRAFT")
+    db_session.add(r2)
+    db_session.flush()
+    year.draft_revision_id = r2.id
+    db_session.flush()
+
+    # Simulated future successful regeneration against R2.
+    r2.status = "PUBLISHED"
+    year.published_revision_id = r2.id
+    year.draft_revision_id = None
+    db_session.flush()  # must succeed under this schema
+
+    db_session.refresh(year)
+    assert year.published_revision_id == r2.id
+    assert year.draft_revision_id is None
+    db_session.refresh(r1)
+    assert r1.status == "PUBLISHED"
+    assert r2.status == "PUBLISHED"
+
+
 def test_natural_id_uniqueness_is_per_academic_year(db_session):
     """A duplicate `natural_id` within one academic year is rejected; the
     identical `natural_id` in a different academic year is allowed --

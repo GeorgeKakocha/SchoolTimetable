@@ -3998,9 +3998,17 @@ A first-class `ConfigurationRevision` model now exists: surrogate PK,
 lifecycle `status` (`DRAFT`/`PUBLISHED`), `created_at`. `AcademicYear`
 gained nullable `published_revision_id`/`draft_revision_id` pointers
 (circular FKs via `use_alter=True`, mirroring the existing
-`Schedule.active_version_id` pattern). At most one PUBLISHED and at
-most one DRAFT revision per year is enforced at the database level via
-two partial unique indexes, not just application discipline.
+`Schedule.active_version_id` pattern). `PUBLISHED` means "this revision
+was finalized and is permanently immutable", NOT "this is the one
+currently-active published revision" -- a year may accumulate any
+number of historical PUBLISHED revisions over its lifetime;
+`published_revision_id` alone identifies which one is currently
+authoritative. At most one DRAFT revision per year is enforced at the
+database level via a partial unique index; there is deliberately no
+equivalent constraint on PUBLISHED. (**Correction, same slice:** an
+earlier version of this migration mistakenly also capped PUBLISHED at
+one per year -- fixed by a same-day follow-up migration before this
+was ever relied upon; see the dedicated decision entry below.)
 
 **Immutable revision ownership.** Every one of the fifteen
 `SchedulingProblem` configuration tables (`Day`, `Period`,
@@ -4102,3 +4110,16 @@ check` reports zero drift against the migrated dev database.
 schema/persistence foundation only. Slice B (draft fork/discard
 lifecycle, stale-timetable UI, "Edit scheduling configuration") is not
 started.**
+
+**Correction (same day):** the originally-applied migration mistakenly
+also enforced at most one PUBLISHED `ConfigurationRevision` per
+`AcademicYear` -- wrong, since PUBLISHED means "permanently immutable
+once finalized," not "the current one," and a year must be able to
+accumulate multiple historical PUBLISHED revisions over its lifetime.
+Fixed by follow-up migration `398b05641152`, which drops only the
+erroneous index; the at-most-one-DRAFT index is untouched and still
+correct. Two new persistence tests prove multiple PUBLISHED revisions
+may coexist and that the future regeneration publish transition is
+schema-valid. Applied to the local dev database and independently
+re-verified: all three tracked datasets and the eleven other local
+datasets unchanged. Full detail in `docs/DECISIONS.md`.
