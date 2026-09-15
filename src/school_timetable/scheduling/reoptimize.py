@@ -37,6 +37,7 @@ from school_timetable.scheduling.model_builder import (
     BuiltModel,
     _add_class_occupancy,
     _add_fixed_placements,
+    _add_hard_occurrence_pins,
     _add_max_periods_per_day,
     _add_min_distinct_days_penalty,
     _add_participant_group_non_overlap,
@@ -193,8 +194,7 @@ def _add_lock_constraints(model, schedule: Schedule, lesson_vars, groups: dict) 
     for (_group_id, day_id, anchor), members in groups.items():
         req_ids = {m[0] for m in members}
         if any(OccurrenceKey(rid, day_id, anchor) in schedule.locked_occurrences for rid in req_ids):
-            for m in members:
-                model.Add(lesson_vars[m] == 1)
+            _add_hard_occurrence_pins(model, lesson_vars, members)
 
 
 def _add_disruption_terms(model, groups: dict, lesson_vars) -> list:

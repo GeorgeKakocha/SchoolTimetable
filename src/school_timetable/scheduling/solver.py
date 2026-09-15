@@ -10,7 +10,7 @@ from ortools.sat.python import cp_model
 from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import SchedulingResult, SolverStatus
-from school_timetable.scheduling.model_builder import build_model
+from school_timetable.scheduling.model_builder import LessonKey, build_model
 from school_timetable.scheduling.options import SolverOptions
 from school_timetable.scheduling.result_builder import build_schedule_entries
 from school_timetable.validation.preflight import run_preflight
@@ -22,7 +22,14 @@ _STATUS_MAP = {
 }
 
 
-def solve(problem: SchedulingProblem, options: SolverOptions | None = None) -> SchedulingResult:
+def solve(
+    problem: SchedulingProblem,
+    options: SolverOptions | None = None,
+    hard_pins: frozenset[LessonKey] = frozenset(),
+) -> SchedulingResult:
+    """``hard_pins`` (Safe Configuration Changes, Slice C): forwarded
+    unchanged to ``build_model`` -- see its own docstring. Empty by
+    default, so every existing caller is unaffected."""
     options = options or SolverOptions()
 
     errors = run_preflight(problem)
@@ -31,7 +38,7 @@ def solve(problem: SchedulingProblem, options: SolverOptions | None = None) -> S
 
     index = ProblemIndex(problem)
     try:
-        built = build_model(problem, index)
+        built = build_model(problem, index, hard_pins=hard_pins)
     except Exception as exc:  # pragma: no cover - model-builder bug, not bad input
         return SchedulingResult(status=SolverStatus.ERROR, metadata={"error": str(exc)})
 

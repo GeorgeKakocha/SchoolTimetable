@@ -64,12 +64,24 @@ from school_timetable.application.schedule_models import (
     ScheduleVersionSummary,
 )
 from school_timetable.application.teacher_availability_models import TeacherAvailabilityExceptionFields
+from school_timetable.application.draft_snapshot import DraftConfigurationSnapshot
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import ScheduleEntry, SolverStatus
-from school_timetable.domain.schedule import Schedule
+from school_timetable.domain.schedule import OccurrenceKey, Schedule
 
 
 class SchedulingProblemRepository(Protocol):
+    def load_draft_snapshot(
+        self, school_natural_id: str, academic_year_natural_id: str,
+    ) -> DraftConfigurationSnapshot:
+        """Load the current draft identity and its complete problem consistently.
+
+        Raises NoConfigurationDraftError when no draft exists. The factory-backed
+        adapter releases its transaction before returning; never hold it over solve.
+        The revision ID is an internal concurrency token, never an HTTP field.
+        """
+        ...
+
     def load_by_school_and_year(
         self,
         school_natural_id: str,
@@ -328,6 +340,136 @@ class ScheduleVersionRepository(Protocol):
         `Schedule`/active version exists yet to edit at all -- this
         method is never the way a *first* `ScheduleVersion` is created
         (`persist_initial_version` is).
+        """
+        ...
+
+    def persist_regenerated_version(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        base_version_number: int,
+        problem: SchedulingProblem,
+        entries: tuple[ScheduleEntry, ...],
+        locked_occurrences: frozenset[OccurrenceKey],
+        confirmed_incompatible_lock_keys: frozenset[OccurrenceKey],
+        solver_status: SolverStatus,
+        total_soft_penalty: int,
+        wall_time_seconds: float,
+        random_seed: int | None,
+        *,
+        expected_draft_revision_id: int,
+    ) -> ActiveScheduleVersion:
+        """Safe Configuration Changes, Slice C: publishes the year's open
+        DRAFT `ConfigurationRevision` and creates the next `ScheduleVersion`
+        under the year's single existing `Schedule`, atomically -- the
+        third and last way a `ScheduleVersion.configuration_revision_id`
+        is ever set (alongside `persist_initial_version`'s first-publish
+        and `persist_edited_version`'s always-copied-forward-unchanged
+        cases). Requires an existing `Schedule` (unlike
+        `persist_initial_version`) and an open draft (unlike
+        `persist_edited_version`, which never changes revision) -- never
+        the way a *first* `ScheduleVersion` is created.
+
+        `expected_draft_revision_id` is the non-reused database row identity
+        returned together with `problem` by load_draft_snapshot. Under the year
+        lock, reject a different current draft ID with
+        ConfigurationChangedDuringGenerationError before any publication.
+        Revision numbers are not identity tokens: discard/reopen may reuse them.
+
+        `problem` is the exact draft `SchedulingProblem` the solver
+        actually solved; `entries` are its resulting `ScheduleEntry`
+        values. `locked_occurrences` are exactly the `OccurrenceKey`s
+        `scheduling.lock_compatibility.classify_locks` found COMPATIBLE
+        and the caller pinned as HARD constraints in that same solve --
+        these, and only these, become the new version's own
+        `LockedOccurrence` rows; every confirmed-incompatible key is
+        dropped, never persisted. `confirmed_incompatible_lock_keys` is
+        the exact natural-ID set of incompatible locks the caller has
+        been shown (via a prior `IncompatibleLocksRequireConfirmationError`
+        or an equivalent preview) and explicitly agreed to drop -- empty
+        when the active version had no locks, or when every lock was
+        found compatible.
+
+        Authoritative persistence sequence, all inside one transaction
+        under a single `AcademicYear` row lock (`SELECT ... FOR UPDATE`,
+        Owner Decision #36 -- the same primitive `persist_initial_version`/
+        `persist_edited_version` already use), any failure at any step
+        rolling back the entire transaction with zero rows written:
+
+        1. Acquire the `AcademicYear` row lock.
+        2. Reload the year's CURRENT draft `SchedulingProblem` under that
+           lock.
+        3. Compare it to `problem` (the exact configuration actually
+           solved).
+        4. If they differ -- a configuration write committed in the
+           DB-free window between the caller's load/solve and this call --
+           raise `school_timetable.application.errors.
+           ConfigurationChangedDuringGenerationError` (reused, never a
+           Slice-C-specific duplicate); zero rows written.
+        5. Reload the CURRENT active `ScheduleVersion` and compare its
+           `version_number` to `base_version_number`.
+        6. If they differ -- another edit/re-optimization/regeneration was
+           promoted to active first -- raise `school_timetable.
+           application.errors.StaleScheduleVersionError` (reused); zero
+           rows written; `Schedule.active_version_id` left untouched.
+        7. Recompute lock compatibility (`scheduling.lock_compatibility.
+           classify_locks`) against the reloaded, authoritative draft
+           `problem` and the reloaded active version's own historical
+           entries/`locked_occurrences` -- never trusting the caller's
+           own, possibly-stale, `problem`/classification from step 3-4's
+           comparison alone.
+        8. Compare that fresh classification's incompatible-key set to
+           `confirmed_incompatible_lock_keys`.
+        9. If they differ -- compatibility changed in the race window, or
+           the caller never actually confirmed the current set -- raise
+           `school_timetable.application.errors.
+           IncompatibleLocksRequireConfirmationError` carrying the FRESH
+           classification; zero rows written.
+        10. Publish the draft: `ConfigurationRevision.status = "PUBLISHED"`,
+            `AcademicYear.published_revision_id` set to it,
+            `AcademicYear.draft_revision_id` cleared -- the exact
+            publish transition `persist_initial_version` already performs,
+            generalized to the *N*-th revision; every prior PUBLISHED
+            revision, and every `ScheduleVersion` referencing one,
+            remains completely untouched (the multi-published-revision
+            invariant this depends on is Slice A's own, already-fixed
+            guarantee).
+        11. Insert exactly one new `ScheduleVersion`
+            (`version_number` = one past the highest existing
+            `version_number` for this `Schedule` -- never just
+            `base_version_number + 1` -- `parent_version_id` set to the
+            previous active version's surrogate ID).
+        12. Its `configuration_revision_id` is the just-published
+            revision (never copied forward unchanged, unlike
+            `persist_edited_version` -- this is the one case where the
+            revision genuinely changes).
+        13. Persist its own `ScheduleEntry` rows from `entries` -- never
+            touching any prior version's rows.
+        14. Persist its own `LockedOccurrence` rows from `locked_occurrences`
+            ONLY -- every confirmed-incompatible key is simply never
+            written.
+        15. Atomically repoint `Schedule.active_version_id` to the new
+            version.
+        16. Commit.
+        17. Any exception at any point (including within steps 10-15)
+            rolls back the ENTIRE transaction -- no partially-published
+            revision, no orphan `ScheduleVersion`/`ScheduleEntry`/
+            `LockedOccurrence` row ever survives; the previous active
+            version remains active and every historical `ScheduleVersion`/
+            `ConfigurationRevision` remains immutable and independently
+            resolvable exactly as before the call.
+
+        Raises `SchedulingProblemNotFoundError` if the school/year itself
+        does not resolve, `ConfigurationChangedDuringGenerationError` if the
+        expected draft is no longer current (including no draft), and
+        `CorruptScheduleStateError` (persistence-internal)
+        if no `Schedule`/active version exists yet -- this method is never
+        the way a *first* `ScheduleVersion` is created.
+
+        No schema/migration change is required for any of this -- every
+        table and constraint already exists (proven structurally by
+        `tests_web/test_persistence_schema.py::
+        test_future_regeneration_publish_transition_is_schema_valid`).
         """
         ...
 

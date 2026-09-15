@@ -35,7 +35,20 @@ class BuiltModel:
     has_objective: bool = False
 
 
-def build_model(problem: SchedulingProblem, index: ProblemIndex | None = None) -> BuiltModel:
+def build_model(
+    problem: SchedulingProblem,
+    index: ProblemIndex | None = None,
+    hard_pins: frozenset[LessonKey] = frozenset(),
+) -> BuiltModel:
+    """``hard_pins`` (Safe Configuration Changes, Slice C): an optional
+    set of extra ``(requirement_id, day_id, period_id)`` lesson variables
+    to pin to TRUE, alongside every other HARD constraint below -- a
+    fresh `GenerateScheduleService.regenerate()` solve's way of forcing
+    a draft-compatible historical `LockedOccurrence` into its exact
+    prior placement, without switching to `reoptimize`'s
+    disruption-minimizing objective. Defaults to empty, so every
+    existing caller (plain `generate()`, `scheduling.solver.solve`'s own
+    default) is completely unaffected."""
     if index is None:
         index = ProblemIndex(problem)
 
@@ -55,6 +68,8 @@ def build_model(problem: SchedulingProblem, index: ProblemIndex | None = None) -
     _add_max_periods_per_day(model, requirements, lesson_vars, days, periods)
     _add_split_group_sync(model, index, lesson_vars, days, periods)
     _add_required_block_constraints(model, requirements, lesson_vars, days, periods)
+    if hard_pins:
+        _add_hard_occurrence_pins(model, lesson_vars, hard_pins)
 
     objective_terms: list = []
     objective_terms += _add_preferred_double_constraints(model, index, requirements, lesson_vars, days, periods)
@@ -184,6 +199,17 @@ def _add_fixed_placements(model, problem: SchedulingProblem, lesson_vars) -> Non
     for fp in problem.fixed_placements:
         var = lesson_vars[(fp.requirement_id, fp.slot.day_id, fp.slot.period_id)]
         model.Add(var == 1)
+
+
+def _add_hard_occurrence_pins(model, lesson_vars, member_keys: frozenset[LessonKey]) -> None:
+    """The one CP-SAT primitive both a fresh generate's compatible-lock
+    pins (``build_model``'s own ``hard_pins``) and ``reoptimize``'s
+    per-group lock constraints (``reoptimize._add_lock_constraints``)
+    reduce to -- pinning each named lesson variable to TRUE. Shared
+    rather than duplicated so both callers stay byte-for-byte identical
+    in how a HARD lock actually constrains CP-SAT."""
+    for member in member_keys:
+        model.Add(lesson_vars[member] == 1)
 
 
 def _add_max_periods_per_day(model, requirements, lesson_vars, days, periods) -> None:

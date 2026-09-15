@@ -336,6 +336,62 @@ class ReoptimizeRequest(BaseModel):
     base_version_number: int
 
 
+class OccurrenceKeyRequest(BaseModel):
+    """One natural-ID logical-occurrence key -- exactly `domain.schedule.
+    OccurrenceKey`'s three fields, never a persistence surrogate ID.
+    Structurally identical to `LockedOccurrenceResponse`, but kept as its
+    own request-direction model (matching this codebase's existing
+    request/response pairing convention, e.g. `LockRequest` vs.
+    `LockedOccurrenceResponse`) rather than reusing a response schema as
+    a request body."""
+
+    requirement_id: str
+    day_id: str
+    anchor_period_id: str
+
+
+class RegenerateScheduleRequest(BaseModel):
+    """`POST .../schedule/active/regenerate`'s request body (Safe
+    Configuration Changes, Slice C, Checkpoint 5). `base_version_number`
+    is the same stale-version-protection field every other mutating
+    editing command already requires. `confirmed_incompatible_lock_keys`
+    defaults to empty -- valid exactly when the fresh regeneration attempt
+    finds no incompatible locks; otherwise the caller must echo back
+    precisely the natural-ID keys it was shown in a prior
+    `IncompatibleLocksRequireConfirmationErrorResponse` (never a bare
+    `confirm: true`) -- a stale or partial echo is rejected again with a
+    fresh 409, never silently accepted."""
+
+    base_version_number: int
+    confirmed_incompatible_lock_keys: tuple[OccurrenceKeyRequest, ...] = ()
+
+
+class IncompatibleLockResponse(BaseModel):
+    """One incompatible locked occurrence from the FRESH classification
+    carried by `IncompatibleLocksRequireConfirmationError` -- the
+    natural-ID key plus `reason_code` (the stable, machine-readable
+    contract a frontend confirmation UI branches on -- never requires
+    parsing `message`) and `message` (human-readable explanatory text
+    only). Never a database surrogate ID, never an ORM object."""
+
+    requirement_id: str
+    day_id: str
+    anchor_period_id: str
+    reason_code: str
+    message: str
+
+
+class IncompatibleLocksRequireConfirmationErrorResponse(BaseModel):
+    """409 body for `IncompatibleLocksRequireConfirmationError` --
+    `incompatible_locks` is the exact FRESH classification the caller
+    must echo back verbatim, as `RegenerateScheduleRequest
+    .confirmed_incompatible_lock_keys`, to proceed."""
+
+    code: Literal["INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION"]
+    detail: str
+    incompatible_locks: tuple[IncompatibleLockResponse, ...]
+
+
 class StaleScheduleVersionErrorResponse(BaseModel):
     """409 body for `StaleScheduleVersionError` -- returned by every
     mutating editing command when the caller's `base_version_number` no

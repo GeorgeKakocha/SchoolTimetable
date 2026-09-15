@@ -108,12 +108,17 @@ def get_schedule_version_repository() -> ScheduleVersionRepository:
 
 
 def get_generate_schedule_service() -> GenerateScheduleService:
-    """Composes the two session-factory-backed adapters
-    `GenerateScheduleService` needs -- never a request-scoped `Session`
-    -- so preflight/solve/verify run with no DB connection held open."""
+    """Composes the session-factory-backed adapters `GenerateSchedule
+    Service` needs -- never a request-scoped `Session` -- so preflight/
+    solve/verify run with no DB connection held open. `Configuration
+    RevisionRepository` (Safe Configuration Changes, Slice C, Checkpoint
+    5) is wired here too, the same third adapter `get_schedule_editing_
+    service` already passes its own service -- `generate()` never uses
+    it; only `regenerate()`'s open-draft precheck does."""
     return GenerateScheduleService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
+        SqlAlchemyConfigurationRevisionRepository(SessionLocal),
     )
 
 

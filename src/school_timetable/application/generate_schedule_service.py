@@ -31,13 +31,24 @@ themselves against whatever concrete `SchedulingProblemRepository`/
 from __future__ import annotations
 
 from school_timetable.application.errors import (
+    IncompatibleLocksRequireConfirmationError,
     InvalidSchedulingConfigurationError,
+    NoActiveScheduleError,
+    NoConfigurationDraftError,
     ScheduleAlreadyExistsError,
     ScheduleInfeasibleError,
+    StaleScheduleVersionError,
 )
-from school_timetable.application.ports import ScheduleVersionRepository, SchedulingProblemRepository
+from school_timetable.application.ports import (
+    ConfigurationRevisionRepository,
+    ScheduleVersionRepository,
+    SchedulingProblemRepository,
+)
 from school_timetable.application.schedule_models import ActiveScheduleVersion
+from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.result import SolverStatus
+from school_timetable.domain.schedule import OccurrenceKey
+from school_timetable.scheduling.lock_compatibility import classify_locks, resolve_compatible_members
 from school_timetable.scheduling.options import SolverOptions
 from school_timetable.scheduling.solver import solve
 from school_timetable.validation.preflight import run_preflight
@@ -72,9 +83,21 @@ class GenerateScheduleService:
         self,
         problem_repository: SchedulingProblemRepository,
         schedule_repository: ScheduleVersionRepository,
+        configuration_revision_repository: ConfigurationRevisionRepository | None = None,
     ) -> None:
         self._problem_repository = problem_repository
         self._schedule_repository = schedule_repository
+        # Safe Configuration Changes, Slice C, Checkpoint 4: optional,
+        # defaulting to `None` so every one of this constructor's many
+        # existing two-positional-argument call sites (production
+        # wiring in `api/dependencies.py`, every `tests_web/test_*_api.py`
+        # fixture, every existing `generate()`-only test) keeps working
+        # completely unchanged -- `generate()` itself never touches this
+        # dependency. Only `regenerate()` requires it; wiring a concrete
+        # adapter through here for real callers is a later checkpoint's
+        # minimal dependency-wiring change, deliberately out of scope
+        # for this one.
+        self._configuration_revision_repository = configuration_revision_repository
 
     def generate(
         self,
@@ -167,4 +190,153 @@ class GenerateScheduleService:
             result.total_soft_penalty,
             result.metadata["wall_time_seconds"],
             options.random_seed,
+        )
+
+    def regenerate(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        base_version_number: int,
+        confirmed_incompatible_lock_keys: frozenset[OccurrenceKey] = frozenset(),
+        *,
+        solver_options: SolverOptions | None = None,
+    ) -> ActiveScheduleVersion:
+        """Safe Configuration Changes, Slice C, Checkpoint 4: regenerates
+        the active `Schedule` against the year's open DRAFT
+        `ConfigurationRevision` -- a full FRESH solve of the draft using
+        the ordinary generation objective (`scheduling.solver.solve`),
+        never `scheduling.reoptimize`'s disruption-minimizing one, with
+        every still-compatible historical `LockedOccurrence` pinned as a
+        HARD constraint. Mirrors `generate()`'s exact shape (cheap
+        precheck -> load a fully detached `SchedulingProblem` -> explicit
+        preflight -> solve -> independent verify -> persist, atomically)
+        plus `ScheduleEditingService`'s stale-base-version/no-active-
+        schedule conventions -- no new orchestration pattern invented.
+
+        Every check here is a cheap, early convenience/fast-failure
+        short-circuit only: `ScheduleVersionRepository
+        .persist_regenerated_version` remains the sole authoritative
+        concurrency boundary, re-locking the `AcademicYear` row and
+        recomputing every one of these same conditions itself,
+        immediately before persisting.
+        """
+        # (A) An open draft is mandatory -- this is the regeneration-
+        # after-configuration-edit path, never a way to re-run a solve
+        # against an already-published revision.
+        state = self._configuration_revision_repository.get_state(
+            school_natural_id, academic_year_natural_id,
+        )
+        if state.draft_revision_number is None:
+            raise NoConfigurationDraftError(school_natural_id, academic_year_natural_id)
+
+        # (B) An existing active Schedule is mandatory (never the way a
+        # *first* ScheduleVersion is created), plus the same cheap,
+        # early stale-version short-circuit `ScheduleEditingService
+        # ._load_active_for_edit` already uses -- no expensive solve for
+        # a base version that is already known stale.
+        active = self._schedule_repository.get_active_schedule(
+            school_natural_id, academic_year_natural_id,
+        )
+        if active is None:
+            raise NoActiveScheduleError(school_natural_id, academic_year_natural_id)
+        if active.version_number != base_version_number:
+            raise StaleScheduleVersionError(
+                school_natural_id, academic_year_natural_id,
+                base_version_number, active.version_number,
+            )
+
+        # Load the identity and content together, releasing the read transaction
+        # before preflight/solve. get_state above is only an early convenience check.
+        snapshot = self._problem_repository.load_draft_snapshot(
+            school_natural_id, academic_year_natural_id,
+        )
+        problem = snapshot.problem
+
+        # (D) Same explicit preflight boundary as generate().
+        preflight_errors = run_preflight(problem)
+        if preflight_errors:
+            raise InvalidSchedulingConfigurationError(
+                school_natural_id, academic_year_natural_id, tuple(preflight_errors),
+            )
+
+        # (E)-(G) Classify the CURRENT active version's own locked
+        # occurrences (Checkpoint 1) against the draft problem. A
+        # mismatch against the caller's confirmed-incompatible set means
+        # either the caller never confirmed at all, or lock compatibility
+        # changed since the caller last classified it -- either way, the
+        # caller must see the FRESH classification and re-confirm; the
+        # solver is never invoked and nothing is persisted. An empty
+        # confirmed set is valid, and this proceeds normally, exactly
+        # when there is nothing to confirm (current_incompatible_keys is
+        # itself empty) -- never a required confirmation for locks that
+        # are, in fact, compatible.
+        index = ProblemIndex(problem)
+        classification = classify_locks(problem, index, active.entries, active.locked_occurrences)
+        current_incompatible_keys = frozenset(item.key for item in classification.incompatible)
+        if current_incompatible_keys != confirmed_incompatible_lock_keys:
+            raise IncompatibleLocksRequireConfirmationError(
+                school_natural_id, academic_year_natural_id, classification.incompatible,
+            )
+
+        # (H) Resolve every compatible lock's full logical-occurrence
+        # membership -- never just its own anchor key -- into the exact
+        # CP-SAT lesson-variable keys the fresh solve must pin. Safe:
+        # `classify_locks` above already proved every key in
+        # `compatible_keys` resolves without error.
+        hard_pins = resolve_compatible_members(
+            problem, index, active.entries, classification.compatible_keys,
+        )
+
+        # (I) A full FRESH solve against the draft -- the ordinary
+        # generation model/objective, never reoptimize's disruption-
+        # minimizing one -- with every compatible lock pinned as HARD.
+        options = solver_options or SolverOptions()
+        result = solve(problem, options, hard_pins=hard_pins)
+
+        if result.status == SolverStatus.INFEASIBLE:
+            raise ScheduleInfeasibleError(school_natural_id, academic_year_natural_id)
+
+        if result.status == SolverStatus.INVALID_INPUT:
+            # Defensive only: the explicit preflight above should
+            # already have caught this. Same outcome, never persisted.
+            raise InvalidSchedulingConfigurationError(
+                school_natural_id, academic_year_natural_id, result.validation_errors,
+            )
+
+        if result.status == SolverStatus.ERROR:
+            raise ScheduleGenerationError(
+                f"solver returned ERROR for school={school_natural_id!r}, "
+                f"academic_year={academic_year_natural_id!r}: {result.metadata.get('error')!r}"
+            )
+
+        # Only OPTIMAL/FEASIBLE remain -- the same independent-verifier
+        # hard gate as generate(), before any persistence.
+        report = verify(problem, result.entries)
+        if not report.passed:
+            raise ScheduleVerificationFailedError(
+                f"independent verifier rejected a solver-claimed-successful regeneration "
+                f"for school={school_natural_id!r}, academic_year={academic_year_natural_id!r}: "
+                f"{report.violations!r}"
+            )
+
+        # (J) Persist -- only reachable after preflight passed, lock
+        # compatibility was confirmed, the solver returned
+        # OPTIMAL/FEASIBLE, and the independent verifier passed.
+        # `persist_regenerated_version` remains the authoritative
+        # concurrency boundary: it re-locks the AcademicYear row and
+        # recomputes every one of (A)-(H) itself immediately before
+        # publishing the draft and persisting.
+        return self._schedule_repository.persist_regenerated_version(
+            school_natural_id,
+            academic_year_natural_id,
+            base_version_number,
+            problem,
+            result.entries,
+            classification.compatible_keys,
+            confirmed_incompatible_lock_keys,
+            result.status,
+            result.total_soft_penalty,
+            result.metadata["wall_time_seconds"],
+            options.random_seed,
+            expected_draft_revision_id=snapshot.revision_id,
         )

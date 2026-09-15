@@ -5110,4 +5110,34 @@ CRUD APIs, while a draft is open. Regeneration after a configuration
 edit (Slice C) is explicitly NOT started -- there is still no way to
 re-solve a schedule against an edited draft and publish it as a new
 revision; discarding a draft simply reverts to the unchanged, still-
-active published schedule.**
+  active published schedule.**
+
+## SAFE CONFIGURATION CHANGES -- SLICE C -- SAFE REGENERATION BACKEND CLOSED
+
+Regeneration is distinct from initial generation. `POST
+/schools/{school_id}/years/{year_id}/schedule/active/regenerate` requires
+an open draft and `base_version_number`; `/schedule/generate` remains
+initial-generation-only. The internal concurrency token is the non-reused
+ConfigurationRevision database row identity, loaded together with the
+detached draft problem before the DB-free solve. Persistence requires that
+identity and the exact problem content to remain current under
+`AcademicYear SELECT ... FOR UPDATE`; the identity is never exposed in
+HTTP.
+
+Compatible historical locks are hard pins in the ordinary generation solve
+and remain on the new version. Incompatible locks require the exact set of
+natural-ID occurrence keys; only confirmed incompatible locks are removed.
+REQUIRED patterns use order-independent block-size multiplicity, and only
+resolved locked logical occurrences consume capacity. FixedPlacement pins
+one lesson-period, not an entire requirement; broader joint feasibility
+remains the solver's responsibility.
+
+The atomic persistence transaction publishes the exact solved draft, clears
+its pointer, creates/activates ScheduleVersion N+1 linked to the new
+revision, writes entries and compatible locks, and leaves history immutable.
+Failures preserve the previous active/published state and current draft.
+Edited-version configuration ID lookups are scoped to the active/base
+version's configuration revision. No migration was required. Verification:
+655 core tests (5 deselected), 660 real-PostgreSQL web/persistence tests,
+199 focused Slice-C/backend tests, and Alembic head `398b05641152` with no
+new upgrade operations.

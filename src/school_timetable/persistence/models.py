@@ -954,17 +954,21 @@ class ScheduleVersion(Base):
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     parent_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     configuration_revision_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    """Safe Configuration Changes, Slice A: permanently records the
+    """Safe Configuration Changes, Slice A/C: permanently records the
     exact `ConfigurationRevision` this version's entries were generated
     or edited against -- always the year's PUBLISHED revision, never a
-    mutable draft (a `ScheduleVersion` is only ever created by
-    `persist_initial_version` immediately after it publishes the draft
-    it just solved against, or by `persist_edited_version`, which always
-    copies this value forward unchanged from the base version it edits
-    from -- manual editing, locking, re-optimizing, and same-revision
-    restoring never change which revision a version belongs to).
-    Historical projection must resolve `SchedulingProblem` from THIS
-    column, never from whatever is currently published."""
+    mutable draft. Set by exactly three creation paths: `persist_initial_version`,
+    immediately after it publishes the draft it just solved against;
+    `persist_edited_version`, which always copies this value forward
+    unchanged from the base version it edits from (manual editing,
+    locking, re-optimizing, and same-revision restoring never change
+    which revision a version belongs to); and `persist_regenerated_version`
+    (Slice C), which -- like `persist_initial_version` -- publishes a
+    draft (the year's N-th, not necessarily its first) in the same
+    transaction and points this column at THAT newly-published revision,
+    never the one the previous active version belonged to. Historical
+    projection must resolve `SchedulingProblem` from THIS column, never
+    from whatever is currently published."""
     solver_status: Mapped[str] = mapped_column(Text, nullable=False)
     total_soft_penalty: Mapped[int] = mapped_column(Integer, nullable=False)
     wall_time_seconds: Mapped[float] = mapped_column(Double, nullable=False)

@@ -15,6 +15,7 @@ HTTP mapping, so they stay as plain internal exceptions local to
 """
 from __future__ import annotations
 
+from school_timetable.scheduling.lock_compatibility import IncompatibleLock
 from school_timetable.validation.errors import ValidationError
 
 
@@ -1299,4 +1300,54 @@ class ScheduleOutOfDateError(Exception):
             f"academic_year={academic_year_natural_id!r}: scheduling configuration is "
             "currently being edited; the existing timetable is read-only until the draft "
             "is discarded or a future regeneration succeeds"
+        )
+
+
+class IncompatibleLocksRequireConfirmationError(Exception):
+    """Safe Configuration Changes, Slice C: one or more `LockedOccurrence`s
+    belonging to the current active `ScheduleVersion` are incompatible
+    with the currently open draft configuration (Owner Decision #39 item
+    (4): "identify affected locks, show the admin, require explicit
+    confirmation before continuing without them"). Regeneration is
+    refused, with zero mutation and the solver never invoked, until the
+    caller explicitly confirms the EXACT natural-ID set of incompatible
+    locks it accepts dropping.
+
+    A bare boolean confirmation is never accepted, by design: the caller
+    must echo back precisely this error's own `incompatible_locks` keys
+    (never a persistence surrogate ID) as a retried call's
+    `confirmed_incompatible_lock_keys`. `ScheduleVersionRepository.
+    persist_regenerated_version` recomputes this same classification
+    again, authoritatively, under the `AcademicYear` row lock immediately
+    before persisting -- if a configuration write changed lock
+    compatibility in the race window since the caller last saw it, this
+    same error is raised again with the FRESH classification rather than
+    silently proceeding against a stale confirmation.
+
+    Carries the full structured classification
+    (`scheduling.lock_compatibility.IncompatibleLock`: each lock's own
+    `OccurrenceKey` plus a stable, API-safe `reason_code` and a
+    human-readable `message`) as an immutable tuple -- reused directly,
+    never duplicated into a parallel `application/`-owned type, the same
+    way `InvalidSchedulingConfigurationError` above already reuses
+    `validation.errors.ValidationError` directly. `application/` already
+    depends on `scheduling/` for this exact kind of decision
+    (`GenerateScheduleService`/`ScheduleEditingService` already import
+    `scheduling.solver`/`scheduling.reoptimize` directly), so this import
+    introduces no new dependency direction."""
+
+    def __init__(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        incompatible_locks: tuple[IncompatibleLock, ...],
+    ) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        self.incompatible_locks = incompatible_locks
+        super().__init__(
+            f"regeneration for school={school_natural_id!r}, academic_year="
+            f"{academic_year_natural_id!r} requires confirmation for "
+            f"{len(incompatible_locks)} incompatible locked occurrence(s): "
+            f"{[lock.reason_code for lock in incompatible_locks]!r}"
         )

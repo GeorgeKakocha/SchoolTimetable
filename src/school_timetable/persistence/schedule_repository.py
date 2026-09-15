@@ -85,6 +85,7 @@ from sqlalchemy.orm import Session
 
 from school_timetable.application.errors import (
     ConfigurationChangedDuringGenerationError,
+    IncompatibleLocksRequireConfirmationError,
     ScheduleAlreadyExistsError,
     ScheduleVersionNotFoundError,
     SchedulingProblemNotFoundError,
@@ -95,12 +96,14 @@ from school_timetable.application.schedule_models import (
     ScheduleVersionSnapshot,
     ScheduleVersionSummary,
 )
+from school_timetable.domain.indexing import ProblemIndex
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import EntrySource, ScheduleEntry, SolverStatus
 from school_timetable.domain.schedule import OccurrenceKey, Schedule
 from school_timetable.persistence import mappers as mp
 from school_timetable.persistence import models as orm
 from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
+from school_timetable.scheduling.lock_compatibility import classify_locks
 
 _ACTIVE_SCHEDULE_CONSTRAINT = "uq_schedule_academic_year_id"
 
@@ -497,10 +500,10 @@ class SqlAlchemyScheduleVersionRepository:
                 session, active_version_row.configuration_revision_id
             )
 
-            day_ids = _natural_to_surrogate(session, orm.Day, year_id)
-            period_ids = _natural_to_surrogate(session, orm.Period, year_id)
-            requirement_ids = _natural_to_surrogate(session, orm.TeachingRequirement, year_id)
-            reserved_block_ids = _natural_to_surrogate(session, orm.ReservedBlock, year_id)
+            day_ids = _natural_to_surrogate(session, orm.Day, year_id, active_version_row.configuration_revision_id)
+            period_ids = _natural_to_surrogate(session, orm.Period, year_id, active_version_row.configuration_revision_id)
+            requirement_ids = _natural_to_surrogate(session, orm.TeachingRequirement, year_id, active_version_row.configuration_revision_id)
+            reserved_block_ids = _natural_to_surrogate(session, orm.ReservedBlock, year_id, active_version_row.configuration_revision_id)
 
             try:
                 new_version_row = orm.ScheduleVersion(
@@ -572,6 +575,250 @@ class SqlAlchemyScheduleVersionRepository:
         finally:
             session.close()
 
+    def persist_regenerated_version(
+        self,
+        school_natural_id: str,
+        academic_year_natural_id: str,
+        base_version_number: int,
+        problem: SchedulingProblem,
+        entries: tuple[ScheduleEntry, ...],
+        locked_occurrences: frozenset[OccurrenceKey],
+        confirmed_incompatible_lock_keys: frozenset[OccurrenceKey],
+        solver_status: SolverStatus,
+        total_soft_penalty: int,
+        wall_time_seconds: float,
+        random_seed: int | None,
+        *,
+        expected_draft_revision_id: int,
+    ) -> ActiveScheduleVersion:
+        session = self._session_factory()
+        try:
+            year_id = _resolve_year_id(session, school_natural_id, academic_year_natural_id)
+
+            # Owner Decision #36: the same short, exclusive AcademicYear
+            # row lock persist_initial_version/persist_edited_version
+            # already use.
+            academic_year_row = session.execute(
+                select(orm.AcademicYear).where(orm.AcademicYear.id == year_id).with_for_update()
+            ).scalar_one()
+
+            # The exact row loaded before solve must still be the open draft.
+            # A missing draft also means that snapshot is no longer current.
+            draft_revision_id = academic_year_row.draft_revision_id
+            if draft_revision_id != expected_draft_revision_id:
+                session.rollback()
+                raise ConfigurationChangedDuringGenerationError(school_natural_id, academic_year_natural_id)
+
+            # (3)-(4) Reload the CURRENT draft SchedulingProblem under the
+            # lock (load_by_school_and_year resolves draft-first, and a
+            # draft is confirmed open above) and compare it to the exact
+            # `problem` the caller actually solved.
+            current_draft_problem = SqlAlchemySchedulingProblemRepository(session).load_by_school_and_year(
+                school_natural_id, academic_year_natural_id,
+            )
+            if current_draft_problem != problem:
+                session.rollback()
+                raise ConfigurationChangedDuringGenerationError(school_natural_id, academic_year_natural_id)
+
+            # (5) This is never the way a first ScheduleVersion is
+            # created -- an existing Schedule/active version is required,
+            # using the exact same corrupt-state convention
+            # persist_edited_version already established (never a
+            # parallel behavior for the same underlying defect).
+            schedule_row = session.execute(
+                select(orm.Schedule).where(orm.Schedule.academic_year_id == year_id)
+            ).scalar_one_or_none()
+            if schedule_row is None or schedule_row.active_version_id is None:
+                session.rollback()
+                raise CorruptScheduleStateError(
+                    f"no active schedule exists for school={school_natural_id!r}, "
+                    f"academic_year={academic_year_natural_id!r} to regenerate -- "
+                    "persist_regenerated_version requires an existing active ScheduleVersion "
+                    "(use persist_initial_version to create the first one)"
+                )
+            active_version_row = session.get(orm.ScheduleVersion, schedule_row.active_version_id)
+            if active_version_row is None:
+                session.rollback()
+                raise CorruptScheduleStateError(
+                    f"schedule's active version pointer for school={school_natural_id!r}, "
+                    f"academic_year={academic_year_natural_id!r} does not reference an "
+                    "existing schedule_version row"
+                )
+
+            # (6) Cheap-but-authoritative base-version recheck, under the
+            # same lock -- identical convention to persist_edited_version.
+            if active_version_row.version_number != base_version_number:
+                session.rollback()
+                raise StaleScheduleVersionError(
+                    school_natural_id, academic_year_natural_id,
+                    base_version_number, active_version_row.version_number,
+                )
+
+            # (7) The active version's own historical entries/locks --
+            # never the candidate `entries`/`locked_occurrences` the
+            # caller is asking to persist -- classify_locks reasons about
+            # what the OLD version actually had, against the NEW draft.
+            active_revision_number = _revision_number_for_id(session, active_version_row.configuration_revision_id)
+            historical_entries, historical_locked_occurrences = _load_version_payload(
+                session, school_natural_id, academic_year_natural_id, year_id,
+                active_version_row, active_revision_number,
+            )
+
+            # (8) Recompute lock compatibility authoritatively -- never
+            # trusting the caller's own, possibly-stale classification.
+            draft_index = ProblemIndex(current_draft_problem)
+            classification = classify_locks(
+                current_draft_problem, draft_index, historical_entries, historical_locked_occurrences,
+            )
+
+            # (9) The caller must have confirmed EXACTLY this fresh
+            # incompatible set -- never a subset, superset, or a stale
+            # one from an earlier read. A mismatch means either the
+            # caller never confirmed at all, or something changed lock
+            # compatibility in the race window since the caller last
+            # classified it themselves.
+            current_incompatible_keys = frozenset(item.key for item in classification.incompatible)
+            if current_incompatible_keys != confirmed_incompatible_lock_keys:
+                session.rollback()
+                raise IncompatibleLocksRequireConfirmationError(
+                    school_natural_id, academic_year_natural_id, classification.incompatible,
+                )
+
+            # (10) Defense-in-depth: persistence must never simply trust
+            # the caller's own `locked_occurrences` argument for WHICH
+            # locks to carry forward -- by construction, once (9) has
+            # proven the confirmed-incompatible set matches exactly,
+            # `classification.compatible_keys` is the one and only
+            # authoritative set of locks that may be persisted. A caller
+            # passing anything else here is an internal contract
+            # violation (a bug in the caller's own orchestration, e.g.
+            # `GenerateScheduleService.regenerate` computing its solve's
+            # hard-pin set differently from what it later reports to this
+            # method), never a legitimate concurrent-state race -- (9)
+            # already absorbs every genuine race on lock compatibility
+            # itself. Reuses this codebase's own established convention
+            # for internal-invariant guards that are unreachable through
+            # any legitimate call path (see `SqlAlchemyConfigurationRevisionRepository.
+            # discard_draft`'s identical bare-RuntimeError guard): never a
+            # named public/application error, zero writes performed.
+            if locked_occurrences != classification.compatible_keys:
+                session.rollback()
+                raise RuntimeError(
+                    f"persist_regenerated_version called for school={school_natural_id!r}, "
+                    f"academic_year={academic_year_natural_id!r} with locked_occurrences="
+                    f"{sorted(locked_occurrences)!r} that does not match the authoritative "
+                    f"compatible-lock classification {sorted(classification.compatible_keys)!r} -- "
+                    "unreachable for a caller that correctly used classify_locks' own "
+                    "compatible_keys as its solve's hard-pin set"
+                )
+
+            draft_revision_row = session.get(orm.ConfigurationRevision, draft_revision_id)
+            draft_revision_number = draft_revision_row.revision_number
+
+            day_ids = _natural_to_surrogate(session, orm.Day, year_id, draft_revision_id)
+            period_ids = _natural_to_surrogate(session, orm.Period, year_id, draft_revision_id)
+            requirement_ids = _natural_to_surrogate(session, orm.TeachingRequirement, year_id, draft_revision_id)
+            reserved_block_ids = _natural_to_surrogate(session, orm.ReservedBlock, year_id, draft_revision_id)
+
+            try:
+                # (11) Publish the draft -- the exact transition
+                # persist_initial_version already performs for the FIRST
+                # revision, generalized here to the N-th one. Every prior
+                # PUBLISHED revision is never read or written by this
+                # step (Slice A's multi-published-revision invariant).
+                draft_revision_row.status = "PUBLISHED"
+                academic_year_row.published_revision_id = draft_revision_id
+                academic_year_row.draft_revision_id = None
+                session.flush()
+
+                # (12) One past the highest existing version_number for
+                # this Schedule -- never just base_version_number + 1 --
+                # the identical convention persist_edited_version uses.
+                max_version_number = session.execute(
+                    select(func.max(orm.ScheduleVersion.version_number)).where(
+                        orm.ScheduleVersion.schedule_id == schedule_row.id
+                    )
+                ).scalar_one()
+                next_version_number = max_version_number + 1
+
+                new_version_row = orm.ScheduleVersion(
+                    academic_year_id=year_id,
+                    schedule_id=schedule_row.id,
+                    version_number=next_version_number,
+                    parent_version_id=active_version_row.id,
+                    # (12) The one case where this genuinely changes --
+                    # never copied forward unchanged, unlike
+                    # persist_edited_version.
+                    configuration_revision_id=draft_revision_id,
+                    solver_status=solver_status.value,
+                    total_soft_penalty=total_soft_penalty,
+                    wall_time_seconds=wall_time_seconds,
+                    random_seed=random_seed,
+                )
+                session.add(new_version_row)
+                session.flush()
+
+                # (13) Solved ScheduleEntry rows.
+                for ordinal, entry in enumerate(entries):
+                    is_requirement = entry.source == EntrySource.REQUIREMENT
+                    session.add(orm.ScheduleEntry(
+                        academic_year_id=year_id,
+                        schedule_version_id=new_version_row.id,
+                        ordinal=ordinal,
+                        source=entry.source.value,
+                        day_id=day_ids[entry.day_id],
+                        period_id=period_ids[entry.period_id],
+                        teaching_requirement_id=(
+                            requirement_ids[entry.requirement_id] if is_requirement else None
+                        ),
+                        reserved_block_id=(
+                            None if is_requirement else reserved_block_ids[entry.reserved_block_id]
+                        ),
+                    ))
+                session.flush()
+
+                # (14) Only the freshly-verified compatible set -- never
+                # the caller's raw argument, even though (10) already
+                # proved it equal, and never any confirmed-incompatible
+                # key.
+                for key in classification.compatible_keys:
+                    session.add(orm.LockedOccurrence(
+                        academic_year_id=year_id,
+                        schedule_version_id=new_version_row.id,
+                        teaching_requirement_id=requirement_ids[key.requirement_id],
+                        day_id=day_ids[key.day_id],
+                        anchor_period_id=period_ids[key.anchor_period_id],
+                    ))
+                session.flush()
+
+                # (15) Atomically promote the new version.
+                schedule_row.active_version_id = new_version_row.id
+                session.flush()
+
+                # (16) Commit everything above as one transaction.
+                session.commit()
+            except BaseException:
+                # (17) Any failure at any point -- including after (11)'s
+                # publish flush -- rolls back the ENTIRE transaction: the
+                # draft is never left half-published, since nothing above
+                # is committed until this single, final session.commit().
+                session.rollback()
+                raise
+
+            return ActiveScheduleVersion(
+                version_number=next_version_number,
+                solver_status=solver_status,
+                total_soft_penalty=total_soft_penalty,
+                wall_time_seconds=wall_time_seconds,
+                random_seed=random_seed,
+                created_at=new_version_row.created_at,
+                entries=entries,
+                locked_occurrences=classification.compatible_keys,
+                configuration_revision_number=draft_revision_number,
+            )
+        finally:
+            session.close()
+
 
 def _resolve_year_id(session: Session, school_natural_id: str, academic_year_natural_id: str) -> int:
     year_id = session.execute(
@@ -587,8 +834,17 @@ def _resolve_year_id(session: Session, school_natural_id: str, academic_year_nat
     return year_id
 
 
-def _natural_to_surrogate(session: Session, model: type, year_id: int) -> dict[str, int]:
-    rows = session.execute(select(model).where(model.academic_year_id == year_id)).scalars().all()
+def _natural_to_surrogate(
+    session: Session, model: type, year_id: int, configuration_revision_id: int | None = None,
+) -> dict[str, int]:
+    """Resolve within the version's revision for edits and regeneration.
+
+    Only initial generation omits the scope: no historical revisions exist yet.
+    """
+    conditions = [model.academic_year_id == year_id]
+    if configuration_revision_id is not None:
+        conditions.append(model.configuration_revision_id == configuration_revision_id)
+    rows = session.execute(select(model).where(*conditions)).scalars().all()
     return {row.natural_id: row.id for row in rows}
 
 

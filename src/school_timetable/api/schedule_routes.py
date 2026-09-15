@@ -1,6 +1,12 @@
 """`GET /schools/{school_id}/years/{year_id}/schedule/active`,
 `POST /schools/{school_id}/years/{year_id}/schedule/generate` (Phase
-3A3.4, `docs/DECISIONS.md` #31's locked HTTP contract),
+3A3.4, `docs/DECISIONS.md` #31's locked HTTP contract -- initial
+generation only, unchanged by the route below),
+`POST /schools/{school_id}/years/{year_id}/schedule/active/regenerate`
+(Safe Configuration Changes, Slice C, Checkpoint 5: `GenerateSchedule
+Service.regenerate()`'s thin HTTP wrapper, including the explicit
+incompatible-lock confirmation round trip -- documented on the route
+function itself, directly below `generate_schedule`),
 `GET /schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id}`
 (Phase 3B.1, `docs/DECISIONS.md` #32's locked HTTP contract), and
 `GET /schools/{school_id}/years/{year_id}/schedule/active/teachers/{teacher_id}`
@@ -112,6 +118,8 @@ from school_timetable.api.schemas import (
     ClassTimetableResponse,
     GenerateScheduleResponse,
     GenerationErrorResponse,
+    IncompatibleLockResponse,
+    IncompatibleLocksRequireConfirmationErrorResponse,
     InvalidConfigurationResponse,
     InvalidEditTargetErrorResponse,
     LockRequest,
@@ -121,6 +129,8 @@ from school_timetable.api.schemas import (
     MovePreviewTargetResponse,
     MoveRequest,
     MoveViolationResponse,
+    NoConfigurationDraftErrorResponse,
+    RegenerateScheduleRequest,
     ReoptimizationInfeasibleErrorResponse,
     ReoptimizationInvalidInputErrorResponse,
     ReoptimizeRequest,
@@ -146,10 +156,12 @@ from school_timetable.application.class_timetable_service import ClassTimetableS
 from school_timetable.application.errors import (
     ClassSectionNotFoundError,
     ConfigurationChangedDuringGenerationError,
+    IncompatibleLocksRequireConfirmationError,
     InvalidEditTargetError,
     InvalidSchedulingConfigurationError,
     MoveNotAllowedError,
     NoActiveScheduleError,
+    NoConfigurationDraftError,
     ReoptimizationInfeasibleError,
     ReoptimizationInvalidInputError,
     RestoreVerificationFailedError,
@@ -166,6 +178,7 @@ from school_timetable.application.generate_schedule_service import GenerateSched
 from school_timetable.application.ports import ScheduleVersionRepository
 from school_timetable.application.schedule_editing_service import ScheduleEditingService
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
+from school_timetable.domain.schedule import OccurrenceKey
 
 router = APIRouter()
 
@@ -260,6 +273,131 @@ def generate_schedule(
             ).model_dump(),
         )
     return generate_response_from_active_version(active)
+
+
+@router.post(
+    "/schools/{school_id}/years/{year_id}/schedule/active/regenerate",
+    response_model=ActiveScheduleResponse,
+)
+def regenerate_schedule(
+    school_id: str,
+    year_id: str,
+    body: RegenerateScheduleRequest,
+    service: GenerateScheduleService = Depends(get_generate_schedule_service),
+):
+    """Safe Configuration Changes, Slice C, Checkpoint 5:
+    `GenerateScheduleService.regenerate()`'s thin HTTP wrapper --
+    distinct from `POST .../schedule/generate` above, which remains
+    initial-generation only and is unchanged by this route's addition.
+    `confirmed_incompatible_lock_keys` is deserialized into exactly the
+    `frozenset[OccurrenceKey]` the service expects; an empty request
+    default is valid exactly when nothing is actually incompatible --
+    `regenerate()` itself is the sole authority on whether that is true.
+
+    Error mapping (mirrors `generate_schedule`'s own, plus the manual-
+    editing routes' `NoActiveScheduleError`/`StaleScheduleVersionError`
+    conventions, plus one new one):
+    - `SchedulingProblemNotFoundError` -> 404 (same body as every other
+      route in this file).
+    - `NoActiveScheduleError` -> 404, `{"detail": "Active schedule not
+      found"}` -- the identical code-less body every mutating editing
+      command already uses; regeneration is never the way a *first*
+      `ScheduleVersion` is created.
+    - `StaleScheduleVersionError` -> 409, the same `STALE_SCHEDULE_VERSION`
+      contract every mutating editing command uses (`_stale_version_
+      response`).
+    - `NoConfigurationDraftError` -> 409, `{"code":
+      "NO_CONFIGURATION_DRAFT", "detail": "..."}` -- the exact same
+      contract `DELETE .../configuration/draft` already uses.
+    - `IncompatibleLocksRequireConfirmationError` -> 409, `{"code":
+      "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", "detail": "...",
+      "incompatible_locks": [{"requirement_id", "day_id",
+      "anchor_period_id", "reason_code", "message"}, ...]}` -- the FRESH
+      classification the exception carries, never a stale one; the
+      caller must echo these exact keys back as a retried request's
+      `confirmed_incompatible_lock_keys` to proceed.
+    - `ScheduleInfeasibleError` -> 409, the same `SCHEDULE_INFEASIBLE`
+      `GenerationErrorResponse` contract `generate_schedule` uses.
+    - `ConfigurationChangedDuringGenerationError` -> 409, the same
+      `CONFIGURATION_CHANGED_DURING_GENERATION` `GenerationErrorResponse`
+      contract `generate_schedule` uses.
+    - `InvalidSchedulingConfigurationError` -> 422, the same
+      `InvalidConfigurationResponse` contract `generate_schedule` uses.
+    - Deliberately NOT caught here, exactly like `generate_schedule`:
+      `ScheduleGenerationError`, `ScheduleVerificationFailedError`, or any
+      other unexpected exception -- internal defects, left to FastAPI's
+      normal unhandled-exception (generic 500) behavior.
+    - A successful regeneration returns the exact same
+      `ActiveScheduleResponse` shape every other mutating command does,
+      for its newly-active version.
+    """
+    confirmed_incompatible_lock_keys = frozenset(
+        OccurrenceKey(k.requirement_id, k.day_id, k.anchor_period_id)
+        for k in body.confirmed_incompatible_lock_keys
+    )
+    try:
+        active = service.regenerate(
+            school_id, year_id, body.base_version_number, confirmed_incompatible_lock_keys,
+        )
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except NoActiveScheduleError:
+        raise HTTPException(status_code=404, detail="Active schedule not found") from None
+    except StaleScheduleVersionError as exc:
+        return _stale_version_response(exc)
+    except NoConfigurationDraftError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=NoConfigurationDraftErrorResponse(
+                code="NO_CONFIGURATION_DRAFT", detail=str(exc),
+            ).model_dump(),
+        )
+    except IncompatibleLocksRequireConfirmationError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=IncompatibleLocksRequireConfirmationErrorResponse(
+                code="INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION",
+                detail=str(exc),
+                incompatible_locks=tuple(
+                    IncompatibleLockResponse(
+                        requirement_id=lock.key.requirement_id,
+                        day_id=lock.key.day_id,
+                        anchor_period_id=lock.key.anchor_period_id,
+                        reason_code=lock.reason_code,
+                        message=lock.message,
+                    )
+                    for lock in exc.incompatible_locks
+                ),
+            ).model_dump(),
+        )
+    except ScheduleInfeasibleError:
+        return JSONResponse(
+            status_code=409,
+            content=GenerationErrorResponse(
+                code="SCHEDULE_INFEASIBLE",
+                detail="No feasible schedule exists for this school and academic year",
+            ).model_dump(),
+        )
+    except ConfigurationChangedDuringGenerationError:
+        return JSONResponse(
+            status_code=409,
+            content=GenerationErrorResponse(
+                code="CONFIGURATION_CHANGED_DURING_GENERATION",
+                detail="Scheduling configuration changed during generation; retry generation",
+            ).model_dump(),
+        )
+    except InvalidSchedulingConfigurationError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=InvalidConfigurationResponse(
+                code="INVALID_CONFIGURATION",
+                detail="Scheduling configuration is invalid",
+                errors=tuple(
+                    validation_diagnostic_response_from_error(e) for e in exc.validation_errors
+                ),
+            ).model_dump(),
+        )
+    return active_schedule_response_from_active_version(active)
 
 
 @router.get(

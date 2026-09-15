@@ -31,7 +31,8 @@ from collections.abc import Callable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from school_timetable.application.errors import SchedulingProblemNotFoundError
+from school_timetable.application.draft_snapshot import DraftConfigurationSnapshot
+from school_timetable.application.errors import NoConfigurationDraftError, SchedulingProblemNotFoundError
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.persistence import mappers as mp
 from school_timetable.persistence import models as orm
@@ -62,6 +63,24 @@ class SqlAlchemySchedulingProblemRepository:
 
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def load_draft_snapshot(
+        self, school_natural_id: str, academic_year_natural_id: str,
+    ) -> DraftConfigurationSnapshot:
+        session = self._session
+        school_row, year_row = _resolve_school_and_year(session, school_natural_id, academic_year_natural_id)
+        # All configuration writers and draft lifecycle operations take this lock.
+        # Refresh the pointer after acquiring it: the initial lookup may have waited
+        # behind a writer. Hold it only while materializing the detached snapshot.
+        year_row = session.execute(
+            select(orm.AcademicYear).where(orm.AcademicYear.id == year_row.id)
+            .with_for_update().execution_options(populate_existing=True)
+        ).scalar_one()
+        revision_id = year_row.draft_revision_id
+        if revision_id is None:
+            raise NoConfigurationDraftError(school_natural_id, academic_year_natural_id)
+        problem = self._load_for_revision_id(session, school_row, year_row, revision_id)
+        return DraftConfigurationSnapshot(revision_id=revision_id, problem=problem)
 
     def load_by_school_and_year(
         self,
@@ -258,6 +277,17 @@ class SessionFactorySchedulingProblemRepository:
 
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
+
+    def load_draft_snapshot(
+        self, school_natural_id: str, academic_year_natural_id: str,
+    ) -> DraftConfigurationSnapshot:
+        session = self._session_factory()
+        try:
+            return SqlAlchemySchedulingProblemRepository(session).load_draft_snapshot(
+                school_natural_id, academic_year_natural_id,
+            )
+        finally:
+            session.close()
 
     def load_by_school_and_year(
         self,

@@ -4289,3 +4289,35 @@ open. Regeneration after a configuration edit (Slice C) is explicitly
 NOT started -- there is still no way to re-solve a schedule against an
 edited draft and publish it as a new revision; a discarded draft simply
 reverts to the unchanged published schedule.**
+
+## SAFE CONFIGURATION CHANGES -- SLICE C -- SAFE REGENERATION BACKEND CLOSED
+
+Slice C adds a separate regeneration lifecycle at `POST
+/schools/{school_id}/years/{year_id}/schedule/active/regenerate`; the
+existing `/schedule/generate` endpoint remains initial-generation-only.
+Regeneration requires an open configuration draft and `base_version_number`.
+The service loads the exact internal ConfigurationRevision row identity
+together with its detached SchedulingProblem snapshot, solves without a
+database transaction open, and persistence rechecks both identity and
+configuration content under the AcademicYear row lock before publishing.
+
+Compatible historical locks remain hard solver pins and are carried to the
+new version. Incompatible locks require an exact natural-ID confirmation
+set; confirmed incompatible locks are dropped. REQUIRED compatibility uses
+only resolved locked logical occurrences as an order-independent block-size
+multiset subset; unlocked historical placements do not consume capacity.
+FixedPlacement pins one lesson-period, so different slots for a
+multi-period requirement are not automatically incompatible; only directly
+provable conflicts are classified before the solver.
+
+Successful regeneration atomically publishes the exact draft, clears its
+pointer, creates and activates ScheduleVersion N+1 linked to that revision,
+persists compatible locks, and preserves historical versions and published
+revisions. Failures preserve the previous active/published state, draft, and
+history. Edited-version natural-ID mappings are scoped to the active
+version's configuration revision. No migration or frontend behavior is
+included in this backend closure.
+
+Verification: core tests 655 passed (5 deselected), real-PostgreSQL
+`tests_web` 660 passed, focused Slice C/backend tests 199 passed, and
+Alembic head/current `398b05641152` with no detected upgrade operations.

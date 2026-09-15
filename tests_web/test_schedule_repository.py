@@ -19,24 +19,32 @@ only affects its own work, never the outer, never-committed transaction
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from school_timetable.application.errors import (
+    ConfigurationChangedDuringGenerationError,
+    IncompatibleLocksRequireConfirmationError,
     ScheduleAlreadyExistsError,
     ScheduleVersionNotFoundError,
     SchedulingProblemNotFoundError,
     StaleScheduleVersionError,
 )
+from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.domain.indexing import ProblemIndex
+from school_timetable.domain.people import AvailabilityStatus, TeacherAvailability
 from school_timetable.domain.result import EntrySource, SolverStatus
-from school_timetable.domain.schedule import Schedule
+from school_timetable.domain.schedule import OccurrenceKey, Schedule
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
 from school_timetable.persistence import models as m
+from school_timetable.persistence.configuration_revision_repository import (
+    SqlAlchemyConfigurationRevisionRepository,
+)
 from school_timetable.persistence.problem_repository import SessionFactorySchedulingProblemRepository
 from school_timetable.persistence.schedule_repository import (
     CorruptScheduleStateError,
@@ -49,6 +57,8 @@ from school_timetable.scheduling.editing import (
     unlock_occurrence,
     validate_move,
 )
+from school_timetable.scheduling.lock_compatibility import classify_locks
+from school_timetable.scheduling.options import SolverOptions
 from school_timetable.scheduling.solver import solve
 from tests_web.support.problem_writer import write_scheduling_problem
 
@@ -892,3 +902,980 @@ def test_restore_via_persist_edited_version_rolls_back_atomically_on_integrity_v
 
     reloaded = repo.get_active_schedule(problem.school.id, problem.academic_year.id)
     assert reloaded == v2
+
+
+# == persist_regenerated_version (Safe Configuration Changes, Slice C) ======
+#
+# `db` (SAVEPOINT-nested) is used for every scenario that is a genuinely
+# SEQUENTIAL check -- "did something change before this call" -- exactly
+# the same fixture `test_persist_edited_version_rejects_stale_base_with_zero_mutation`
+# above already uses for the closely analogous stale-active-version case.
+# `real_regen_setup` (real, separately COMMITTED transactions, never
+# rolled back) is used for every one of the four CONCURRENCY REQUIREMENTS
+# (A-D): a genuinely separate, already-committed intervening change, or
+# (D) two truly simultaneous threads racing the same row lock -- neither
+# of which the SAVEPOINT-nested fixture (one single shared, never-
+# committed transaction) can represent.
+
+
+def _ay_row(session: Session, year_id: int) -> m.AcademicYear:
+    return session.execute(select(m.AcademicYear).where(m.AcademicYear.id == year_id)).scalar_one()
+
+
+def _revision_row(session: Session, revision_id: int) -> m.ConfigurationRevision:
+    return session.get(m.ConfigurationRevision, revision_id)
+
+
+def _surrogate_id(session: Session, model: type, natural_id: str, year_id: int, revision_id: int) -> int:
+    return session.execute(
+        select(model.id).where(
+            model.academic_year_id == year_id,
+            model.configuration_revision_id == revision_id,
+            model.natural_id == natural_id,
+        )
+    ).scalar_one()
+
+
+def _mark_teacher_unavailable(
+    session: Session, year_id: int, revision_id: int, teacher_natural_id: str, day_id: str, period_id: str,
+) -> None:
+    """Adds one `TeacherAvailability` row scoped to `revision_id` ONLY
+    (never touching the other, still-published revision's own rows) --
+    the deliberate way these tests make a specific historical lock
+    incompatible with the draft, mirroring
+    `tests/test_lock_compatibility.py`'s own
+    `test_teacher_unavailable_at_locked_slot_is_incompatible` scenario
+    but against the real persistence layer. Caller flushes/commits."""
+    teacher_surrogate = _surrogate_id(session, m.Teacher, teacher_natural_id, year_id, revision_id)
+    day_surrogate = _surrogate_id(session, m.Day, day_id, year_id, revision_id)
+    period_surrogate = _surrogate_id(session, m.Period, period_id, year_id, revision_id)
+    next_ordinal = (session.execute(
+        select(func.max(m.TeacherAvailability.ordinal)).where(
+            m.TeacherAvailability.academic_year_id == year_id,
+            m.TeacherAvailability.configuration_revision_id == revision_id,
+        )
+    ).scalar_one() or 0) + 1
+    session.add(m.TeacherAvailability(
+        academic_year_id=year_id, configuration_revision_id=revision_id,
+        teacher_id=teacher_surrogate, day_id=day_surrogate, period_id=period_surrogate,
+        status=AvailabilityStatus.UNAVAILABLE.value, ordinal=next_ordinal,
+    ))
+
+
+def _seed_v1_locked_and_draft(session: Session, session_factory):
+    """v1 (fresh generate, zero locks) -> lock two plain, non-split,
+    resource-free, no-fixed-placement FLEXIBLE requirements (`history_8b`,
+    `math_8b`) to produce v2 with two `LockedOccurrence`s -> open a draft
+    (revision 2, cloned unchanged from revision 1, Owner Decision #7: an
+    unchanged draft is still a legitimate regeneration target)."""
+    problem, result = _seed(session)
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    v1 = schedule_repo.persist_initial_version(
+        problem.school.id, problem.academic_year.id, problem, result.entries, result.status,
+        result.total_soft_penalty, wall_time_seconds=2.5, random_seed=None,
+    )
+    index = ProblemIndex(problem)
+    schedule = Schedule(entries=v1.entries)
+
+    history_entry = next(e for e in v1.entries if e.requirement_id == "history_8b")
+    schedule = lock_occurrence(
+        problem, schedule, "history_8b", history_entry.day_id, history_entry.period_id, index=index,
+    )
+    math_entry = next(e for e in v1.entries if e.requirement_id == "math_8b")
+    schedule = lock_occurrence(
+        problem, schedule, "math_8b", math_entry.day_id, math_entry.period_id, index=index,
+    )
+
+    v2 = schedule_repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 1, schedule,
+        v1.solver_status, v1.total_soft_penalty, 0.1, None,
+    )
+    assert {k.requirement_id for k in v2.locked_occurrences} == {"history_8b", "math_8b"}
+
+    year_id = session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+
+    config_repo = SqlAlchemyConfigurationRevisionRepository(session_factory)
+    state = config_repo.begin_draft(problem.school.id, problem.academic_year.id)
+    assert state.draft_revision_number == 2
+    draft_revision_id = _ay_row(session, year_id).draft_revision_id
+
+    history_key = OccurrenceKey("history_8b", history_entry.day_id, history_entry.period_id)
+    math_key = OccurrenceKey("math_8b", math_entry.day_id, math_entry.period_id)
+
+    return {
+        "problem": problem, "schedule_repo": schedule_repo, "v1": v1, "v2": v2,
+        "year_id": year_id, "draft_revision_id": draft_revision_id,
+        "history_key": history_key, "math_key": math_key, "math_entry": math_entry,
+    }
+
+
+def test_persist_regenerated_version_no_locks_publishes_draft_and_creates_next_version(db):
+    session, session_factory = db
+    problem, result = _seed(session)
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    v1 = schedule_repo.persist_initial_version(
+        problem.school.id, problem.academic_year.id, problem, result.entries, result.status,
+        result.total_soft_penalty, wall_time_seconds=2.5, random_seed=None,
+    )
+    year_id = session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+
+    config_repo = SqlAlchemyConfigurationRevisionRepository(session_factory)
+    config_repo.begin_draft(problem.school.id, problem.academic_year.id)
+    draft_revision_id = _ay_row(session, year_id).draft_revision_id
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    assert draft_problem == problem  # unchanged clone
+    regen_result = solve(draft_problem)
+    assert regen_result.is_success
+    classification = classify_locks(draft_problem, ProblemIndex(draft_problem), v1.entries, frozenset())
+    assert classification.compatible_keys == frozenset()
+    assert classification.incompatible == ()
+
+    v2 = schedule_repo.persist_regenerated_version(
+        problem.school.id, problem.academic_year.id, 1,
+        draft_problem, regen_result.entries, frozenset(), frozenset(),
+        regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+        expected_draft_revision_id=snapshot.revision_id,
+    )
+
+    assert v2.version_number == 2
+    assert v2.locked_occurrences == frozenset()
+    assert v2.configuration_revision_number == 2
+    assert v2.entries == regen_result.entries
+
+    year_row = _ay_row(session, year_id)
+    assert year_row.draft_revision_id is None
+    assert year_row.published_revision_id == draft_revision_id
+    assert _revision_row(session, draft_revision_id).status == "PUBLISHED"
+
+    v1_row = _version_row(session, year_id, 1)
+    v2_row = _version_row(session, year_id, 2)
+    assert v2_row.configuration_revision_id == draft_revision_id
+    assert v2_row.parent_version_id == v1_row.id
+    schedule_row = session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalar_one()
+    assert schedule_row.active_version_id == v2_row.id
+
+    # The FIRST revision remains PUBLISHED and completely untouched.
+    published_revision_row = session.execute(
+        select(m.ConfigurationRevision).where(
+            m.ConfigurationRevision.academic_year_id == year_id, m.ConfigurationRevision.revision_number == 1,
+        )
+    ).scalar_one()
+    assert published_revision_row.status == "PUBLISHED"
+
+    reloaded = schedule_repo.get_active_schedule(problem.school.id, problem.academic_year.id)
+    assert reloaded == v2
+
+
+def test_persist_regenerated_version_all_compatible_locks_are_carried_forward(db):
+    session, session_factory = db
+    setup = _seed_v1_locked_and_draft(session, session_factory)
+    problem, schedule_repo, v2 = setup["problem"], setup["schedule_repo"], setup["v2"]
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    assert regen_result.is_success
+    classification = classify_locks(
+        draft_problem, ProblemIndex(draft_problem), v2.entries, v2.locked_occurrences,
+    )
+    assert classification.compatible_keys == {setup["history_key"], setup["math_key"]}
+    assert classification.incompatible == ()
+
+    v3 = schedule_repo.persist_regenerated_version(
+        problem.school.id, problem.academic_year.id, 2,
+        draft_problem, regen_result.entries, classification.compatible_keys, frozenset(),
+        regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+        expected_draft_revision_id=snapshot.revision_id,
+    )
+
+    assert v3.version_number == 3
+    assert v3.locked_occurrences == {setup["history_key"], setup["math_key"]}
+
+    v3_row = _version_row(session, setup["year_id"], 3)
+    assert _counts_for_version(session, v3_row.id)["locked_occurrence"] == 2
+
+
+def test_persist_regenerated_version_mixed_locks_only_compatible_persisted_with_confirmation(db):
+    session, session_factory = db
+    setup = _seed_v1_locked_and_draft(session, session_factory)
+    problem, schedule_repo = setup["problem"], setup["schedule_repo"]
+    year_id, draft_revision_id = setup["year_id"], setup["draft_revision_id"]
+
+    _mark_teacher_unavailable(
+        session, year_id, draft_revision_id, "t_math", setup["math_entry"].day_id, setup["math_entry"].period_id,
+    )
+    session.flush()
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    assert regen_result.is_success
+    classification = classify_locks(
+        draft_problem, ProblemIndex(draft_problem), setup["v2"].entries, setup["v2"].locked_occurrences,
+    )
+    assert classification.compatible_keys == {setup["history_key"]}
+    assert len(classification.incompatible) == 1
+    assert classification.incompatible[0].key == setup["math_key"]
+    assert classification.incompatible[0].reason_code == "TEACHER_UNAVAILABLE_AT_SLOT"
+
+    v3 = schedule_repo.persist_regenerated_version(
+        problem.school.id, problem.academic_year.id, 2,
+        draft_problem, regen_result.entries, classification.compatible_keys,
+        frozenset({setup["math_key"]}),
+        regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+        expected_draft_revision_id=snapshot.revision_id,
+    )
+
+    assert v3.locked_occurrences == frozenset({setup["history_key"]})
+    v3_row = _version_row(session, year_id, 3)
+    v3_locks = session.execute(
+        select(m.LockedOccurrence).where(m.LockedOccurrence.schedule_version_id == v3_row.id)
+    ).scalars().all()
+    assert len(v3_locks) == 1
+
+    # Historical v2's own two lock rows are untouched.
+    v2_row = _version_row(session, year_id, 2)
+    assert _counts_for_version(session, v2_row.id)["locked_occurrence"] == 2
+
+
+def test_persist_regenerated_version_raises_configuration_changed_when_expected_draft_is_no_longer_open(db):
+    session, session_factory = db
+    problem, result = _seed(session)
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    v1 = schedule_repo.persist_initial_version(
+        problem.school.id, problem.academic_year.id, problem, result.entries, result.status,
+        result.total_soft_penalty, wall_time_seconds=2.5, random_seed=None,
+    )
+    # No begin_draft call -- the initial draft was already published by
+    # persist_initial_version above, and nothing reopened one.
+    year_id = session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+    before = _counts(session, year_id)
+
+    with pytest.raises(ConfigurationChangedDuringGenerationError) as exc_info:
+        schedule_repo.persist_regenerated_version(
+            problem.school.id, problem.academic_year.id, 1,
+            problem, result.entries, frozenset(), frozenset(),
+            result.status, result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+            expected_draft_revision_id=_ay_row(session, year_id).published_revision_id,
+        )
+    assert exc_info.value.school_natural_id == problem.school.id
+    assert exc_info.value.academic_year_natural_id == problem.academic_year.id
+
+    assert _counts(session, year_id) == before
+    schedule_row = session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalar_one()
+    v1_row = _version_row(session, year_id, 1)
+    assert schedule_row.active_version_id == v1_row.id
+    reloaded = schedule_repo.get_active_schedule(problem.school.id, problem.academic_year.id)
+    assert reloaded == v1
+
+
+def test_persist_regenerated_version_version_number_is_max_plus_one_not_base_plus_one(db):
+    """A directly-inserted, non-active 'future' ScheduleVersion row
+    (version_number=5) -- structurally representable but never producible
+    through today's linear-chain-only public API, exactly the same
+    'construct an otherwise-unreachable row shape directly' convention
+    Slice B's own defense-in-depth tests already use -- proves the
+    query genuinely computes MAX(version_number)+1, not
+    base_version_number+1 (which, for every reachable normal scenario,
+    are numerically identical, since the active version is always the
+    current maximum in this codebase's own linear-history design)."""
+    session, session_factory = db
+    setup = _seed_v1_locked_and_draft(session, session_factory)
+    problem, schedule_repo, v2 = setup["problem"], setup["schedule_repo"], setup["v2"]
+    year_id = setup["year_id"]
+
+    v2_row = _version_row(session, year_id, 2)
+    schedule_row = session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalar_one()
+    session.add(m.ScheduleVersion(
+        academic_year_id=year_id, schedule_id=schedule_row.id, version_number=5,
+        parent_version_id=v2_row.parent_version_id, configuration_revision_id=v2_row.configuration_revision_id,
+        solver_status=v2_row.solver_status, total_soft_penalty=v2_row.total_soft_penalty,
+        wall_time_seconds=v2_row.wall_time_seconds, random_seed=None,
+    ))
+    session.flush()  # schedule_row.active_version_id still points at v2 -- this new row is not active
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    classification = classify_locks(
+        draft_problem, ProblemIndex(draft_problem), v2.entries, v2.locked_occurrences,
+    )
+
+    v_new = schedule_repo.persist_regenerated_version(
+        problem.school.id, problem.academic_year.id, 2,  # base is still 2, the real active version
+        draft_problem, regen_result.entries, classification.compatible_keys, frozenset(),
+        regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+        expected_draft_revision_id=snapshot.revision_id,
+    )
+
+    assert v_new.version_number == 6  # MAX(1, 2, 5) + 1, never 2 + 1 == 3
+
+
+def test_persist_regenerated_version_historical_data_remains_unchanged(db):
+    session, session_factory = db
+    setup = _seed_v1_locked_and_draft(session, session_factory)
+    problem, schedule_repo = setup["problem"], setup["schedule_repo"]
+    v1, v2 = setup["v1"], setup["v2"]
+    year_id = setup["year_id"]
+
+    v1_row_before = _version_row(session, year_id, 1)
+    v2_row_before = _version_row(session, year_id, 2)
+    v1_counts_before = _counts_for_version(session, v1_row_before.id)
+    v2_counts_before = _counts_for_version(session, v2_row_before.id)
+    published_row_before = session.execute(
+        select(m.ConfigurationRevision).where(
+            m.ConfigurationRevision.academic_year_id == year_id, m.ConfigurationRevision.revision_number == 1,
+        )
+    ).scalar_one()
+    requirement_rows_before = list(session.execute(
+        select(m.TeachingRequirement).where(
+            m.TeachingRequirement.academic_year_id == year_id,
+            m.TeachingRequirement.configuration_revision_id == published_row_before.id,
+        )
+    ).scalars())
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    classification = classify_locks(
+        draft_problem, ProblemIndex(draft_problem), v2.entries, v2.locked_occurrences,
+    )
+    schedule_repo.persist_regenerated_version(
+        problem.school.id, problem.academic_year.id, 2,
+        draft_problem, regen_result.entries, classification.compatible_keys, frozenset(),
+        regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+        expected_draft_revision_id=snapshot.revision_id,
+    )
+
+    assert _version_row(session, year_id, 1) == v1_row_before
+    assert _version_row(session, year_id, 2) == v2_row_before
+    assert _counts_for_version(session, v1_row_before.id) == v1_counts_before
+    assert _counts_for_version(session, v2_row_before.id) == v2_counts_before
+    published_row_after = _revision_row(session, published_row_before.id)
+    assert published_row_after.status == "PUBLISHED"
+    requirement_rows_after = list(session.execute(
+        select(m.TeachingRequirement).where(
+            m.TeachingRequirement.academic_year_id == year_id,
+            m.TeachingRequirement.configuration_revision_id == published_row_before.id,
+        )
+    ).scalars())
+    assert len(requirement_rows_after) == len(requirement_rows_before)
+
+
+def test_persist_regenerated_version_missing_incompatible_confirmation_raises_with_fresh_data(db):
+    session, session_factory = db
+    setup = _seed_v1_locked_and_draft(session, session_factory)
+    problem, schedule_repo = setup["problem"], setup["schedule_repo"]
+    year_id, draft_revision_id = setup["year_id"], setup["draft_revision_id"]
+
+    _mark_teacher_unavailable(
+        session, year_id, draft_revision_id, "t_math", setup["math_entry"].day_id, setup["math_entry"].period_id,
+    )
+    session.flush()
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    before = _counts(session, year_id)
+
+    with pytest.raises(IncompatibleLocksRequireConfirmationError) as exc_info:
+        schedule_repo.persist_regenerated_version(
+            problem.school.id, problem.academic_year.id, 2,
+            draft_problem, regen_result.entries, frozenset({setup["history_key"]}),
+            frozenset(),  # never confirmed -- caller acted as if everything were compatible
+            regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+            expected_draft_revision_id=snapshot.revision_id,
+        )
+
+    fresh = exc_info.value.incompatible_locks
+    assert len(fresh) == 1
+    assert fresh[0].key == setup["math_key"]
+    assert fresh[0].reason_code == "TEACHER_UNAVAILABLE_AT_SLOT"
+
+    assert _counts(session, year_id) == before
+    assert _ay_row(session, year_id).draft_revision_id == draft_revision_id
+    assert _revision_row(session, draft_revision_id).status == "DRAFT"
+    schedule_row = session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalar_one()
+    v2_row = _version_row(session, year_id, 2)
+    assert schedule_row.active_version_id == v2_row.id
+
+
+def test_persist_regenerated_version_caller_compatible_set_mismatch_is_refused_internally(db):
+    """Defense-in-depth (10): even after (9) proves the confirmed-
+    incompatible set is exactly right, a caller-supplied `locked_occurrences`
+    that disagrees with the authoritative `classify_locks` result is an
+    internal contract violation -- never a legitimate concurrent-state
+    race (that is fully absorbed by (9) alone) -- and is refused with a
+    bare `RuntimeError`, matching `SqlAlchemyConfigurationRevisionRepository.
+    discard_draft`'s own established defense-in-depth convention."""
+    session, session_factory = db
+    setup = _seed_v1_locked_and_draft(session, session_factory)
+    problem, schedule_repo = setup["problem"], setup["schedule_repo"]
+    year_id, draft_revision_id = setup["year_id"], setup["draft_revision_id"]
+
+    _mark_teacher_unavailable(
+        session, year_id, draft_revision_id, "t_math", setup["math_entry"].day_id, setup["math_entry"].period_id,
+    )
+    session.flush()
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    before = _counts(session, year_id)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        schedule_repo.persist_regenerated_version(
+            problem.school.id, problem.academic_year.id, 2,
+            draft_problem, regen_result.entries,
+            frozenset(),  # WRONG -- should be {history_key}; (9) alone already passed
+            frozenset({setup["math_key"]}),  # correctly confirmed
+            regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+            expected_draft_revision_id=snapshot.revision_id,
+        )
+    # Not IncompatibleLocksRequireConfirmationError, not
+    # ConfigurationChangedDuringGenerationError, not StaleScheduleVersionError
+    # -- a bare RuntimeError specifically, disambiguated by message.
+    assert not isinstance(exc_info.value, IncompatibleLocksRequireConfirmationError)
+    assert "does not match the authoritative compatible-lock classification" in str(exc_info.value)
+
+    assert _counts(session, year_id) == before
+    assert _ay_row(session, year_id).draft_revision_id == draft_revision_id
+    assert _revision_row(session, draft_revision_id).status == "DRAFT"
+
+
+def test_persist_regenerated_version_rolls_back_completely_on_integrity_violation(db):
+    """The atomic-failure proof: an invalid `solver_status` trips
+    `ck_schedule_version_solver_status` INSIDE the write sequence, AFTER
+    the draft-publish flush (11) has already happened but before
+    `session.commit()` (16) -- proving the publish transition itself is
+    rolled back along with everything after it, never left half-applied.
+    Reuses the exact same real, unmodified production constraint
+    `test_persist_edited_version_rolls_back_completely_on_integrity_violation`
+    already uses -- no test-only monkeypatch, no weakened transaction
+    boundary."""
+    session, session_factory = db
+    setup = _seed_v1_locked_and_draft(session, session_factory)
+    problem, schedule_repo = setup["problem"], setup["schedule_repo"]
+    year_id, draft_revision_id = setup["year_id"], setup["draft_revision_id"]
+
+    snapshot = SessionFactorySchedulingProblemRepository(session_factory).load_draft_snapshot(
+        problem.school.id, problem.academic_year.id,
+    )
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    classification = classify_locks(
+        draft_problem, ProblemIndex(draft_problem), setup["v2"].entries, setup["v2"].locked_occurrences,
+    )
+    before = _counts(session, year_id)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        schedule_repo.persist_regenerated_version(
+            problem.school.id, problem.academic_year.id, 2,
+            draft_problem, regen_result.entries, classification.compatible_keys, frozenset(),
+            SolverStatus.INFEASIBLE,  # never a valid persisted status
+            regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+            expected_draft_revision_id=snapshot.revision_id,
+        )
+    assert exc_info.value.orig.diag.constraint_name == "ck_schedule_version_solver_status"
+
+    # The draft publish transition (11) itself was rolled back -- not
+    # just the later ScheduleVersion/entry inserts.
+    assert _ay_row(session, year_id).draft_revision_id == draft_revision_id
+    assert _ay_row(session, year_id).published_revision_id != draft_revision_id
+    assert _revision_row(session, draft_revision_id).status == "DRAFT"
+
+    assert _counts(session, year_id) == before  # no orphan version_3 row, no partial children
+    schedule_row = session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalar_one()
+    v2_row = _version_row(session, year_id, 2)
+    assert schedule_row.active_version_id == v2_row.id  # never repointed
+
+    reloaded = schedule_repo.get_active_schedule(problem.school.id, problem.academic_year.id)
+    assert reloaded == setup["v2"]
+
+
+# == Real-PostgreSQL concurrency proofs (Owner Decision #36) =================
+#
+# `real_regen_setup` mirrors `tests_web/test_configuration_revision_repository.py`'s
+# own `seeded_and_published_db` fixture exactly, for the identical reason:
+# these four scenarios need genuinely separate, ALREADY-COMMITTED
+# transactions (A, B, C) or truly simultaneous ones (D) -- something the
+# SAVEPOINT-nested `db` fixture, which pins every test to one single
+# shared, never-committed transaction, cannot represent.
+
+@pytest.fixture
+def real_regen_setup(live_db_engine):
+    connection = live_db_engine.connect()
+    session = Session(bind=connection)
+    problem = build_valid_fixture()
+    write_scheduling_problem(session, problem)
+    session.commit()
+    session.close()
+    connection.close()
+
+    session_factory = sessionmaker(bind=live_db_engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    generate_service = GenerateScheduleService(
+        SessionFactorySchedulingProblemRepository(session_factory),
+        SqlAlchemyScheduleVersionRepository(session_factory),
+    )
+    v1 = generate_service.generate(
+        problem.school.id, problem.academic_year.id,
+        solver_options=SolverOptions(random_seed=11, num_search_workers=1),
+    )
+    assert v1.solver_status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE)
+
+    # Deliberately does NOT open a draft here. `persist_edited_version`'s
+    # own natural-id-to-surrogate lookup (like `persist_initial_version`'s)
+    # is unscoped by revision and only ever safe to call while at most
+    # one revision exists for this year -- exactly the invariant
+    # `ScheduleEditingService`'s own `_reject_if_out_of_date` guard
+    # enforces at the application layer whenever a draft IS open. A test
+    # that needs a SECOND ScheduleVersion (via a direct, guard-bypassing
+    # repository call) must create it BEFORE opening a draft, mirroring
+    # the real, legitimate application order (edit first, open a draft
+    # to change configuration later) -- each test below opens its own
+    # draft, via `SqlAlchemyConfigurationRevisionRepository.begin_draft`,
+    # only after any such edit.
+    try:
+        yield problem, session_factory, v1
+    finally:
+        cleanup_connection = live_db_engine.connect()
+        cleanup_session = Session(bind=cleanup_connection)
+        school_row = cleanup_session.execute(
+            select(m.School).where(m.School.natural_id == problem.school.id)
+        ).scalar_one_or_none()
+        if school_row is not None:
+            cleanup_session.delete(school_row)  # DB-level ON DELETE CASCADE removes everything under it
+            cleanup_session.commit()
+        cleanup_session.close()
+        cleanup_connection.close()
+
+
+def test_persist_regenerated_version_raises_configuration_changed_when_draft_edited_after_solve(
+    real_regen_setup, live_db_engine,
+):
+    """A: a genuinely separate, REAL, committed configuration write lands
+    in the draft after the caller's own load+solve but before this call's
+    persistence -- exactly the race Owner Decision #36 exists to close."""
+    problem, session_factory, v1 = real_regen_setup
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    problem_repo = SessionFactorySchedulingProblemRepository(session_factory)
+    SqlAlchemyConfigurationRevisionRepository(session_factory).begin_draft(
+        problem.school.id, problem.academic_year.id,
+    )
+
+    snapshot = problem_repo.load_draft_snapshot(problem.school.id, problem.academic_year.id)
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    assert regen_result.is_success
+
+    intervening_connection = live_db_engine.connect()
+    intervening_session = Session(bind=intervening_connection)
+    year_id = intervening_session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+    draft_revision_id = _ay_row(intervening_session, year_id).draft_revision_id
+    intervening_session.add(m.Teacher(
+        academic_year_id=year_id, configuration_revision_id=draft_revision_id,
+        natural_id="t_intervening", first_name="Intervening", last_name="", ordinal=999,
+    ))
+    intervening_session.commit()
+    intervening_session.close()
+    intervening_connection.close()
+
+    check_connection = live_db_engine.connect()
+    check_session = Session(bind=check_connection)
+    before = _counts(check_session, year_id)
+    check_session.close()
+    check_connection.close()
+
+    with pytest.raises(ConfigurationChangedDuringGenerationError):
+        schedule_repo.persist_regenerated_version(
+            problem.school.id, problem.academic_year.id, v1.version_number,
+            draft_problem, regen_result.entries, frozenset(), frozenset(),
+            regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+            expected_draft_revision_id=snapshot.revision_id,
+        )
+
+    check_connection2 = live_db_engine.connect()
+    check_session2 = Session(bind=check_connection2)
+    try:
+        assert _counts(check_session2, year_id) == before
+        year_row = _ay_row(check_session2, year_id)
+        assert year_row.draft_revision_id == draft_revision_id
+        assert _revision_row(check_session2, draft_revision_id).status == "DRAFT"
+    finally:
+        check_session2.close()
+        check_connection2.close()
+
+
+def test_persist_regenerated_version_raises_stale_base_version_when_active_changed(real_regen_setup):
+    """B: a genuinely separate, REAL, committed edit promotes v2 to
+    active while the caller still believes v1 is current -- the identical
+    scenario `test_persist_edited_version_rejects_stale_base_with_zero_mutation`
+    already proves for plain editing, now proven for regeneration too."""
+    problem, session_factory, v1 = real_regen_setup
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    problem_repo = SessionFactorySchedulingProblemRepository(session_factory)
+
+    # The edit (creating v2) happens FIRST, while only one revision
+    # exists -- mirroring the real, legitimate application order (see
+    # `real_regen_setup`'s own comment). The draft is opened only after.
+    index = ProblemIndex(problem)
+    move = _find_move(problem, index, Schedule(entries=v1.entries))
+    candidate = apply_move(problem, Schedule(entries=v1.entries), move)
+    schedule_repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 1, candidate,
+        v1.solver_status, v1.total_soft_penalty, 0.2, None,
+    )
+
+    SqlAlchemyConfigurationRevisionRepository(session_factory).begin_draft(
+        problem.school.id, problem.academic_year.id,
+    )
+    snapshot = problem_repo.load_draft_snapshot(problem.school.id, problem.academic_year.id)
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+
+    with pytest.raises(StaleScheduleVersionError) as exc_info:
+        schedule_repo.persist_regenerated_version(
+            problem.school.id, problem.academic_year.id, 1,  # stale -- active is now 2
+            draft_problem, regen_result.entries, frozenset(), frozenset(),
+            regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+            expected_draft_revision_id=snapshot.revision_id,
+        )
+    assert exc_info.value.expected_base_version_number == 1
+    assert exc_info.value.actual_active_version_number == 2
+
+    reloaded = schedule_repo.get_active_schedule(problem.school.id, problem.academic_year.id)
+    assert reloaded.version_number == 2
+
+
+def test_persist_regenerated_version_raises_incompatible_locks_when_compatibility_changes_after_caller_classified(
+    real_regen_setup, live_db_engine,
+):
+    """C: the caller classifies locks while the draft is still unchanged
+    (math_8b compatible) and confirms nothing -- a genuinely separate,
+    REAL, committed draft edit then makes that exact lock incompatible.
+    The caller DOES correctly reload/re-solve against the now-current
+    draft (so step (3)-(4)'s configuration-changed check does not fire --
+    this is deliberately NOT scenario A) but its own
+    `confirmed_incompatible_lock_keys` still reflects the earlier,
+    now-stale classification. Persistence must recompute lock
+    compatibility fresh against the reloaded active version and draft,
+    never trust that stale confirmation."""
+    problem, session_factory, v1 = real_regen_setup
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    problem_repo = SessionFactorySchedulingProblemRepository(session_factory)
+
+    index = ProblemIndex(problem)
+    math_entry = next(e for e in v1.entries if e.requirement_id == "math_8b")
+    locked_schedule = lock_occurrence(
+        problem, Schedule(entries=v1.entries), "math_8b", math_entry.day_id, math_entry.period_id, index=index,
+    )
+    v2 = schedule_repo.persist_edited_version(
+        problem.school.id, problem.academic_year.id, 1, locked_schedule,
+        v1.solver_status, v1.total_soft_penalty, 0.1, None,
+    )
+    math_key = OccurrenceKey("math_8b", math_entry.day_id, math_entry.period_id)
+    assert v2.locked_occurrences == frozenset({math_key})
+
+    SqlAlchemyConfigurationRevisionRepository(session_factory).begin_draft(
+        problem.school.id, problem.academic_year.id,
+    )
+    snapshot = problem_repo.load_draft_snapshot(problem.school.id, problem.academic_year.id)
+    draft_problem_before_edit = snapshot.problem
+    classification_before_edit = classify_locks(
+        draft_problem_before_edit, ProblemIndex(draft_problem_before_edit), v2.entries, v2.locked_occurrences,
+    )
+    assert classification_before_edit.compatible_keys == frozenset({math_key})
+    assert classification_before_edit.incompatible == ()
+
+    intervening_connection = live_db_engine.connect()
+    intervening_session = Session(bind=intervening_connection)
+    year_id = intervening_session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+    draft_revision_id = _ay_row(intervening_session, year_id).draft_revision_id
+    _mark_teacher_unavailable(
+        intervening_session, year_id, draft_revision_id, "t_math", math_entry.day_id, math_entry.period_id,
+    )
+    intervening_session.commit()
+    intervening_session.close()
+    intervening_connection.close()
+
+    # The caller correctly reloads/re-solves against the NOW-current
+    # draft (so `problem` matches what persistence will independently
+    # reload too) but still passes its OLD, now-stale
+    # confirmed_incompatible_lock_keys (empty) and OLD compatible-lock
+    # set -- exactly a caller that classified once and never re-checked
+    # before finally calling persist_regenerated_version.
+    snapshot = problem_repo.load_draft_snapshot(problem.school.id, problem.academic_year.id)
+    draft_problem_after_edit = snapshot.problem
+    regen_result = solve(draft_problem_after_edit)
+
+    with pytest.raises(IncompatibleLocksRequireConfirmationError) as exc_info:
+        schedule_repo.persist_regenerated_version(
+            problem.school.id, problem.academic_year.id, 2,
+            draft_problem_after_edit, regen_result.entries, classification_before_edit.compatible_keys,
+            frozenset(),  # the caller's now-stale confirmation: still empty
+            regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+            expected_draft_revision_id=snapshot.revision_id,
+        )
+    fresh = exc_info.value.incompatible_locks
+    assert len(fresh) == 1
+    assert fresh[0].key == math_key
+    assert fresh[0].reason_code == "TEACHER_UNAVAILABLE_AT_SLOT"
+
+    check_connection = live_db_engine.connect()
+    check_session = Session(bind=check_connection)
+    try:
+        assert _ay_row(check_session, year_id).draft_revision_id == draft_revision_id
+        assert _revision_row(check_session, draft_revision_id).status == "DRAFT"
+    finally:
+        check_session.close()
+        check_connection.close()
+
+
+def test_concurrent_persist_regenerated_version_exactly_one_succeeds(real_regen_setup, live_db_engine):
+    """D: two threads race to regenerate the same year/base/draft at the
+    same instant. Whichever thread's row lock wins publishes the draft
+    and creates v2; the other blocks until the first commits, reloads,
+    finds the draft already gone, and fails cleanly with
+    `ConfigurationChangedDuringGenerationError` -- never a double publish, never two
+    ScheduleVersions claiming the same version_number. Mirrors
+    `tests_web/test_configuration_revision_repository.py::
+    test_concurrent_begin_draft_converges_on_exactly_one_draft`'s exact
+    `threading.Barrier` technique."""
+    problem, session_factory, v1 = real_regen_setup
+    schedule_repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    problem_repo = SessionFactorySchedulingProblemRepository(session_factory)
+    SqlAlchemyConfigurationRevisionRepository(session_factory).begin_draft(
+        problem.school.id, problem.academic_year.id,
+    )
+
+    snapshot = problem_repo.load_draft_snapshot(problem.school.id, problem.academic_year.id)
+    draft_problem = snapshot.problem
+    regen_result = solve(draft_problem)
+    assert regen_result.is_success
+
+    barrier = threading.Barrier(2)
+    results: dict[str, object] = {}
+
+    def attempt(label: str) -> None:
+        barrier.wait(timeout=10)
+        try:
+            results[label] = schedule_repo.persist_regenerated_version(
+                problem.school.id, problem.academic_year.id, v1.version_number,
+                draft_problem, regen_result.entries, frozenset(), frozenset(),
+                regen_result.status, regen_result.total_soft_penalty, wall_time_seconds=1.0, random_seed=None,
+                expected_draft_revision_id=snapshot.revision_id,
+            )
+        except Exception as exc:  # pragma: no cover - diagnostic only
+            results[label] = exc
+
+    t1 = threading.Thread(target=attempt, args=("A",))
+    t2 = threading.Thread(target=attempt, args=("B",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    successes = [r for r in results.values() if not isinstance(r, Exception)]
+    failures = [r for r in results.values() if isinstance(r, Exception)]
+    assert len(successes) == 1, f"expected exactly one success, got: {results!r}"
+    assert len(failures) == 1, f"expected exactly one clean failure, got: {results!r}"
+    assert isinstance(failures[0], ConfigurationChangedDuringGenerationError), (
+        f"loser must fail with ConfigurationChangedDuringGenerationError after the winner already "
+        f"published the draft, got: {failures[0]!r}"
+    )
+    assert successes[0].version_number == 2
+
+    check_connection = live_db_engine.connect()
+    check_session = Session(bind=check_connection)
+    try:
+        year_id = check_session.execute(
+            select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+        ).scalar_one()
+        year_row = _ay_row(check_session, year_id)
+        assert year_row.draft_revision_id is None
+
+        version_rows = check_session.execute(
+            select(m.ScheduleVersion).where(m.ScheduleVersion.academic_year_id == year_id)
+        ).scalars().all()
+        assert sorted(v.version_number for v in version_rows) == [1, 2]  # never a duplicate/orphan
+
+        schedule_row = check_session.execute(
+            select(m.Schedule).where(m.Schedule.academic_year_id == year_id)
+        ).scalar_one()
+        v2_row = next(v for v in version_rows if v.version_number == 2)
+        assert schedule_row.active_version_id == v2_row.id
+
+        revision_rows = check_session.execute(
+            select(m.ConfigurationRevision).where(m.ConfigurationRevision.academic_year_id == year_id)
+        ).scalars().all()
+        assert len(revision_rows) == 2  # published(1) + newly-published(2), never a third
+        assert all(r.status == "PUBLISHED" for r in revision_rows)
+    finally:
+        check_session.close()
+        check_connection.close()
+
+
+def test_regeneration_rejects_identical_reopened_draft_with_reused_number(real_regen_setup):
+    problem, session_factory, v1 = real_regen_setup
+    config = SqlAlchemyConfigurationRevisionRepository(session_factory)
+    problems = SessionFactorySchedulingProblemRepository(session_factory)
+    repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    school, year = problem.school.id, problem.academic_year.id
+    original_state = config.begin_draft(school, year)
+    snapshot = problems.load_draft_snapshot(school, year)
+    result = solve(snapshot.problem)
+    assert result.is_success
+
+    # These committed operations also prove the snapshot reader released its lock.
+    config.discard_draft(school, year)
+    replacement_state = config.begin_draft(school, year)
+    replacement = problems.load_draft_snapshot(school, year)
+    assert replacement_state.draft_revision_number == original_state.draft_revision_number == 2
+    assert replacement.revision_id != snapshot.revision_id
+    assert replacement.problem == snapshot.problem
+    with session_factory() as session:
+        year_id = session.execute(select(m.AcademicYear.id).where(m.AcademicYear.natural_id == year)).scalar_one()
+        published_id = _ay_row(session, year_id).published_revision_id
+        before = _counts(session, year_id)
+    history_before = repo.get_version(school, year, v1.version_number)
+
+    with pytest.raises(ConfigurationChangedDuringGenerationError):
+        repo.persist_regenerated_version(
+            school, year, v1.version_number, snapshot.problem, result.entries,
+            frozenset(), frozenset(), result.status, result.total_soft_penalty, 1.0, None,
+            expected_draft_revision_id=snapshot.revision_id,
+        )
+
+    with session_factory() as session:
+        assert _counts(session, year_id) == before
+        ay = _ay_row(session, year_id)
+        assert ay.draft_revision_id == replacement.revision_id
+        assert ay.published_revision_id == published_id
+        assert session.get(m.ConfigurationRevision, replacement.revision_id).status == "DRAFT"
+        assert session.get(m.ConfigurationRevision, published_id).status == "PUBLISHED"
+    assert repo.get_active_schedule(school, year) == v1
+    assert repo.get_version(school, year, v1.version_number) == history_before
+
+
+@pytest.mark.parametrize("historical_last", [False, True])
+def test_edits_after_regeneration_scope_all_references_to_base_revision(real_regen_setup, historical_last):
+    from sqlalchemy import event
+    from school_timetable.application.schedule_editing_service import ScheduleEditingService
+
+    problem, session_factory, v1 = real_regen_setup
+    school, year = problem.school.id, problem.academic_year.id
+    repo = SqlAlchemyScheduleVersionRepository(session_factory)
+    problems = SessionFactorySchedulingProblemRepository(session_factory)
+    config = SqlAlchemyConfigurationRevisionRepository(session_factory)
+    config.begin_draft(school, year)
+    regenerated = GenerateScheduleService(problems, repo, config).regenerate(school, year, v1.version_number)
+    editing = ScheduleEditingService(problems, repo, config)
+    history_before = [replace(repo.get_version(school, year, n), is_active=False) for n in (1, 2)]
+    models = (m.Day, m.Period, m.TeachingRequirement, m.ReservedBlock)
+    with session_factory() as session:
+        year_id = session.execute(select(m.AcademicYear.id).where(m.AcademicYear.natural_id == year)).scalar_one()
+        revision_id = _version_row(session, year_id, regenerated.version_number).configuration_revision_id
+        for model in models:
+            rows = session.execute(select(model).where(model.academic_year_id == year_id)).scalars().all()
+            assert rows  # Cover reserved-block references as well as lesson references.
+            grouped = {}
+            for row in rows:
+                grouped.setdefault(row.natural_id, []).append(row)
+            assert all(len({r.configuration_revision_id for r in group}) == 2 for group in grouped.values())
+            assert all(len({r.id for r in group}) == 2 for group in grouped.values())
+
+    def order_configuration_queries(state):
+        if not state.is_select:
+            return
+        descriptions = getattr(state.statement, "column_descriptions", ())
+        if len(descriptions) == 1:
+            model = descriptions[0].get("entity")
+            if model in models:
+                column = model.configuration_revision_id
+                state.statement = state.statement.order_by(None).order_by(
+                    column.desc() if historical_last else column.asc(), model.id,
+                )
+
+    def assert_references(active):
+        with session_factory() as session:
+            version = _version_row(session, year_id, active.version_number)
+            assert version.configuration_revision_id == revision_id
+            entries = session.execute(select(m.ScheduleEntry).where(m.ScheduleEntry.schedule_version_id == version.id)).scalars().all()
+            locks = session.execute(select(m.LockedOccurrence).where(m.LockedOccurrence.schedule_version_id == version.id)).scalars().all()
+            assert entries
+            for row in entries:
+                references = [(m.Day, row.day_id), (m.Period, row.period_id),
+                              (m.TeachingRequirement, row.teaching_requirement_id), (m.ReservedBlock, row.reserved_block_id)]
+                for model, identity in references:
+                    if identity is not None:
+                        assert session.get(model, identity).configuration_revision_id == revision_id
+            assert len(locks) == len(active.locked_occurrences)
+            for row in locks:
+                for model, identity in [(m.Day, row.day_id), (m.Period, row.anchor_period_id),
+                                        (m.TeachingRequirement, row.teaching_requirement_id)]:
+                    assert session.get(model, identity).configuration_revision_id == revision_id
+        assert repo.get_active_schedule(school, year) == active
+
+    event.listen(Session, "do_orm_execute", order_configuration_queries)
+    try:
+        entry = next(e for e in regenerated.entries if e.requirement_id == "history_8b")
+        locked = editing.lock(school, year, regenerated.version_number, entry.requirement_id, entry.day_id, entry.period_id)
+        assert locked.locked_occurrences
+        assert_references(locked)
+        optimized = editing.reoptimize(school, year, locked.version_number)
+        assert optimized.locked_occurrences == locked.locked_occurrences
+        assert_references(optimized)
+        unlocked = editing.unlock(school, year, optimized.version_number, entry.requirement_id, entry.day_id, entry.period_id)
+        assert not unlocked.locked_occurrences
+        assert_references(unlocked)
+        restored = editing.restore(school, year, unlocked.version_number, locked.version_number)
+        assert restored.locked_occurrences == locked.locked_occurrences
+        assert_references(restored)
+        # Find a legal move using the existing validation logic, not a solver-layout assumption.
+        candidate = Schedule(entries=unlocked.entries)
+        for source in unlocked.entries:
+            if source.source != EntrySource.REQUIREMENT:
+                continue
+            target = next(((day.id, period.id) for day in problem.days for period in problem.periods
+                           if (day.id, period.id) != (source.day_id, source.period_id)
+                           and validate_move(problem, candidate, source.requirement_id, source.day_id,
+                                             source.period_id, day.id, period.id).allowed), None)
+            if target:
+                break
+        assert target is not None
+        # Restore the unlocked version first so the candidate above matches the active locks.
+        active = editing.restore(school, year, restored.version_number, unlocked.version_number)
+        assert_references(active)
+        moved = editing.move(school, year, active.version_number, source.requirement_id,
+                             source.day_id, source.period_id, *target)
+        assert_references(moved)
+    finally:
+        event.remove(Session, "do_orm_execute", order_configuration_queries)
+    assert [repo.get_version(school, year, n) for n in (1, 2)] == history_before
