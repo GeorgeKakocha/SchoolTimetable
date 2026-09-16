@@ -164,7 +164,7 @@ def test_post_begin_draft_from_published_state(client, db):
         "published_revision_number": 1,
         "draft_revision_number": 2,
         "configuration_locked": False,
-        "timetable_out_of_date": True,
+        "timetable_out_of_date": False,
     }
 
     # GET state immediately reflects the new draft.

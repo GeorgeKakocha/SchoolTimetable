@@ -5,6 +5,7 @@ import TeacherSelector from "../components/TeacherSelector";
 import TeacherTimetableGrid from "../components/TeacherTimetableGrid";
 import TimetableGrid from "../components/TimetableGrid";
 import VersionHistoryPanel from "../components/VersionHistoryPanel";
+import IncompatibleLocksDialog from "../components/IncompatibleLocksDialog";
 import {
   ApiError,
   generateSchedule,
@@ -12,6 +13,16 @@ import {
   getSchedulingConfigIndex,
   getTeacherTimetable,
 } from "../api/client";
+import { getConfigurationState } from "../api/configurationRevision";
+import {
+  isConfigurationChangedDuringGenerationError,
+  isIncompatibleLocksRequireConfirmationError,
+  isInvalidConfigurationError,
+  isNoConfigurationDraftError,
+  isScheduleInfeasibleError,
+  isStaleScheduleVersionError,
+  regenerateActiveSchedule,
+} from "../api/scheduleRegeneration";
 import {
   getClassTimetableForVersion,
   getTeacherTimetableForVersion,
@@ -19,6 +30,8 @@ import {
 } from "../api/scheduleVersions";
 import type {
   ClassTimetableResponse,
+  ConfigurationRevisionStateResponse,
+  IncompatibleLock,
   SchedulingConfigIndexResponse,
   TeacherTimetableResponse,
   ValidationDiagnostic,
@@ -103,6 +116,11 @@ type TeacherTimetableState =
 
 type TimetableMode = "class" | "teacher";
 
+type ConfigurationState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; state: ConfigurationRevisionStateResponse };
+
 /** Schedule version history + restore's own error mapping -- mirrors
  * `ClassTimetableEditor.tsx`'s `describeEditingError` style: a safe,
  * specific message per structured backend code, never a raw JSON dump. */
@@ -145,6 +163,44 @@ function isValidationDiagnostic(value: unknown): value is ValidationDiagnostic {
   );
 }
 
+function ConfigurationStateLoadNotice({
+  configurationState,
+  onRetry,
+}: {
+  configurationState: ConfigurationState;
+  onRetry: () => void;
+}) {
+  if (configurationState.status !== "error") {
+    return null;
+  }
+  return (
+    <div className="stale-banner" role="alert">
+      <p>Configuration state could not be loaded. The timetable remains available.</p>
+      <p>{configurationState.message}</p>
+      <button type="button" onClick={onRetry}>
+        Retry
+      </button>
+    </div>
+  );
+}
+
+function ActiveConfigurationNotice({ state }: { state: ConfigurationRevisionStateResponse }) {
+  if (state.timetable_out_of_date) {
+    return (
+      <div className="stale-banner" role="alert">
+        <p>Configuration changes are waiting to be applied.</p>
+        <p>
+          This active timetable was generated from the previously published configuration and remains usable. Regeneration is required to create a new timetable version.
+        </p>
+      </div>
+    );
+  }
+  if (state.draft_revision_number !== null) {
+    return <p className="timetable-current-state">Current timetable; an editable draft is open with no pending changes.</p>;
+  }
+  return <p className="timetable-current-state">Current timetable matches the published configuration.</p>;
+}
+
 /** Maps a `POST .../schedule/generate` failure to a safe inline
  * message plus, for `INVALID_CONFIGURATION`, the structured diagnostic
  * list -- reusing `ApiError.code`/`.body` (3C.3b) exactly, no new
@@ -170,6 +226,36 @@ function describeGenerationError(error: unknown): { message: string; diagnostics
   return { message: error.detail, diagnostics: [] };
 }
 
+function describeRegenerationError(error: unknown): { message: string; diagnostics: ValidationDiagnostic[] } {
+  if (isStaleScheduleVersionError(error)) {
+    return {
+      message: "The active timetable changed while regeneration was being prepared. The latest timetable has been loaded. Review it before trying again.",
+      diagnostics: [],
+    };
+  }
+  if (isConfigurationChangedDuringGenerationError(error)) {
+    return {
+      message: "The configuration changed while regeneration was running. The latest state has been loaded. Review it before trying again.",
+      diagnostics: [],
+    };
+  }
+  if (isNoConfigurationDraftError(error)) {
+    return {
+      message: "There is no editable configuration draft to regenerate. The latest configuration state has been loaded.",
+      diagnostics: [],
+    };
+  }
+  if (isScheduleInfeasibleError(error)) {
+    return { message: "No feasible timetable could be generated from the current draft.", diagnostics: [] };
+  }
+  if (isInvalidConfigurationError(error)) {
+    const rawErrors = error.body?.["errors"];
+    const diagnostics = Array.isArray(rawErrors) ? rawErrors.filter(isValidationDiagnostic) : [];
+    return { message: error.detail, diagnostics };
+  }
+  return { message: error instanceof ApiError ? error.detail : "Something went wrong. Please try again.", diagnostics: [] };
+}
+
 function TimetablePage() {
   const [appConfigResult] = useState<AppConfigResult>(() => {
     try {
@@ -184,6 +270,7 @@ function TimetablePage() {
   });
 
   const [configState, setConfigState] = useState<ConfigState>({ status: "loading" });
+  const [configurationState, setConfigurationState] = useState<ConfigurationState>({ status: "loading" });
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [timetableState, setTimetableState] = useState<TimetableState>({ status: "idle" });
 
@@ -199,6 +286,13 @@ function TimetablePage() {
   // mechanism by which a generated schedule becomes visible; never a
   // second, hand-built display path.
   const [generationRefreshToken, setGenerationRefreshToken] = useState(0);
+  const [configurationRefreshToken, setConfigurationRefreshToken] = useState(0);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenerationError, setRegenerationError] = useState<string | null>(null);
+  const [regenerationDiagnostics, setRegenerationDiagnostics] = useState<ValidationDiagnostic[]>([]);
+  const [incompatibleLocksForReview, setIncompatibleLocksForReview] = useState<IncompatibleLock[]>([]);
+  const [incompatibleLocksBaseVersion, setIncompatibleLocksBaseVersion] = useState<number | null>(null);
+  const [regenerationSuccessMessage, setRegenerationSuccessMessage] = useState<string | null>(null);
 
   // Schedule version history + restore. `viewingVersionNumber === null`
   // means "the current active version" -- the ordinary, pre-existing
@@ -221,6 +315,12 @@ function TimetablePage() {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreSuccessMessage, setRestoreSuccessMessage] = useState<string | null>(null);
   const [versionStaleNotice, setVersionStaleNotice] = useState<string | null>(null);
+
+  function refreshAuthoritativeScheduleState() {
+    setGenerationRefreshToken((token) => token + 1);
+    setConfigurationRefreshToken((token) => token + 1);
+    setHistoryRefreshToken((token) => token + 1);
+  }
 
   // Load the scheduling config index (for the class selector) once.
   useEffect(() => {
@@ -255,6 +355,31 @@ function TimetablePage() {
       controller.abort();
     };
   }, [appConfigResult]);
+
+  // Configuration lifecycle is authoritative for whether the active
+  // timetable is current. This read is deliberately independent from the
+  // `/config` index and timetable projections: failure here never hides a
+  // usable timetable. The existing generation/mutation refresh token also
+  // refreshes this state after Generate and Restore.
+  useEffect(() => {
+    if (!appConfigResult.ok) {
+      return;
+    }
+    const controller = new AbortController();
+    setConfigurationState({ status: "loading" });
+    getConfigurationState(appConfigResult.schoolId, appConfigResult.academicYearId, controller.signal)
+      .then((state) => {
+        if (!controller.signal.aborted) {
+          setConfigurationState({ status: "ready", state });
+        }
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setConfigurationState({ status: "error", message: describeApiError(error) });
+        }
+      });
+    return () => controller.abort();
+  }, [appConfigResult, configurationRefreshToken]);
 
   // Load the selected class's live timetable. Re-runs whenever the
   // selected class changes, or `generationRefreshToken` bumps (the
@@ -385,6 +510,7 @@ function TimetablePage() {
     try {
       await generateSchedule(appConfigResult.schoolId, appConfigResult.academicYearId);
       setGenerationRefreshToken((token) => token + 1);
+      setConfigurationRefreshToken((token) => token + 1);
     } catch (error) {
       if (error instanceof ApiError && error.code === "SCHEDULE_ALREADY_EXISTS") {
         // Stale browser state, not a generation failure -- someone/
@@ -392,6 +518,7 @@ function TimetablePage() {
         // state via the same authoritative re-fetch a real success
         // uses, never a scary error and never a second POST.
         setGenerationRefreshToken((token) => token + 1);
+        setConfigurationRefreshToken((token) => token + 1);
       } else {
         const { message, diagnostics } = describeGenerationError(error);
         setGenerateError(message);
@@ -402,13 +529,115 @@ function TimetablePage() {
     }
   }
 
+  async function handleRegenerateClick() {
+    if (
+      !appConfigResult.ok ||
+      regenerating ||
+      viewingVersionNumber !== null ||
+      activeVersionNumber === null ||
+      configurationState.status !== "ready" ||
+      !configurationState.state.timetable_out_of_date
+    ) {
+      return;
+    }
+    setRegenerating(true);
+    setRegenerationError(null);
+    setRegenerationDiagnostics([]);
+    setIncompatibleLocksForReview([]);
+    setRegenerationSuccessMessage(null);
+    const baseVersionNumber = activeVersionNumber;
+    try {
+      const result = await regenerateActiveSchedule(appConfigResult.schoolId, appConfigResult.academicYearId, {
+        base_version_number: baseVersionNumber,
+        confirmed_incompatible_lock_keys: [],
+      });
+      setRegenerationSuccessMessage(`Timetable regenerated. Version ${result.version_number} is now active.`);
+      refreshAuthoritativeScheduleState();
+    } catch (error) {
+      if (isIncompatibleLocksRequireConfirmationError(error)) {
+        setIncompatibleLocksForReview(error.body.incompatible_locks);
+        setIncompatibleLocksBaseVersion(baseVersionNumber);
+        setRegenerationError(
+          "Some locked lessons cannot be retained with the changed configuration and require review before regeneration can continue.",
+        );
+      } else {
+        const { message, diagnostics } = describeRegenerationError(error);
+        setRegenerationError(message);
+        setRegenerationDiagnostics(diagnostics);
+        if (
+          isStaleScheduleVersionError(error) ||
+          isConfigurationChangedDuringGenerationError(error) ||
+          isNoConfigurationDraftError(error)
+        ) {
+          refreshAuthoritativeScheduleState();
+        }
+      }
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  function clearIncompatibleLockReview() {
+    setIncompatibleLocksForReview([]);
+    setIncompatibleLocksBaseVersion(null);
+  }
+
+  async function handleConfirmIncompatibleLocks() {
+    if (
+      !appConfigResult.ok ||
+      regenerating ||
+      incompatibleLocksBaseVersion === null ||
+      incompatibleLocksForReview.length === 0 ||
+      viewingVersionNumber !== null
+    ) {
+      return;
+    }
+    setRegenerating(true);
+    setRegenerationError(null);
+    setRegenerationDiagnostics([]);
+    try {
+      const result = await regenerateActiveSchedule(appConfigResult.schoolId, appConfigResult.academicYearId, {
+        base_version_number: incompatibleLocksBaseVersion,
+        confirmed_incompatible_lock_keys: incompatibleLocksForReview.map(
+          ({ requirement_id, day_id, anchor_period_id }) => ({ requirement_id, day_id, anchor_period_id }),
+        ),
+      });
+      clearIncompatibleLockReview();
+      setRegenerationSuccessMessage(`Timetable regenerated. Version ${result.version_number} is now active.`);
+      refreshAuthoritativeScheduleState();
+    } catch (error) {
+      if (isIncompatibleLocksRequireConfirmationError(error)) {
+        setIncompatibleLocksForReview(error.body.incompatible_locks);
+        setRegenerationError(
+          "The incompatible lock set changed. Review the updated list before confirming again.",
+        );
+      } else {
+        clearIncompatibleLockReview();
+        const { message, diagnostics } = describeRegenerationError(error);
+        setRegenerationError(message);
+        setRegenerationDiagnostics(diagnostics);
+        if (
+          isStaleScheduleVersionError(error) ||
+          isConfigurationChangedDuringGenerationError(error) ||
+          isNoConfigurationDraftError(error)
+        ) {
+          refreshAuthoritativeScheduleState();
+        }
+      }
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   function handleSelectVersion(versionNumber: number) {
+    clearIncompatibleLockReview();
     setViewingVersionNumber(versionNumber);
     setRestoreConfirming(false);
     setRestoreError(null);
   }
 
   function handleBackToCurrentVersion() {
+    clearIncompatibleLockReview();
     setViewingVersionNumber(null);
     setRestoreConfirming(false);
     setRestoreError(null);
@@ -430,6 +659,7 @@ function TimetablePage() {
       setRestoreSuccessMessage(`Version ${sourceVersionNumber} was restored as new Version ${result.version_number}.`);
       setHistoryRefreshToken((token) => token + 1);
       setGenerationRefreshToken((token) => token + 1);
+      setConfigurationRefreshToken((token) => token + 1);
     } catch (error) {
       if (error instanceof ApiError && error.code === "STALE_SCHEDULE_VERSION") {
         setVersionStaleNotice(
@@ -460,6 +690,43 @@ function TimetablePage() {
 
       {appConfigResult.ok && configState.status === "ready" && (
         <>
+          <ConfigurationStateLoadNotice
+            configurationState={configurationState}
+            onRetry={() => setConfigurationRefreshToken((token) => token + 1)}
+          />
+          {regenerationSuccessMessage !== null && (
+            <div className="version-restore-success" role="status">
+              <p>{regenerationSuccessMessage}</p>
+            </div>
+          )}
+          {regenerationError !== null && (
+            <div className="stale-banner" role="alert">
+              <p>{regenerationError}</p>
+              {incompatibleLocksForReview.length > 0 && (
+                <p>{incompatibleLocksForReview.length} locked lesson(s) need review before regeneration can continue.</p>
+              )}
+              {regenerationDiagnostics.length > 0 && (
+                <ul className="generate-diagnostics">
+                  {regenerationDiagnostics.map((diagnostic, index) => (
+                    <li key={`${diagnostic.code}-${index}`}>{diagnostic.message}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {incompatibleLocksForReview.length > 0 && incompatibleLocksBaseVersion !== null && (
+            <IncompatibleLocksDialog
+              locks={incompatibleLocksForReview}
+              submitting={regenerating}
+              onCancel={() => {
+                if (!regenerating) {
+                  clearIncompatibleLockReview();
+                  setRegenerationError(null);
+                }
+              }}
+              onConfirm={handleConfirmIncompatibleLocks}
+            />
+          )}
           <div className="timetable-mode-switch" role="group" aria-label="Timetable view">
             <button
               type="button"
@@ -598,12 +865,31 @@ function TimetablePage() {
                       {timetableState.timetable.version_number}
                     </p>
                     {viewingVersionNumber === null ? (
-                      <ClassTimetableEditor
-                        schoolId={appConfigResult.schoolId}
-                        academicYearId={appConfigResult.academicYearId}
-                        timetable={timetableState.timetable}
-                        onMutationSuccess={() => setGenerationRefreshToken((token) => token + 1)}
-                      />
+                      <>
+                        {configurationState.status === "ready" && (
+                          <ActiveConfigurationNotice state={configurationState.state} />
+                        )}
+                        {configurationState.status === "ready" && configurationState.state.timetable_out_of_date && (
+                          <button type="button" className="btn-primary" onClick={handleRegenerateClick} disabled={regenerating}>
+                            {regenerating ? "Regenerating…" : "Regenerate timetable"}
+                          </button>
+                        )}
+                        {configurationState.status === "ready" && configurationState.state.timetable_out_of_date ? (
+                          <>
+                            <p className="stale-banner" role="status">
+                              Timetable editing is paused until the configuration changes are regenerated.
+                            </p>
+                            <TimetableGrid timetable={timetableState.timetable} />
+                          </>
+                        ) : (
+                          <ClassTimetableEditor
+                            schoolId={appConfigResult.schoolId}
+                            academicYearId={appConfigResult.academicYearId}
+                            timetable={timetableState.timetable}
+                            onMutationSuccess={() => setGenerationRefreshToken((token) => token + 1)}
+                          />
+                        )}
+                      </>
                     ) : (
                       // Historical version: read-only, exactly like
                       // `TimetableGrid` already renders when no
@@ -635,6 +921,14 @@ function TimetablePage() {
                     {teacherTimetableState.timetable.teacher_name} · Version{" "}
                     {teacherTimetableState.timetable.version_number}
                   </p>
+                  {viewingVersionNumber === null && configurationState.status === "ready" && (
+                    <ActiveConfigurationNotice state={configurationState.state} />
+                  )}
+                  {viewingVersionNumber === null && configurationState.status === "ready" && configurationState.state.timetable_out_of_date && (
+                    <button type="button" className="btn-primary" onClick={handleRegenerateClick} disabled={regenerating}>
+                      {regenerating ? "Regenerating…" : "Regenerate timetable"}
+                    </button>
+                  )}
                   <TeacherTimetableGrid timetable={teacherTimetableState.timetable} />
                 </>
               )}

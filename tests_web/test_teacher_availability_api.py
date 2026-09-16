@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from school_timetable.api.dependencies import (
@@ -30,6 +31,7 @@ from school_timetable.application.teacher_availability_projection_service import
 from school_timetable.application.teacher_availability_service import TeacherAvailabilityService
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.fixtures.valid_fixture import build_valid_fixture
+from school_timetable.persistence import models as m
 from school_timetable.persistence.configuration_revision_repository import (
     SqlAlchemyConfigurationRevisionRepository,
 )
@@ -205,6 +207,46 @@ def test_put_prefer_not_succeeds_with_exact_response(client, db):
         "teacher_id": "t_math",
         "exceptions": [{"day_id": "mon", "period_id": "p5", "status": "PREFER_NOT"}],
     }
+
+
+def test_put_prefer_not_routes_to_open_cloned_draft_and_marks_timetable_stale(client, db):
+    session, session_factory = db
+    problem = _seed(session)
+    generate_response = client.post(
+        f"/schools/{problem.school.id}/years/{problem.academic_year.id}/schedule/generate"
+    )
+    assert generate_response.status_code == 201
+    active_version_number = generate_response.json()["version_number"]
+    config_repo = SqlAlchemyConfigurationRevisionRepository(session_factory)
+    opened = config_repo.begin_draft(problem.school.id, problem.academic_year.id)
+    assert opened.timetable_out_of_date is False
+
+    response = client.put(
+        _put_url(problem, "t_math"),
+        json={"exceptions": [{"day_id": "mon", "period_id": "p1", "status": "PREFER_NOT"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "teacher_id": "t_math",
+        "exceptions": [{"day_id": "mon", "period_id": "p1", "status": "PREFER_NOT"}],
+    }
+    state = config_repo.get_state(problem.school.id, problem.academic_year.id)
+    assert state.configuration_locked is False
+    assert state.timetable_out_of_date is True
+
+    year_id = session.execute(
+        select(m.AcademicYear.id).where(m.AcademicYear.natural_id == problem.academic_year.id)
+    ).scalar_one()
+    schedule = session.execute(select(m.Schedule).where(m.Schedule.academic_year_id == year_id)).scalar_one()
+    active_version = session.get(m.ScheduleVersion, schedule.active_version_id)
+    assert active_version.version_number == active_version_number
+    assert active_version.configuration_revision_id == session.execute(
+        select(m.ConfigurationRevision.id).where(
+            m.ConfigurationRevision.academic_year_id == year_id,
+            m.ConfigurationRevision.revision_number == 1,
+        )
+    ).scalar_one()
 
 
 def test_put_unavailable_succeeds(client, db):

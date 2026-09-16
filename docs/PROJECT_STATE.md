@@ -4321,3 +4321,50 @@ included in this backend closure.
 Verification: core tests 655 passed (5 deselected), real-PostgreSQL
 `tests_web` 660 passed, focused Slice C/backend tests 199 passed, and
 Alembic head/current `398b05641152` with no detected upgrade operations.
+
+## SAFE CONFIGURATION CHANGES -- FRONTEND REGENERATION WORKFLOW CLOSED
+
+The browser workflow for configuration drafts and schedule regeneration is
+shipped. Configuration Setup owns opening and discarding an editable draft.
+Timetable reads authoritative configuration-revision state and offers
+Regenerate only when an active timetable is semantically out of date. An
+untouched clone remains current; restoring a draft to the exact active-
+version semantics also returns it to current.
+
+`timetable_out_of_date` compares the complete draft `SchedulingProblem`
+against the configuration revision referenced by the active
+`ScheduleVersion` (`Schedule.active_version_id` ->
+`ScheduleVersion.configuration_revision_id`). It is not inferred merely
+from draft existence or from an arbitrary historical published revision,
+and clone/revision surrogate identities do not participate in equality.
+The read is serialized with configuration writes, lifecycle transitions,
+publication, and active-version promotion through the shared
+`AcademicYear SELECT ... FOR UPDATE` protocol.
+
+Regeneration keeps the stale active timetable visible but read-only. It
+never auto-retries state conflicts. Incompatible historical locks require
+explicit confirmation of the exact natural-ID occurrence-key set returned
+by the backend; compatible locks remain protected, and a changed
+incompatible set requires a new explicit confirmation. Successful
+regeneration atomically publishes the exact draft, clears the draft,
+appends and activates a new schedule version, and refreshes timetable,
+configuration state, and version history from their authoritative APIs.
+
+Teacher Availability writes under an open draft are revision-scoped for
+teacher, day, period, existing exception rows, ordinal allocation, and new
+rows. This closes the published/draft natural-ID collision found during
+browser acceptance.
+
+Manual browser acceptance completed against `editing-review-school` /
+`ay-editing-review-2026`: active Version 10 with an untouched Draft 2 was
+current; changing Teacher Math, Monday, Period 1 from Available to Prefer
+not made it stale; one Regenerate produced active Version 11 on published
+revision 2, cleared the draft, and returned the timetable to current.
+Version 10 remains immutable in append-only history on revision 1.
+
+Closure verification: 167 focused PostgreSQL tests, 134 focused frontend
+tests, 655 non-slow core tests (5 slow tests intentionally deselected), 666
+full `tests_web` tests, and 604 full frontend tests passed; the frontend
+production build succeeded. Alembic remains at the single head
+`398b05641152`, with current at head and no upgrade operations detected.
+Teacher Matrix and export remain future work and are not part of this slice.

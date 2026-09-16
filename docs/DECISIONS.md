@@ -5141,3 +5141,49 @@ version's configuration revision. No migration was required. Verification:
 655 core tests (5 deselected), 660 real-PostgreSQL web/persistence tests,
 199 focused Slice-C/backend tests, and Alembic head `398b05641152` with no
 new upgrade operations.
+
+## 41. Configuration staleness is semantic and active-version-relative; the browser regeneration workflow is shipped
+
+The earlier Slice B statement that any open draft makes the timetable stale
+is superseded. An open draft controls editability, but staleness is semantic:
+the complete draft `SchedulingProblem` is compared with the configuration
+revision referenced specifically by `Schedule.active_version_id` ->
+`ScheduleVersion.configuration_revision_id`. Draft/revision surrogate IDs
+are irrelevant. Consequently an untouched clone is current, an effective
+natural-ID/value/relation change is stale, and an exact semantic revert is
+current again. Historical published revisions that are not referenced by
+the active version do not affect this result.
+
+`ConfigurationRevisionRepository.get_state` participates in the same
+`AcademicYear SELECT ... FOR UPDATE` protocol as configuration writers,
+begin/discard, generation/regeneration publication, and active-version
+promotion. This serializes the authoritative pointers and both semantic
+graphs without adding a second isolation mechanism or changing lock order.
+
+The frontend configuration-draft and schedule-regeneration workflow is now
+shipped. Configuration Setup owns draft lifecycle controls. Timetable shows
+the authoritative active version, offers Regenerate only for a semantically
+stale active timetable, never offers it for an untouched draft or a
+historical view, and pauses schedule mutation while stale. Successful
+regeneration refreshes timetable, configuration state, and append-only
+history. State conflicts are shown without automatic retry.
+
+There is no force/confirm boolean. When locks are incompatible, the user
+must explicitly confirm the exact returned natural-ID occurrence-key set.
+Compatible locks are retained. If the backend returns a different
+incompatible set on the confirmation request, the frontend requires another
+explicit confirmation.
+
+Teacher Availability writes under an open draft resolve the authoritative
+draft revision before looking up the teacher, day, period, existing
+availability rows, or revision-scoped ordinal, and stamp inserted rows with
+that same revision. This matches the database's
+`UNIQUE(academic_year_id, configuration_revision_id, ordinal)` constraint
+and prevents published/draft natural-ID collisions.
+
+Browser acceptance proved the full lifecycle on
+`editing-review-school` / `ay-editing-review-2026`: current Version 10 plus
+untouched Draft 2 -> Teacher Math Monday/Period 1 changed to Prefer not ->
+stale -> one explicit Regenerate -> current active Version 11 on published
+revision 2, with Version 10 preserved on revision 1. Teacher Matrix and
+export remain future work.

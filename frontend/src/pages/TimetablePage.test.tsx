@@ -14,9 +14,13 @@ import {
   getTeacherTimetableForVersion,
   restoreScheduleVersion,
 } from "../api/scheduleVersions";
+import { getConfigurationState } from "../api/configurationRevision";
+import { regenerateActiveSchedule } from "../api/scheduleRegeneration";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
 import type {
   ClassTimetableResponse,
+  ActiveScheduleResponse,
+  IncompatibleLock,
   ScheduleVersionHistoryResponse,
   SchedulingConfigIndexResponse,
   TeacherTimetableResponse,
@@ -48,6 +52,16 @@ vi.mock("../api/scheduleVersions", async (importOriginal) => {
   };
 });
 
+vi.mock("../api/configurationRevision", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/configurationRevision")>();
+  return { ...actual, getConfigurationState: vi.fn() };
+});
+
+vi.mock("../api/scheduleRegeneration", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/scheduleRegeneration")>();
+  return { ...actual, regenerateActiveSchedule: vi.fn() };
+});
+
 vi.mock("../config/appConfig", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/appConfig")>();
   return {
@@ -65,6 +79,8 @@ const mockedGetScheduleVersionHistory = vi.mocked(getScheduleVersionHistory);
 const mockedGetClassTimetableForVersion = vi.mocked(getClassTimetableForVersion);
 const mockedGetTeacherTimetableForVersion = vi.mocked(getTeacherTimetableForVersion);
 const mockedRestoreScheduleVersion = vi.mocked(restoreScheduleVersion);
+const mockedGetConfigurationState = vi.mocked(getConfigurationState);
+const mockedRegenerateActiveSchedule = vi.mocked(regenerateActiveSchedule);
 
 /** A promise this test controls the resolution/rejection of, to assert
  * intermediate (loading) states and to model out-of-order responses. */
@@ -172,6 +188,13 @@ const ACTIVE_TEACHER_TIMETABLE_FOR_HISTORY = teacherTimetableFor("t_math", "Teac
 // override this per-test via `mockResolvedValueOnce`/`mockRejectedValueOnce`.
 const DEFAULT_TEACHER_TIMETABLE = teacherTimetableFor("t_math", "Teacher Math", 1);
 
+const CURRENT_CONFIGURATION_STATE = {
+  published_revision_number: 1,
+  draft_revision_number: null,
+  configuration_locked: true,
+  timetable_out_of_date: false,
+};
+
 function metaText(): string | null {
   return document.querySelector(".timetable-meta")?.textContent ?? null;
 }
@@ -179,6 +202,8 @@ function metaText(): string | null {
 beforeEach(() => {
   mockedLoadAppConfig.mockReturnValue({ schoolId: "s1", academicYearId: "y1" });
   mockedGetTeacherTimetable.mockResolvedValue(DEFAULT_TEACHER_TIMETABLE);
+  mockedGetConfigurationState.mockResolvedValue(CURRENT_CONFIGURATION_STATE);
+  mockedRegenerateActiveSchedule.mockReset();
 });
 
 describe("TimetablePage", () => {
@@ -976,6 +1001,276 @@ describe("Teacher mode", () => {
 
     await screen.findByText("No schedule has been generated yet.");
     expect(screen.queryByRole("button", { name: /generate/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("Timetable configuration state presentation", () => {
+  beforeEach(() => {
+    mockedGetConfigurationState.mockClear();
+  });
+
+  it("keeps the initial Generate state free of timetable status messaging", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValue(new ApiError(404, "Active schedule not found"));
+
+    render(<TimetablePage />);
+
+    await screen.findByRole("button", { name: "Generate schedule" });
+    expect(screen.queryByText(/matches the published configuration/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/out of date|Regeneration is required/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Regenerate/i })).not.toBeInTheDocument();
+  });
+
+  it("shows an active timetable as current when no draft exists", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+
+    render(<TimetablePage />);
+
+    await screen.findByRole("table");
+    expect(screen.getByText(/matches the published configuration/)).toBeInTheDocument();
+    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/out of date|Regeneration is required/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Regenerate/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps an unchanged open draft presented as current", async () => {
+    mockedGetConfigurationState.mockResolvedValue({
+      ...CURRENT_CONFIGURATION_STATE,
+      draft_revision_number: 2,
+      configuration_locked: false,
+    });
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+
+    render(<TimetablePage />);
+
+    await screen.findByRole("table");
+    expect(screen.getByText(/editable draft is open with no pending changes/)).toBeInTheDocument();
+    expect(screen.queryByText(/out of date|Regeneration is required/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Regenerate/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the active version and a calm out-of-date warning while suppressing editing", async () => {
+    mockedGetConfigurationState.mockResolvedValue({
+      ...CURRENT_CONFIGURATION_STATE,
+      draft_revision_number: 2,
+      configuration_locked: false,
+      timetable_out_of_date: true,
+    });
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+
+    render(<TimetablePage />);
+
+    await screen.findByRole("table");
+    expect(screen.getByText(/Configuration changes are waiting to be applied/)).toBeInTheDocument();
+    expect(screen.getByText(/previously published configuration/)).toBeInTheDocument();
+    expect(screen.getByText(/Regeneration is required to create a new timetable version/)).toBeInTheDocument();
+    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Timetable editing is paused/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Re-optimize timetable" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Regenerate timetable" })).toBeInTheDocument();
+  });
+
+  it("keeps the timetable visible and offers retry when configuration state fails", async () => {
+    mockedGetConfigurationState.mockRejectedValueOnce(new Error("network down"));
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+
+    render(<TimetablePage />);
+
+    await screen.findByRole("table");
+    await screen.findByText(/Configuration state could not be loaded/);
+    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(mockedGetConfigurationState).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/Configuration state could not be loaded/)).not.toBeInTheDocument());
+  });
+
+  it("refreshes configuration state after successful initial Generate", async () => {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockRejectedValueOnce(new ApiError(404, "Active schedule not found"));
+    mockedGenerateSchedule.mockResolvedValueOnce({
+      version_number: 1,
+      solver_status: "OPTIMAL",
+      total_soft_penalty: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      is_active: true,
+    });
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Generate schedule" }));
+    await screen.findByRole("table");
+    await waitFor(() => expect(mockedGetConfigurationState).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows Regenerate only for an active out-of-date timetable and sends the exact first payload", async () => {
+    mockedGetConfigurationState.mockResolvedValue({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true });
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    const deferredRegeneration = deferred<ActiveScheduleResponse>();
+    mockedRegenerateActiveSchedule.mockReturnValueOnce(deferredRegeneration.promise);
+
+    render(<TimetablePage />);
+    const button = await screen.findByRole("button", { name: "Regenerate timetable" });
+    fireEvent.click(button);
+    expect(screen.getByRole("button", { name: "Regenerating…" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Regenerating…" }));
+    expect(mockedRegenerateActiveSchedule).toHaveBeenCalledTimes(1);
+    expect(mockedRegenerateActiveSchedule).toHaveBeenCalledWith("s1", "y1", {
+      base_version_number: 1,
+      confirmed_incompatible_lock_keys: [],
+    });
+    const request = mockedRegenerateActiveSchedule.mock.calls[0]?.[2] as unknown as Record<string, unknown>;
+    expect(request).not.toHaveProperty("force");
+    expect(request).not.toHaveProperty("confirm");
+    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
+    deferredRegeneration.resolve({ version_number: 2, solver_status: "OPTIMAL", total_soft_penalty: 0, created_at: "2026-01-02T00:00:00Z", is_active: true, entries: [], locked_occurrences: [] });
+  });
+
+  it("refreshes authoritative projections and clears stale mode after successful regeneration", async () => {
+    mockedGetConfigurationState
+      .mockResolvedValueOnce({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true })
+      .mockResolvedValue(CURRENT_CONFIGURATION_STATE);
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValueOnce(TIMETABLE_8A).mockResolvedValue(TIMETABLE_8B);
+    mockedGetTeacherTimetable.mockResolvedValue(ACTIVE_TEACHER_TIMETABLE_FOR_HISTORY);
+    mockedGetScheduleVersionHistory.mockResolvedValue(HISTORY_RESPONSE);
+    mockedRegenerateActiveSchedule.mockResolvedValueOnce({ version_number: 2, solver_status: "OPTIMAL", total_soft_penalty: 0, created_at: "2026-01-02T00:00:00Z", is_active: true, entries: [], locked_occurrences: [] });
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Version History" }));
+    await screen.findByText("Version 2");
+    fireEvent.click(await screen.findByRole("button", { name: "Regenerate timetable" }));
+    await screen.findByText(/Timetable regenerated\. Version 2 is now active/);
+    await waitFor(() => expect(metaText()).toContain("Version 2"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Regenerate timetable" })).not.toBeInTheDocument());
+    expect(mockedGetScheduleVersionHistory).toHaveBeenCalled();
+    expect(mockedGetConfigurationState).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["STALE_SCHEDULE_VERSION", "active timetable changed while regeneration was being prepared"],
+    ["CONFIGURATION_CHANGED_DURING_GENERATION", "configuration changed while regeneration was running"],
+    ["NO_CONFIGURATION_DRAFT", "no editable configuration draft to regenerate"],
+  ] as const)("handles %s without automatically retrying", async (code, expectedText) => {
+    mockedGetConfigurationState
+      .mockResolvedValueOnce({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true })
+      .mockResolvedValue(CURRENT_CONFIGURATION_STATE);
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    mockedRegenerateActiveSchedule.mockRejectedValueOnce(new ApiError(409, "conflict", code));
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Regenerate timetable" }));
+    await screen.findByText(new RegExp(expectedText));
+    expect(mockedRegenerateActiveSchedule).toHaveBeenCalledTimes(1);
+    expect(mockedGetConfigurationState).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the active timetable and structured lock review state without retrying incompatible locks", async () => {
+    mockedGetConfigurationState.mockResolvedValue({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true });
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    mockedRegenerateActiveSchedule.mockRejectedValueOnce(new ApiError(409, "review locks", "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", {
+      code: "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION",
+      detail: "review locks",
+      incompatible_locks: [{ requirement_id: "req1", day_id: "mon", anchor_period_id: "p1", reason_code: "FIXED_PLACEMENT_CONFLICT", message: "Review this lock." }],
+    }));
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Regenerate timetable" }));
+    await screen.findByText(/require review before regeneration/);
+    expect(screen.getByText(/1 locked lesson/)).toBeInTheDocument();
+    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
+    expect(mockedRegenerateActiveSchedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the lock dialog and retries with exactly the returned natural-ID keys and original base version", async () => {
+    const locks: IncompatibleLock[] = [
+      { requirement_id: "req1", day_id: "mon", anchor_period_id: "p1", reason_code: "FIXED_PLACEMENT_CONFLICT", message: "Review lock one." },
+      { requirement_id: "req2", day_id: "tue", anchor_period_id: "p3", reason_code: "RESOURCE_DELETED", message: "Review lock two." },
+    ];
+    mockedGetConfigurationState
+      .mockResolvedValueOnce({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true })
+      .mockResolvedValue(CURRENT_CONFIGURATION_STATE);
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    mockedRegenerateActiveSchedule.mockRejectedValueOnce(new ApiError(409, "review", "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", {
+      code: "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", detail: "review", incompatible_locks: locks,
+    })).mockResolvedValueOnce({ version_number: 2, solver_status: "OPTIMAL", total_soft_penalty: 0, created_at: "2026-01-02T00:00:00Z", is_active: true, entries: [], locked_occurrences: [] });
+
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Regenerate timetable" }));
+    const dialog = await screen.findByRole("dialog", { name: "Review incompatible locked lessons" });
+    expect(dialog).toHaveTextContent("Review lock one.");
+    expect(dialog).toHaveTextContent("Review lock two.");
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate without these locks" }));
+
+    await screen.findByText(/Timetable regenerated\. Version 2 is now active/);
+    expect(mockedRegenerateActiveSchedule).toHaveBeenCalledTimes(2);
+    expect(mockedRegenerateActiveSchedule.mock.calls[1]?.[2]).toEqual({
+      base_version_number: 1,
+      confirmed_incompatible_lock_keys: [
+        { requirement_id: "req1", day_id: "mon", anchor_period_id: "p1" },
+        { requirement_id: "req2", day_id: "tue", anchor_period_id: "p3" },
+      ],
+    });
+    const retry = mockedRegenerateActiveSchedule.mock.calls[1]?.[2] as unknown as Record<string, unknown>;
+    expect(JSON.stringify(retry)).not.toContain("reason_code");
+    expect(JSON.stringify(retry)).not.toContain("message");
+    expect(retry).not.toHaveProperty("force");
+    expect(retry).not.toHaveProperty("confirm");
+  });
+
+  it("cancelling lock review sends no retry and leaves Regenerate available", async () => {
+    mockedGetConfigurationState.mockResolvedValue({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true });
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    mockedRegenerateActiveSchedule.mockRejectedValueOnce(new ApiError(409, "review", "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", {
+      code: "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", detail: "review", incompatible_locks: [{ requirement_id: "req1", day_id: "mon", anchor_period_id: "p1", reason_code: "RESOURCE_DELETED", message: "Review lock." }],
+    }));
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Regenerate timetable" }));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockedRegenerateActiveSchedule).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Regenerate timetable" })).toBeInTheDocument();
+  });
+
+  it("replaces the dialog with a new incompatible set without an automatic third request", async () => {
+    const first = [{ requirement_id: "req1", day_id: "mon", anchor_period_id: "p1", reason_code: "RESOURCE_DELETED", message: "First lock." }];
+    const second = [{ requirement_id: "req2", day_id: "tue", anchor_period_id: "p2", reason_code: "FIXED_PLACEMENT_CONFLICT", message: "New lock." }];
+    mockedGetConfigurationState.mockResolvedValue({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true });
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    mockedRegenerateActiveSchedule
+      .mockRejectedValueOnce(new ApiError(409, "review", "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", { code: "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", detail: "review", incompatible_locks: first }))
+      .mockRejectedValueOnce(new ApiError(409, "changed", "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", { code: "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION", detail: "changed", incompatible_locks: second }));
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Regenerate timetable" }));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate without these locks" }));
+    await screen.findByText(/incompatible lock set changed/);
+    expect(screen.getByText("New lock.")).toBeInTheDocument();
+    expect(mockedRegenerateActiveSchedule).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("renders infeasible and invalid-configuration regeneration errors safely", async () => {
+    mockedGetConfigurationState.mockResolvedValue({ ...CURRENT_CONFIGURATION_STATE, draft_revision_number: 2, timetable_out_of_date: true });
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    mockedRegenerateActiveSchedule.mockRejectedValueOnce(new ApiError(409, "infeasible", "SCHEDULE_INFEASIBLE"));
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Regenerate timetable" }));
+    await screen.findByText(/No feasible timetable could be generated/);
+    expect(screen.getByText(/Version 1/)).toBeInTheDocument();
   });
 });
 

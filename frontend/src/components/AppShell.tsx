@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { getSchedulingConfigIndex } from "../api/client";
+import ConfigurationLifecyclePanel from "./ConfigurationLifecyclePanel";
 import { loadAppConfig } from "../config/appConfig";
 
 /**
@@ -61,7 +62,9 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
 }
 
 function AppShell() {
+  const location = useLocation();
   const [contextState, setContextState] = useState<ContextState>({ status: "loading" });
+  const [projectionRefreshToken, setProjectionRefreshToken] = useState(0);
 
   useEffect(() => {
     let schoolId: string;
@@ -95,6 +98,14 @@ function AppShell() {
     };
   }, []);
 
+  const configurationRoute = location.pathname.startsWith("/configuration/");
+  let appConfig: { schoolId: string; academicYearId: string } | null = null;
+  try {
+    appConfig = loadAppConfig();
+  } catch {
+    appConfig = null;
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -121,7 +132,14 @@ function AppShell() {
         </nav>
       </header>
       <main className="app-main">
-        <Outlet />
+        {configurationRoute && appConfig !== null && (
+          <ConfigurationLifecyclePanel
+            schoolId={appConfig.schoolId}
+            academicYearId={appConfig.academicYearId}
+            onProjectionRefresh={() => setProjectionRefreshToken((token) => token + 1)}
+          />
+        )}
+        <Outlet key={projectionRefreshToken} />
       </main>
     </div>
   );

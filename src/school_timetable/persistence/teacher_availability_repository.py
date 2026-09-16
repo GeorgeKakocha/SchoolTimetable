@@ -69,21 +69,31 @@ class SqlAlchemyTeacherAvailabilityRepository:
             # SQLAlchemy `NoResultFound`.
             validate(current_problem)
 
+            revision_id = resolve_draft_revision_id(
+                session, year_id, school_natural_id, academic_year_natural_id,
+            )
             teacher_row = session.execute(
                 select(orm.Teacher).where(
                     orm.Teacher.academic_year_id == year_id,
+                    orm.Teacher.configuration_revision_id == revision_id,
                     orm.Teacher.natural_id == teacher_natural_id,
                 )
             ).scalar_one_or_none()
             if teacher_row is None:
                 raise TeacherNotFoundError(school_natural_id, academic_year_natural_id, teacher_natural_id)
 
-            day_rows = list(session.execute(select(orm.Day).where(orm.Day.academic_year_id == year_id)).scalars())
+            day_rows = list(session.execute(select(orm.Day).where(
+                orm.Day.academic_year_id == year_id,
+                orm.Day.configuration_revision_id == revision_id,
+            )).scalars())
             day_surrogate_by_natural = {row.natural_id: row.id for row in day_rows}
             day_idx_by_surrogate = {row.id: row.idx for row in day_rows}
 
             period_rows = list(
-                session.execute(select(orm.Period).where(orm.Period.academic_year_id == year_id)).scalars()
+                session.execute(select(orm.Period).where(
+                    orm.Period.academic_year_id == year_id,
+                    orm.Period.configuration_revision_id == revision_id,
+                )).scalars()
             )
             period_surrogate_by_natural = {row.natural_id: row.id for row in period_rows}
             period_idx_by_surrogate = {row.id: row.idx for row in period_rows}
@@ -97,6 +107,7 @@ class SqlAlchemyTeacherAvailabilityRepository:
                 session.execute(
                     select(orm.TeacherAvailability).where(
                         orm.TeacherAvailability.academic_year_id == year_id,
+                        orm.TeacherAvailability.configuration_revision_id == revision_id,
                         orm.TeacherAvailability.teacher_id == teacher_row.id,
                     )
                 ).scalars()
@@ -113,8 +124,7 @@ class SqlAlchemyTeacherAvailabilityRepository:
                 (cell for cell in desired if cell not in existing_by_cell),
                 key=lambda cell: (day_idx_by_surrogate[cell[0]], period_idx_by_surrogate[cell[1]]),
             )
-            next_ordinal = _next_availability_ordinal(session, year_id)
-            revision_id = resolve_draft_revision_id(session, year_id, school_natural_id, academic_year_natural_id)
+            next_ordinal = _next_availability_ordinal(session, year_id, revision_id)
             for day_surrogate, period_surrogate in new_cells:
                 session.add(orm.TeacherAvailability(
                     academic_year_id=year_id,
@@ -135,15 +145,16 @@ class SqlAlchemyTeacherAvailabilityRepository:
             session.close()
 
 
-def _next_availability_ordinal(session: Session, year_id: int) -> int:
+def _next_availability_ordinal(session: Session, year_id: int, revision_id: int) -> int:
     """The next `TeacherAvailability.ordinal` value, computed across
-    every Teacher's rows in this `AcademicYear` -- never scoped to only
-    the Teacher being written -- matching the table's own
-    `UniqueConstraint(academic_year_id, ordinal)`. Deleting a cell
-    leaves a gap; surviving/updated rows are never renumbered."""
+    every Teacher's rows in this configuration revision -- never scoped
+    to only the Teacher being written -- matching the table's own
+    revision-scoped unique constraint. Deleting a cell leaves a gap;
+    surviving/updated rows are never renumbered."""
     max_ordinal = session.execute(
         select(func.max(orm.TeacherAvailability.ordinal)).where(
             orm.TeacherAvailability.academic_year_id == year_id,
+            orm.TeacherAvailability.configuration_revision_id == revision_id,
         )
     ).scalar()
     return 0 if max_ordinal is None else max_ordinal + 1

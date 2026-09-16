@@ -44,6 +44,7 @@ from school_timetable.application.errors import (
 )
 from school_timetable.persistence import models as orm
 from school_timetable.persistence.configuration_write_lock import lock_academic_year, resolve_year_id
+from school_timetable.persistence.problem_repository import SqlAlchemySchedulingProblemRepository
 
 
 class SqlAlchemyConfigurationRevisionRepository:
@@ -60,7 +61,7 @@ class SqlAlchemyConfigurationRevisionRepository:
         try:
             year_id = resolve_year_id(session, school_natural_id, academic_year_natural_id)
             year_row = session.execute(
-                select(orm.AcademicYear).where(orm.AcademicYear.id == year_id)
+                select(orm.AcademicYear).where(orm.AcademicYear.id == year_id).with_for_update()
             ).scalar_one()
             return _build_state(session, year_id, year_row)
         finally:
@@ -176,17 +177,50 @@ class SqlAlchemyConfigurationRevisionRepository:
 def _build_state(session: Session, year_id: int, year_row: orm.AcademicYear) -> ConfigurationRevisionState:
     published_number = _revision_number_or_none(session, year_row.published_revision_id)
     draft_number = _revision_number_or_none(session, year_row.draft_revision_id)
+    active_version_revision_id = session.execute(
+        select(orm.ScheduleVersion.configuration_revision_id)
+        .join(orm.Schedule, orm.Schedule.id == orm.ScheduleVersion.schedule_id)
+        .where(
+            orm.Schedule.academic_year_id == year_id,
+            orm.Schedule.active_version_id == orm.ScheduleVersion.id,
+        )
+    ).scalar_one_or_none()
     has_schedule = session.execute(
         select(orm.Schedule.id).where(orm.Schedule.academic_year_id == year_id)
     ).scalar_one_or_none() is not None
+
+    # A draft's surrogate row identity is intentionally irrelevant here:
+    # compare the fully mapped domain snapshots for the open draft and the
+    # exact revision used by the current active version.  get_state() holds
+    # the same short AcademicYear lock used by every configuration writer and
+    # publication path, so these pointers and revision-scoped rows cannot
+    # change while the comparison is materialized.
+    timetable_out_of_date = False
+    if (
+        has_schedule
+        and year_row.draft_revision_id is not None
+        and active_version_revision_id is not None
+    ):
+        school_row = session.execute(
+            select(orm.School).join(orm.AcademicYear, orm.AcademicYear.school_id == orm.School.id)
+            .where(orm.AcademicYear.id == year_id)
+        ).scalar_one()
+        loaded_year_row = session.get(orm.AcademicYear, year_id)
+        problem_repository = SqlAlchemySchedulingProblemRepository(session)
+        draft_problem = problem_repository._load_for_revision_id(
+            session, school_row, loaded_year_row, year_row.draft_revision_id,
+        )
+        active_problem = problem_repository._load_for_revision_id(
+            session, school_row, loaded_year_row, active_version_revision_id,
+        )
+        timetable_out_of_date = draft_problem != active_problem
     return ConfigurationRevisionState(
         published_revision_number=published_number,
         draft_revision_number=draft_number,
         has_schedule=has_schedule,
         configuration_locked=draft_number is None,
-        timetable_out_of_date=has_schedule and draft_number is not None,
+        timetable_out_of_date=timetable_out_of_date,
     )
-
 
 def _revision_number_or_none(session: Session, revision_id: int | None) -> int | None:
     if revision_id is None:

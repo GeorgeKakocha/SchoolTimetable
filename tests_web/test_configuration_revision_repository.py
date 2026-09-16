@@ -46,6 +46,7 @@ from school_timetable.persistence import models as m
 from school_timetable.persistence.configuration_revision_repository import (
     SqlAlchemyConfigurationRevisionRepository,
 )
+from school_timetable.persistence.configuration_write_lock import lock_academic_year, resolve_year_id
 from school_timetable.persistence.problem_repository import (
     SessionFactorySchedulingProblemRepository,
     SqlAlchemySchedulingProblemRepository,
@@ -272,8 +273,8 @@ def test_get_state_after_generate_no_draft(db):
 
 
 def test_get_state_after_begin_draft(db):
-    """Published + open draft + a Schedule: configuration is editable
-    again, and the existing timetable is now out of date."""
+    """Published + open untouched clone: configuration is editable
+    again, while the existing timetable remains current."""
     session, session_factory = db
     problem, year_id = _seed_and_publish(session, session_factory)
     repo = _repo(session_factory)
@@ -284,10 +285,141 @@ def test_get_state_after_begin_draft(db):
     assert state.draft_revision_number == 2
     assert state.has_schedule is True
     assert state.configuration_locked is False
-    assert state.timetable_out_of_date is True
+    assert state.timetable_out_of_date is False
 
     # get_state independently agrees with begin_draft's own returned state.
     assert repo.get_state(problem.school.id, problem.academic_year.id) == state
+
+
+def test_get_state_semantic_mutation_and_exact_restore(db):
+    """Value and relationship changes are stale, while restoring the exact
+    active-revision semantics makes the same draft current again."""
+    session, session_factory = db
+    problem, year_id = _seed_and_publish(session, session_factory)
+    repo = _repo(session_factory)
+    repo.begin_draft(problem.school.id, problem.academic_year.id)
+    draft_id = _year_row(session, year_id).draft_revision_id
+
+    teacher = session.execute(
+        select(m.Teacher).where(
+            m.Teacher.academic_year_id == year_id,
+            m.Teacher.configuration_revision_id == draft_id,
+        ).order_by(m.Teacher.ordinal)
+    ).scalars().first()
+    original_first_name = teacher.first_name
+    teacher.first_name = original_first_name + " changed"
+    session.flush()
+    assert repo.get_state(problem.school.id, problem.academic_year.id).timetable_out_of_date is True
+
+    teacher.first_name = original_first_name
+    session.flush()
+    assert repo.get_state(problem.school.id, problem.academic_year.id).timetable_out_of_date is False
+
+    requirement = session.execute(
+        select(m.TeachingRequirement).where(
+            m.TeachingRequirement.academic_year_id == year_id,
+            m.TeachingRequirement.configuration_revision_id == draft_id,
+        ).order_by(m.TeachingRequirement.ordinal)
+    ).scalars().first()
+    original_teacher_id = requirement.teacher_id
+    replacement_teacher_id = session.execute(
+        select(m.Teacher.id).where(
+            m.Teacher.academic_year_id == year_id,
+            m.Teacher.configuration_revision_id == draft_id,
+            m.Teacher.id != original_teacher_id,
+        ).order_by(m.Teacher.ordinal)
+    ).scalars().first()
+    requirement.teacher_id = replacement_teacher_id
+    session.flush()
+    assert repo.get_state(problem.school.id, problem.academic_year.id).timetable_out_of_date is True
+
+    requirement.teacher_id = original_teacher_id
+    session.flush()
+    assert repo.get_state(problem.school.id, problem.academic_year.id).timetable_out_of_date is False
+
+
+def test_get_state_add_then_delete_entity_and_relation_restores_current(db):
+    session, session_factory = db
+    problem, year_id = _seed_and_publish(session, session_factory)
+    repo = _repo(session_factory)
+    repo.begin_draft(problem.school.id, problem.academic_year.id)
+    draft_id = _year_row(session, year_id).draft_revision_id
+    day_id = session.execute(select(m.Day.id).where(
+        m.Day.academic_year_id == year_id, m.Day.configuration_revision_id == draft_id,
+    ).order_by(m.Day.idx)).scalars().first()
+    period_id = session.execute(select(m.Period.id).where(
+        m.Period.academic_year_id == year_id, m.Period.configuration_revision_id == draft_id,
+    ).order_by(m.Period.idx)).scalars().first()
+
+    teacher = m.Teacher(
+        academic_year_id=year_id, configuration_revision_id=draft_id,
+        natural_id="temporary-teacher", first_name="Temporary", last_name="Teacher", ordinal=999,
+    )
+    session.add(teacher)
+    session.flush()
+    availability = m.TeacherAvailability(
+        academic_year_id=year_id, configuration_revision_id=draft_id,
+        teacher_id=teacher.id, day_id=day_id, period_id=period_id,
+        status="UNAVAILABLE", ordinal=999,
+    )
+    session.add(availability)
+    session.flush()
+    assert repo.get_state(problem.school.id, problem.academic_year.id).timetable_out_of_date is True
+
+    session.delete(availability)
+    session.flush()
+    session.delete(teacher)
+    session.flush()
+    assert repo.get_state(problem.school.id, problem.academic_year.id).timetable_out_of_date is False
+
+
+def test_get_state_discard_changed_draft_returns_current(db):
+    session, session_factory = db
+    problem, year_id = _seed_and_publish(session, session_factory)
+    repo = _repo(session_factory)
+    repo.begin_draft(problem.school.id, problem.academic_year.id)
+    draft_id = _year_row(session, year_id).draft_revision_id
+    teacher = session.execute(select(m.Teacher).where(
+        m.Teacher.academic_year_id == year_id,
+        m.Teacher.configuration_revision_id == draft_id,
+    ).order_by(m.Teacher.ordinal)).scalars().first()
+    teacher.first_name += " changed"
+    session.flush()
+    assert repo.get_state(problem.school.id, problem.academic_year.id).timetable_out_of_date is True
+
+    state = repo.discard_draft(problem.school.id, problem.academic_year.id)
+    assert state.configuration_locked is True
+    assert state.timetable_out_of_date is False
+
+
+def test_get_state_uses_active_version_revision_not_published_pointer(db):
+    """An unrelated, differing published revision cannot contaminate the
+    comparison: the active ScheduleVersion's revision is the baseline."""
+    session, session_factory = db
+    problem, year_id = _seed_and_publish(session, session_factory)
+    repo = _repo(session_factory)
+    repo.begin_draft(problem.school.id, problem.academic_year.id)
+    active_revision_id = session.execute(
+        select(m.ScheduleVersion.configuration_revision_id)
+        .join(m.Schedule, m.Schedule.id == m.ScheduleVersion.schedule_id)
+        .where(
+            m.Schedule.academic_year_id == year_id,
+            m.Schedule.active_version_id == m.ScheduleVersion.id,
+        )
+    ).scalar_one()
+    unrelated = m.ConfigurationRevision(
+        academic_year_id=year_id, revision_number=3, status="PUBLISHED",
+    )
+    session.add(unrelated)
+    session.flush()
+    _year_row(session, year_id).published_revision_id = unrelated.id
+    session.flush()
+
+    state = repo.get_state(problem.school.id, problem.academic_year.id)
+    assert active_revision_id != unrelated.id
+    assert state.published_revision_number == 3
+    assert state.draft_revision_number == 2
+    assert state.timetable_out_of_date is False
 
 
 # == B. begin_draft -- normal clone ===========================================
@@ -727,3 +859,66 @@ def test_concurrent_begin_draft_converges_on_exactly_one_draft(seeded_and_publis
     finally:
         check_session.close()
         check_connection.close()
+
+
+def test_get_state_waits_for_concurrent_configuration_write_and_reads_committed_snapshot(
+    seeded_and_published_db, live_db_engine,
+):
+    """The state reader and configuration writers share the same
+    AcademicYear lock. The reader cannot observe the writer's new graph with
+    old pointers (or vice versa); after waiting, it sees the committed graph."""
+    problem, session_factory = seeded_and_published_db
+    repo = SqlAlchemyConfigurationRevisionRepository(session_factory)
+    assert repo.begin_draft(
+        problem.school.id, problem.academic_year.id,
+    ).timetable_out_of_date is False
+
+    writer_has_lock = threading.Event()
+    allow_writer_commit = threading.Event()
+    reader_started = threading.Event()
+    reader_finished = threading.Event()
+    results: dict[str, object] = {}
+
+    def write_draft() -> None:
+        with Session(bind=live_db_engine) as session:
+            year_id = resolve_year_id(
+                session, problem.school.id, problem.academic_year.id,
+            )
+            lock_academic_year(session, year_id)
+            draft_id = session.execute(
+                select(m.AcademicYear.draft_revision_id).where(m.AcademicYear.id == year_id)
+            ).scalar_one()
+            teacher = session.execute(select(m.Teacher).where(
+                m.Teacher.academic_year_id == year_id,
+                m.Teacher.configuration_revision_id == draft_id,
+            ).order_by(m.Teacher.ordinal)).scalars().first()
+            teacher.first_name += " concurrently changed"
+            session.flush()
+            writer_has_lock.set()
+            assert allow_writer_commit.wait(timeout=10)
+            session.commit()
+
+    def read_state() -> None:
+        assert writer_has_lock.wait(timeout=10)
+        reader_started.set()
+        try:
+            results["state"] = repo.get_state(problem.school.id, problem.academic_year.id)
+        except Exception as exc:  # pragma: no cover - diagnostic only
+            results["state"] = exc
+        finally:
+            reader_finished.set()
+
+    writer = threading.Thread(target=write_draft)
+    reader = threading.Thread(target=read_state)
+    writer.start()
+    reader.start()
+    assert reader_started.wait(timeout=10)
+    assert not reader_finished.wait(timeout=0.5), "get_state did not wait for the writer's AcademicYear lock"
+    allow_writer_commit.set()
+    writer.join(timeout=10)
+    reader.join(timeout=10)
+
+    assert not writer.is_alive()
+    assert not reader.is_alive()
+    assert not isinstance(results.get("state"), Exception)
+    assert results["state"].timetable_out_of_date is True

@@ -1072,6 +1072,10 @@ def test_persist_regenerated_version_no_locks_publishes_draft_and_creates_next_v
 
     reloaded = schedule_repo.get_active_schedule(problem.school.id, problem.academic_year.id)
     assert reloaded == v2
+    state = config_repo.get_state(problem.school.id, problem.academic_year.id)
+    assert state.draft_revision_number is None
+    assert state.configuration_locked is True
+    assert state.timetable_out_of_date is False
 
 
 def test_persist_regenerated_version_all_compatible_locks_are_carried_forward(db):

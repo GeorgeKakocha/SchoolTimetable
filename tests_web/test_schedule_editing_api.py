@@ -901,6 +901,36 @@ def _open_draft(session_factory, problem) -> None:
     SqlAlchemyConfigurationRevisionRepository(session_factory).begin_draft(
         problem.school.id, problem.academic_year.id,
     )
+    # An untouched clone is current under semantic state rules; mutate one
+    # draft value so these tests specifically exercise stale-edit rejection.
+    session = session_factory()
+    try:
+        row = session.execute(
+            select(m.AcademicYear.id, m.AcademicYear.draft_revision_id)
+            .join(m.School, m.School.id == m.AcademicYear.school_id)
+            .where(
+                m.School.natural_id == problem.school.id,
+                m.AcademicYear.natural_id == problem.academic_year.id,
+            )
+            .order_by(m.AcademicYear.id.desc())
+        ).first()
+        if row is None:
+            raise AssertionError("seeded academic year was not found")
+        year_id, draft_id = row
+        teacher = session.execute(
+            select(m.Teacher)
+            .where(
+                m.Teacher.academic_year_id == year_id,
+                m.Teacher.configuration_revision_id == draft_id,
+            )
+            .order_by(m.Teacher.ordinal)
+        ).scalars().first()
+        if teacher is None:
+            raise AssertionError("seeded draft teacher was not found")
+        teacher.first_name = teacher.first_name + " (draft)"
+        session.commit()
+    finally:
+        session.close()
 
 
 def test_move_rejected_when_configuration_draft_is_open(client, db):

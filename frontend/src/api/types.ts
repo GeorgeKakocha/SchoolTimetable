@@ -51,6 +51,16 @@ export interface SchedulingConfigIndexResponse {
   teachers: TeacherSummary[];
 }
 
+// -- GET/POST/DELETE .../configuration/{state,draft} ------------------
+// Revision numbers are public audit/presentation values. The backend never
+// exposes its ConfigurationRevision database identity here.
+export interface ConfigurationRevisionStateResponse {
+  published_revision_number: number | null;
+  draft_revision_number: number | null;
+  configuration_locked: boolean;
+  timetable_out_of_date: boolean;
+}
+
 // -- GET /schools/{school_id}/years/{year_id}/schedule/active/classes/{class_section_id} --
 //
 // Mirrors Phase 3B.1's `ClassTimetableResponse` exactly (`docs/DECISIONS.md`
@@ -224,6 +234,59 @@ export interface ActiveScheduleResponse {
   is_active: boolean;
   entries: ScheduleEntry[];
   locked_occurrences: LockedOccurrence[];
+}
+
+export interface OccurrenceKey {
+  requirement_id: string;
+  day_id: string;
+  anchor_period_id: string;
+}
+
+export interface RegenerateScheduleRequest {
+  base_version_number: number;
+  confirmed_incompatible_lock_keys: readonly OccurrenceKey[];
+}
+
+export interface IncompatibleLock {
+  requirement_id: string;
+  day_id: string;
+  anchor_period_id: string;
+  reason_code: string;
+  message: string;
+}
+
+export interface IncompatibleLocksRequireConfirmationErrorBody {
+  code: "INCOMPATIBLE_LOCKS_REQUIRE_CONFIRMATION";
+  detail: string;
+  incompatible_locks: IncompatibleLock[];
+}
+
+export interface StaleScheduleVersionErrorBody {
+  code: "STALE_SCHEDULE_VERSION";
+  detail: string;
+  expected_base_version_number: number;
+  actual_active_version_number: number;
+}
+
+export interface ConfigurationChangedDuringGenerationErrorBody {
+  code: "CONFIGURATION_CHANGED_DURING_GENERATION";
+  detail: string;
+}
+
+export interface NoConfigurationDraftErrorBody {
+  code: "NO_CONFIGURATION_DRAFT";
+  detail: string;
+}
+
+export interface ScheduleInfeasibleErrorBody {
+  code: "SCHEDULE_INFEASIBLE";
+  detail: string;
+}
+
+export interface InvalidConfigurationErrorBody {
+  code: "INVALID_CONFIGURATION";
+  detail: string;
+  errors: ValidationDiagnostic[];
 }
 
 // -- POST .../schedule/active/move/preview -------------------------------
