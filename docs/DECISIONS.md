@@ -5185,5 +5185,40 @@ Browser acceptance proved the full lifecycle on
 `editing-review-school` / `ay-editing-review-2026`: current Version 10 plus
 untouched Draft 2 -> Teacher Math Monday/Period 1 changed to Prefer not ->
 stale -> one explicit Regenerate -> current active Version 11 on published
-revision 2, with Version 10 preserved on revision 1. Teacher Matrix and
-export remain future work.
+revision 2, with Version 10 preserved on revision 1. Export remains future
+work.
+
+## 42. Teacher Matrix is a dedicated sparse, version-exact whole-school projection
+
+The Teacher Matrix is shipped as a read-only sibling of the Class and Teacher
+timetable views. It uses a dedicated whole-school application projection and
+HTTP contract rather than assembling one request per teacher. Both active and
+historical routes resolve the `SchedulingProblem` from the exact configuration
+revision referenced by the selected `ScheduleVersion`; an open draft or a
+different current version cannot contaminate the projection.
+
+The contract is sparse: it contains ordered configured days, ordered
+instructional periods, every configured teacher in configuration order, and
+occupied cells only. Missing coordinates mean free. Entry arrays preserve the
+existing teacher-timetable activity, participant-group, resolved class-section,
+requirement, reserved-block, and resource semantics using public natural IDs;
+no persistence identity is exposed. Teacherless reserved blocks create no
+teacher cell, while teacher-assigned reserved blocks do.
+
+Matrix structure is fully data-driven. It has no fixed class range, weekday
+count, or period count, and excludes noninstructional periods consistently
+with the existing timetable projections. Roman period numbers are frontend
+presentation of ordered positions only; configured Period IDs, names, and
+indexes remain authoritative and unchanged.
+
+Compact cell labels are semantic, not parsed text: `WHOLE_CLASS` displays its
+configured class-section names; `MERGED_CLASSES` displays all configured
+class-section names joined by ` + ` and falls back to the authoritative group
+name only if no sections are present; `SUBGROUP` displays the authoritative
+participant-group name; a targetless reserved/special activity displays its
+activity name. Ordinary class cells do not add subject/activity text.
+
+The spreadsheet screenshot supplied during design was visual/layout reference
+only. Its class range, day/period dimensions, colors, notation, data model, and
+spreadsheet behavior are not product assumptions. Excel/PDF export is not part
+of this feature and remains future work.

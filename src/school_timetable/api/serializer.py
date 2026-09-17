@@ -85,6 +85,10 @@ from school_timetable.api.schemas import (
     TeacherTimetableCellResponse,
     TeacherTimetableClassSectionResponse,
     TeacherTimetableEntryResponse,
+    TeacherMatrixCellResponse,
+    TeacherMatrixPeriodResponse,
+    TeacherMatrixTeacherResponse,
+    TeacherTimetableMatrixResponse,
     TeacherTimetableResponse,
     TeacherProjectionItemResponse,
     TeacherTimetableRowResponse,
@@ -114,6 +118,7 @@ from school_timetable.application.teacher_availability_models import TeacherAvai
 from school_timetable.application.teacher_availability_projection_models import TeacherAvailabilityProjectionView
 from school_timetable.application.teacher_projection_models import TeachersProjectionView
 from school_timetable.application.teacher_timetable_models import TeacherTimetableEntry, TeacherTimetableView
+from school_timetable.application.teacher_timetable_matrix_models import TeacherTimetableMatrixView
 from school_timetable.application.teaching_assignments_projection_models import (
     TeachingAssignmentItem,
     TeachingAssignmentsProjectionView,
@@ -449,6 +454,45 @@ def _teacher_timetable_entry_response(entry: TeacherTimetableEntry) -> TeacherTi
         requirement_id=entry.requirement_id,
         reserved_block_id=entry.reserved_block_id,
         resource_id=entry.resource_id,
+    )
+
+
+def teacher_timetable_matrix_response_from_view(
+    view: TeacherTimetableMatrixView,
+) -> TeacherTimetableMatrixResponse:
+    """Preserve the application's ordered dimensions and sparse cells."""
+    return TeacherTimetableMatrixResponse(
+        school_id=view.school_id,
+        school_name=view.school_name,
+        academic_year_id=view.academic_year_id,
+        academic_year_label=view.academic_year_label,
+        version_number=view.version_number,
+        solver_status=view.solver_status.value,
+        total_soft_penalty=view.total_soft_penalty,
+        created_at=view.created_at,
+        is_active=view.is_active,
+        days=tuple(DayHeaderResponse(id=day.id, name=day.name) for day in view.days),
+        periods=tuple(
+            TeacherMatrixPeriodResponse(id=period.id, name=period.name)
+            for period in view.periods
+        ),
+        teachers=tuple(
+            TeacherMatrixTeacherResponse(
+                id=teacher.id,
+                name=teacher.name,
+                cells=tuple(
+                    TeacherMatrixCellResponse(
+                        day_id=cell.day_id,
+                        period_id=cell.period_id,
+                        entries=tuple(
+                            _teacher_timetable_entry_response(entry) for entry in cell.entries
+                        ),
+                    )
+                    for cell in teacher.cells
+                ),
+            )
+            for teacher in view.teachers
+        ),
     )
 
 

@@ -16,6 +16,10 @@ import {
 } from "../api/scheduleVersions";
 import { getConfigurationState } from "../api/configurationRevision";
 import { regenerateActiveSchedule } from "../api/scheduleRegeneration";
+import {
+  getActiveTeacherTimetableMatrix,
+  getTeacherTimetableMatrixForVersion,
+} from "../api/teacherTimetableMatrix";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
 import type {
   ClassTimetableResponse,
@@ -24,6 +28,7 @@ import type {
   ScheduleVersionHistoryResponse,
   SchedulingConfigIndexResponse,
   TeacherTimetableResponse,
+  TeacherTimetableMatrixResponse,
 } from "../api/types";
 
 // `../api/client` and `../config/appConfig` are mocked with only their
@@ -62,6 +67,15 @@ vi.mock("../api/scheduleRegeneration", async (importOriginal) => {
   return { ...actual, regenerateActiveSchedule: vi.fn() };
 });
 
+vi.mock("../api/teacherTimetableMatrix", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/teacherTimetableMatrix")>();
+  return {
+    ...actual,
+    getActiveTeacherTimetableMatrix: vi.fn(),
+    getTeacherTimetableMatrixForVersion: vi.fn(),
+  };
+});
+
 vi.mock("../config/appConfig", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/appConfig")>();
   return {
@@ -81,6 +95,8 @@ const mockedGetTeacherTimetableForVersion = vi.mocked(getTeacherTimetableForVers
 const mockedRestoreScheduleVersion = vi.mocked(restoreScheduleVersion);
 const mockedGetConfigurationState = vi.mocked(getConfigurationState);
 const mockedRegenerateActiveSchedule = vi.mocked(regenerateActiveSchedule);
+const mockedGetActiveTeacherTimetableMatrix = vi.mocked(getActiveTeacherTimetableMatrix);
+const mockedGetTeacherTimetableMatrixForVersion = vi.mocked(getTeacherTimetableMatrixForVersion);
 
 /** A promise this test controls the resolution/rejection of, to assert
  * intermediate (loading) states and to model out-of-order responses. */
@@ -188,6 +204,28 @@ const ACTIVE_TEACHER_TIMETABLE_FOR_HISTORY = teacherTimetableFor("t_math", "Teac
 // override this per-test via `mockResolvedValueOnce`/`mockRejectedValueOnce`.
 const DEFAULT_TEACHER_TIMETABLE = teacherTimetableFor("t_math", "Teacher Math", 1);
 
+const TEACHER_MATRIX: TeacherTimetableMatrixResponse = {
+  school_id: "s1", school_name: "Pilot School", academic_year_id: "y1",
+  academic_year_label: "2025/2026", version_number: 1, solver_status: "OPTIMAL",
+  total_soft_penalty: 0, created_at: "2026-01-01T00:00:00Z", is_active: true,
+  days: [{ id: "wed", name: "Wednesday" }, { id: "mon", name: "Monday" }],
+  periods: [{ id: "p2", name: "Period 2" }, { id: "p1", name: "Period 1" }],
+  teachers: [
+    { id: "t_idle", name: "Teacher Idle", cells: [] },
+    {
+      id: "t_math", name: "Teacher Math", cells: [{
+        day_id: "wed", period_id: "p2", entries: [{
+          source: "REQUIREMENT", activity_id: "math", activity_name: "Mathematics",
+          participant_group_id: "merged", participant_group_name: "Configured 1-A and XII seminar",
+          participant_group_role: "MERGED_CLASSES", class_sections: [
+            { id: "1a", name: "1-A" }, { id: "12", name: "XII" },
+          ], requirement_id: "req", reserved_block_id: null, resource_id: null,
+        }],
+      }],
+    },
+  ],
+};
+
 const CURRENT_CONFIGURATION_STATE = {
   published_revision_number: 1,
   draft_revision_number: null,
@@ -204,6 +242,8 @@ beforeEach(() => {
   mockedGetTeacherTimetable.mockResolvedValue(DEFAULT_TEACHER_TIMETABLE);
   mockedGetConfigurationState.mockResolvedValue(CURRENT_CONFIGURATION_STATE);
   mockedRegenerateActiveSchedule.mockReset();
+  mockedGetActiveTeacherTimetableMatrix.mockReset();
+  mockedGetTeacherTimetableMatrixForVersion.mockReset();
 });
 
 describe("TimetablePage", () => {
@@ -1001,6 +1041,117 @@ describe("Teacher mode", () => {
 
     await screen.findByText("No schedule has been generated yet.");
     expect(screen.queryByRole("button", { name: /generate/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("Teacher Matrix mode", () => {
+  function readyDefaults() {
+    mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
+    mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
+    mockedGetTeacherTimetable.mockResolvedValue(DEFAULT_TEACHER_TIMETABLE);
+  }
+
+  it("offers Class, Teacher, and Teacher Matrix while preserving the existing default", async () => {
+    readyDefaults();
+    render(<TimetablePage />);
+
+    await screen.findByRole("combobox", { name: "Class" });
+    expect(screen.getByRole("button", { name: "Class" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Teacher" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Teacher Matrix" })).toHaveAttribute("aria-pressed", "false");
+    expect(mockedGetActiveTeacherTimetableMatrix).not.toHaveBeenCalled();
+  });
+
+  it("loads the active Matrix lazily and renders its version and dynamic structure", async () => {
+    readyDefaults();
+    mockedGetActiveTeacherTimetableMatrix.mockResolvedValue(TEACHER_MATRIX);
+    render(<TimetablePage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Teacher Matrix" }));
+
+    await waitFor(() => expect(mockedGetActiveTeacherTimetableMatrix).toHaveBeenCalledWith(
+      "s1", "y1", expect.any(AbortSignal),
+    ));
+    expect(await screen.findByText(/Teacher Matrix · Version 1/)).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Teacher timetable matrix" })).toBeInTheDocument();
+    expect(screen.getByText("Teacher Idle")).toBeInTheDocument();
+    expect(screen.getByText("1-A + XII")).toBeInTheDocument();
+    expect(mockedGetTeacherTimetableMatrixForVersion).not.toHaveBeenCalled();
+  });
+
+  it("shows Matrix loading, API error, and no-schedule states without replacing the page", async () => {
+    readyDefaults();
+    const pending = deferred<TeacherTimetableMatrixResponse>();
+    mockedGetActiveTeacherTimetableMatrix.mockReturnValueOnce(pending.promise);
+    const { unmount } = render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Teacher Matrix" }));
+    expect(await screen.findByText("Loading teacher matrix…")).toBeInTheDocument();
+    unmount();
+
+    mockedGetActiveTeacherTimetableMatrix.mockRejectedValueOnce(new ApiError(500, "Matrix unavailable"));
+    const errorView = render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Teacher Matrix" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Matrix unavailable");
+    expect(screen.getByRole("heading", { name: "Timetable" })).toBeInTheDocument();
+    errorView.unmount();
+
+    mockedGetActiveTeacherTimetableMatrix.mockRejectedValueOnce(new ApiError(404, "Active schedule not found"));
+    render(<TimetablePage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Teacher Matrix" }));
+    expect(await screen.findByText("No schedule has been generated yet.")).toBeInTheDocument();
+  });
+
+  it("loads the exact historical Matrix and retains history context across subviews", async () => {
+    readyDefaults();
+    mockedGetClassTimetable.mockResolvedValue(ACTIVE_TIMETABLE_8A);
+    mockedGetTeacherTimetable.mockResolvedValue(ACTIVE_TEACHER_TIMETABLE_FOR_HISTORY);
+    mockedGetScheduleVersionHistory.mockResolvedValue(HISTORY_RESPONSE);
+    mockedGetClassTimetableForVersion.mockResolvedValue(HISTORICAL_TIMETABLE_8A);
+    mockedGetTeacherTimetableForVersion.mockResolvedValue({ ...DEFAULT_TEACHER_TIMETABLE, is_active: false });
+    mockedGetTeacherTimetableMatrixForVersion.mockResolvedValue({
+      ...TEACHER_MATRIX, version_number: 1, is_active: false,
+    });
+    render(<TimetablePage />);
+
+    await screen.findByRole("combobox", { name: "Class" });
+    fireEvent.click(screen.getByRole("button", { name: "Version History" }));
+    await screen.findByText("Version 1");
+    fireEvent.click(screen.getByRole("button", { name: /Version 1/ }));
+    await screen.findByText(/Viewing historical/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Teacher Matrix" }));
+    await waitFor(() => expect(mockedGetTeacherTimetableMatrixForVersion).toHaveBeenCalledWith(
+      "s1", "y1", 1, expect.any(AbortSignal),
+    ));
+    expect(mockedGetActiveTeacherTimetableMatrix).not.toHaveBeenCalled();
+    expect(screen.getByText(/Teacher Matrix · Version 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Viewing historical/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Teacher" }));
+    await screen.findByRole("combobox", { name: "Teacher" });
+    expect(screen.getByText(/Viewing historical/)).toBeInTheDocument();
+    expect(mockedGetTeacherTimetableForVersion).toHaveBeenCalledWith(
+      "s1", "y1", 1, "t_math", expect.any(AbortSignal),
+    );
+  });
+
+  it("does not let a Matrix response overwrite another subview after its request is aborted", async () => {
+    readyDefaults();
+    const pending = deferred<TeacherTimetableMatrixResponse>();
+    mockedGetActiveTeacherTimetableMatrix.mockReturnValue(pending.promise);
+    render(<TimetablePage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Teacher Matrix" }));
+    await screen.findByText("Loading teacher matrix…");
+    fireEvent.click(screen.getByRole("button", { name: "Teacher" }));
+    await screen.findByRole("combobox", { name: "Teacher" });
+
+    await act(async () => {
+      pending.resolve(TEACHER_MATRIX);
+      await pending.promise;
+    });
+    expect(screen.queryByText(/Teacher Matrix · Version/)).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Teacher" })).toBeInTheDocument();
   });
 });
 

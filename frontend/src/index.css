@@ -535,6 +535,114 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
+/* -- Whole-school Teacher Matrix ---------------------------------------- */
+
+.teacher-matrix-scroll {
+  max-height: 70vh;
+  margin-top: 0.5rem;
+  overflow: auto;
+  border: 1px solid #d7d7d7;
+  background: #ffffff;
+}
+
+.teacher-matrix-scroll:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.teacher-matrix {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.74rem;
+}
+
+.teacher-matrix th,
+.teacher-matrix td {
+  width: 3.1rem;
+  min-width: 3.1rem;
+  height: 1.7rem;
+  padding: 0.1rem 0.12rem;
+  border-right: 1px solid #e2e2e2;
+  border-bottom: 1px solid #e2e2e2;
+  vertical-align: top;
+  text-align: left;
+  background: #ffffff;
+}
+
+.teacher-matrix td {
+  vertical-align: middle;
+  text-align: center;
+}
+
+.teacher-matrix thead th {
+  position: sticky;
+  z-index: 3;
+  background: #f2f2f2;
+  color: #444444;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+
+.teacher-matrix thead tr:first-child th {
+  top: 0;
+  height: 1.75rem;
+  border-bottom: 1px solid #c5c5c5;
+  text-align: center;
+}
+
+.teacher-matrix thead tr:nth-child(2) th {
+  top: 1.75rem;
+  height: 1.65rem;
+  border-bottom: 2px solid #a8a8a8;
+  text-align: center;
+}
+
+.teacher-matrix .teacher-matrix-corner,
+.teacher-matrix .teacher-matrix-teacher {
+  position: sticky;
+  left: 0;
+  width: auto;
+  min-width: 9.5rem;
+  max-width: 12rem;
+  background: #f7f7f7;
+  font-weight: 600;
+  white-space: normal;
+}
+
+.teacher-matrix .teacher-matrix-corner {
+  z-index: 5;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.teacher-matrix .teacher-matrix-teacher {
+  z-index: 2;
+}
+
+.teacher-matrix .teacher-matrix-day-header,
+.teacher-matrix .teacher-matrix-day-start {
+  border-left: 2px solid #858585;
+}
+
+.teacher-matrix .teacher-matrix-day-end {
+  border-right: 2px solid #858585;
+}
+
+.teacher-matrix-entry + .teacher-matrix-entry {
+  margin-top: 0.15rem;
+  padding-top: 0.15rem;
+  border-top: 1px dashed #bdbdbd;
+}
+
+.teacher-matrix-entry-primary {
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
 /* -- Teaching Assignments (Phase 3C.3a) ---------------------------------
    Reuses the existing table/border/typography tokens the timetable grid
    already established (`.timetable-grid` above) rather than introducing

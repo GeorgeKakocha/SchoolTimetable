@@ -3,6 +3,7 @@ import ClassSelector from "../components/ClassSelector";
 import ClassTimetableEditor from "../components/ClassTimetableEditor";
 import TeacherSelector from "../components/TeacherSelector";
 import TeacherTimetableGrid from "../components/TeacherTimetableGrid";
+import TeacherTimetableMatrix from "../components/TeacherTimetableMatrix";
 import TimetableGrid from "../components/TimetableGrid";
 import VersionHistoryPanel from "../components/VersionHistoryPanel";
 import IncompatibleLocksDialog from "../components/IncompatibleLocksDialog";
@@ -14,6 +15,10 @@ import {
   getTeacherTimetable,
 } from "../api/client";
 import { getConfigurationState } from "../api/configurationRevision";
+import {
+  getActiveTeacherTimetableMatrix,
+  getTeacherTimetableMatrixForVersion,
+} from "../api/teacherTimetableMatrix";
 import {
   isConfigurationChangedDuringGenerationError,
   isIncompatibleLocksRequireConfirmationError,
@@ -34,6 +39,7 @@ import type {
   IncompatibleLock,
   SchedulingConfigIndexResponse,
   TeacherTimetableResponse,
+  TeacherTimetableMatrixResponse,
   ValidationDiagnostic,
 } from "../api/types";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
@@ -114,7 +120,14 @@ type TeacherTimetableState =
   | { status: "no-schedule" }
   | { status: "error"; message: string };
 
-type TimetableMode = "class" | "teacher";
+type TeacherMatrixState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "loaded"; matrix: TeacherTimetableMatrixResponse }
+  | { status: "no-schedule" }
+  | { status: "error"; message: string };
+
+type TimetableMode = "class" | "teacher" | "teacher-matrix";
 
 type ConfigurationState =
   | { status: "loading" }
@@ -277,6 +290,7 @@ function TimetablePage() {
   const [mode, setMode] = useState<TimetableMode>("class");
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
   const [teacherTimetableState, setTeacherTimetableState] = useState<TeacherTimetableState>({ status: "idle" });
+  const [teacherMatrixState, setTeacherMatrixState] = useState<TeacherMatrixState>({ status: "idle" });
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -499,6 +513,56 @@ function TimetablePage() {
       controller.abort();
     };
   }, [appConfigResult, configState.status, selectedTeacherId, generationRefreshToken, viewingVersionNumber]);
+
+  // The whole-school Matrix is intentionally lazy: unlike the existing
+  // selected Class/Teacher projections, it is fetched only while its own
+  // subview is visible. Mode/version/refresh changes abort the obsolete
+  // request, and both success and failure paths check that signal before
+  // changing visible state.
+  useEffect(() => {
+    if (!appConfigResult.ok || configState.status !== "ready" || mode !== "teacher-matrix") {
+      return;
+    }
+    const controller = new AbortController();
+    setTeacherMatrixState({ status: "loading" });
+    const request = viewingVersionNumber === null
+      ? getActiveTeacherTimetableMatrix(
+          appConfigResult.schoolId, appConfigResult.academicYearId, controller.signal,
+        )
+      : getTeacherTimetableMatrixForVersion(
+          appConfigResult.schoolId,
+          appConfigResult.academicYearId,
+          viewingVersionNumber,
+          controller.signal,
+        );
+
+    request
+      .then((matrix) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setTeacherMatrixState({ status: "loaded", matrix });
+        if (viewingVersionNumber === null) {
+          setActiveVersionNumber(matrix.version_number);
+        }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        if (error instanceof ApiError && error.detail === "Active schedule not found") {
+          setTeacherMatrixState({ status: "no-schedule" });
+          return;
+        }
+        if (error instanceof ApiError && error.code === "SCHEDULE_VERSION_NOT_FOUND") {
+          setViewingVersionNumber(null);
+          return;
+        }
+        setTeacherMatrixState({ status: "error", message: describeApiError(error) });
+      });
+
+    return () => controller.abort();
+  }, [appConfigResult, configState.status, mode, generationRefreshToken, viewingVersionNumber]);
 
   async function handleGenerateClick() {
     if (!appConfigResult.ok || generating) {
@@ -746,6 +810,14 @@ function TimetablePage() {
             </button>
             <button
               type="button"
+              className="mode-switch-button"
+              aria-pressed={mode === "teacher-matrix"}
+              onClick={() => setMode("teacher-matrix")}
+            >
+              Teacher Matrix
+            </button>
+            <button
+              type="button"
               className="action-button version-history-toggle"
               aria-pressed={historyOpen}
               onClick={() => {
@@ -902,7 +974,7 @@ function TimetablePage() {
                 )}
               </>
             )
-          ) : configState.config.teachers.length === 0 ? (
+          ) : mode === "teacher" ? configState.config.teachers.length === 0 ? (
             <p>No teachers are configured for this school/year yet.</p>
           ) : (
             <>
@@ -930,6 +1002,26 @@ function TimetablePage() {
                     </button>
                   )}
                   <TeacherTimetableGrid timetable={teacherTimetableState.timetable} />
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {teacherMatrixState.status === "idle" || teacherMatrixState.status === "loading" ? (
+                <p role="status">Loading teacher matrix…</p>
+              ) : null}
+              {teacherMatrixState.status === "no-schedule" && (
+                <p>No schedule has been generated yet.</p>
+              )}
+              {teacherMatrixState.status === "error" && (
+                <p role="alert">{teacherMatrixState.message}</p>
+              )}
+              {teacherMatrixState.status === "loaded" && (
+                <>
+                  <p className="timetable-meta">
+                    Teacher Matrix · Version {teacherMatrixState.matrix.version_number}
+                  </p>
+                  <TeacherTimetableMatrix matrix={teacherMatrixState.matrix} />
                 </>
               )}
             </>

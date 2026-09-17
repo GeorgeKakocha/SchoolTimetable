@@ -4367,4 +4367,35 @@ tests, 655 non-slow core tests (5 slow tests intentionally deselected), 666
 full `tests_web` tests, and 604 full frontend tests passed; the frontend
 production build succeeded. Alembic remains at the single head
 `398b05641152`, with current at head and no upgrade operations detected.
-Teacher Matrix and export remain future work and are not part of this slice.
+Export remains future work and is not part of this slice.
+
+## WHOLE-SCHOOL TEACHER TIMETABLE MATRIX CLOSED
+
+The Timetable page now ships a read-only `Class | Teacher | Teacher Matrix`
+view. A dedicated backend whole-school projection serves both the active
+schedule version and an exact requested historical version, always resolving
+display semantics from that version's own configuration revision. Its public
+contract uses natural IDs, ordered configured dimensions, every configured
+teacher (including zero-load teachers), and sparse occupied cells; absence of
+a teacher/day/period coordinate means free. Days and instructional periods are
+data-driven, and noninstructional periods are excluded.
+
+The compact native-web matrix groups configured days over configured periods,
+keeps teacher and header cells sticky, scrolls horizontally, and presents
+period positions as Roman numerals without changing configured Period IDs,
+names, or indexes. `WHOLE_CLASS` cells show configured class-section names;
+`MERGED_CLASSES` cells show configured class-section names joined by ` + `;
+`SUBGROUP` cells retain the authoritative participant-group name; targetless
+reserved/special activities fall back to their activity name. These rules use
+structured entry semantics and never parse participant-group display text.
+
+The earlier spreadsheet image was a visual/layout reference only. No class
+range, day count, period count, color scheme, notation, or spreadsheet data
+model was copied. Excel/PDF export remains outside this feature.
+
+Closure verification: 27 focused Matrix/Teacher application tests, 5 focused
+PostgreSQL Matrix API tests with zero skips, 663 non-slow core tests (5 slow
+tests intentionally deselected), 671 full `tests_web` tests with zero skips,
+and 627 frontend tests passed; the production frontend build succeeded.
+Alembic remains at the single head `398b05641152`, current at head, with no
+new upgrade operations or Matrix migration.

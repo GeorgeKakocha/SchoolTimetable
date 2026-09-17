@@ -59,6 +59,9 @@ from school_timetable.application.teacher_availability_service import TeacherAva
 from school_timetable.application.teacher_projection_service import TeacherProjectionService
 from school_timetable.application.teacher_service import TeacherService
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
+from school_timetable.application.teacher_timetable_matrix_service import (
+    TeacherTimetableMatrixService,
+)
 from school_timetable.application.teaching_assignment_service import TeachingAssignmentService
 from school_timetable.application.teaching_assignments_projection_service import (
     TeachingAssignmentsProjectionService,
@@ -162,6 +165,14 @@ def get_teacher_timetable_service() -> TeacherTimetableService:
     for the sibling teacher-timetable projection (next product slice
     after Phase 3C.3, no new phase number)."""
     return TeacherTimetableService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemyScheduleVersionRepository(SessionLocal),
+    )
+
+
+def get_teacher_timetable_matrix_service() -> TeacherTimetableMatrixService:
+    """Compose the Matrix projection from the existing read adapters."""
+    return TeacherTimetableMatrixService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyScheduleVersionRepository(SessionLocal),
     )

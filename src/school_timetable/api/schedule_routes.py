@@ -111,6 +111,7 @@ from school_timetable.api.dependencies import (
     get_generate_schedule_service,
     get_schedule_editing_service,
     get_schedule_version_repository,
+    get_teacher_timetable_matrix_service,
     get_teacher_timetable_service,
 )
 from school_timetable.api.schemas import (
@@ -141,6 +142,7 @@ from school_timetable.api.schemas import (
     ScheduleVersionNotFoundErrorResponse,
     StaleScheduleVersionErrorResponse,
     TeacherTimetableResponse,
+    TeacherTimetableMatrixResponse,
     UnlockRequest,
     VersionAlreadyActiveErrorResponse,
 )
@@ -149,6 +151,7 @@ from school_timetable.api.serializer import (
     class_timetable_response_from_view,
     generate_response_from_active_version,
     schedule_version_history_response_from_summaries,
+    teacher_timetable_matrix_response_from_view,
     teacher_timetable_response_from_view,
     validation_diagnostic_response_from_error,
 )
@@ -178,6 +181,9 @@ from school_timetable.application.generate_schedule_service import GenerateSched
 from school_timetable.application.ports import ScheduleVersionRepository
 from school_timetable.application.schedule_editing_service import ScheduleEditingService
 from school_timetable.application.teacher_timetable_service import TeacherTimetableService
+from school_timetable.application.teacher_timetable_matrix_service import (
+    TeacherTimetableMatrixService,
+)
 from school_timetable.domain.schedule import OccurrenceKey
 
 router = APIRouter()
@@ -442,6 +448,24 @@ def get_teacher_timetable(
     return teacher_timetable_response_from_view(view)
 
 
+@router.get(
+    "/schools/{school_id}/years/{year_id}/schedule/active/teacher-matrix",
+    response_model=TeacherTimetableMatrixResponse,
+)
+def get_teacher_timetable_matrix(
+    school_id: str,
+    year_id: str,
+    service: TeacherTimetableMatrixService = Depends(get_teacher_timetable_matrix_service),
+) -> TeacherTimetableMatrixResponse:
+    try:
+        view = service.project(school_id, year_id)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    if view is None:
+        raise HTTPException(status_code=404, detail="Active schedule not found")
+    return teacher_timetable_matrix_response_from_view(view)
+
+
 # -- Schedule version history + restore ------------------------------------
 #
 # `GET .../schedule/versions` lists every `ScheduleVersion` newest-first
@@ -557,6 +581,32 @@ def get_teacher_timetable_for_version(
     if view is None:
         raise HTTPException(status_code=404, detail="Active schedule not found")
     return teacher_timetable_response_from_view(view)
+
+
+@router.get(
+    "/schools/{school_id}/years/{year_id}/schedule/versions/{version_number}/teacher-matrix",
+    response_model=TeacherTimetableMatrixResponse,
+)
+def get_teacher_timetable_matrix_for_version(
+    school_id: str,
+    year_id: str,
+    version_number: int,
+    service: TeacherTimetableMatrixService = Depends(get_teacher_timetable_matrix_service),
+) -> TeacherTimetableMatrixResponse:
+    try:
+        view = service.project_version(school_id, year_id, version_number)
+    except SchedulingProblemNotFoundError:
+        raise HTTPException(status_code=404, detail="Scheduling configuration not found") from None
+    except ScheduleVersionNotFoundError as exc:
+        return JSONResponse(
+            status_code=404,
+            content=ScheduleVersionNotFoundErrorResponse(
+                code="SCHEDULE_VERSION_NOT_FOUND", detail=str(exc), version_number=version_number,
+            ).model_dump(),
+        )
+    if view is None:
+        raise HTTPException(status_code=404, detail="Active schedule not found")
+    return teacher_timetable_matrix_response_from_view(view)
 
 
 @router.post(

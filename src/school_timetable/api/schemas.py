@@ -621,6 +621,43 @@ class TeacherTimetableResponse(BaseModel):
     rows: tuple[TeacherTimetableRowResponse, ...]
 
 
+# -- Whole-school Teacher Matrix projection -------------------------------
+
+
+class TeacherMatrixPeriodResponse(BaseModel):
+    id: str
+    name: str
+
+
+class TeacherMatrixCellResponse(BaseModel):
+    """One occupied coordinate. Absence of a coordinate means free."""
+
+    day_id: str
+    period_id: str
+    entries: tuple[TeacherTimetableEntryResponse, ...]
+
+
+class TeacherMatrixTeacherResponse(BaseModel):
+    id: str
+    name: str
+    cells: tuple[TeacherMatrixCellResponse, ...]
+
+
+class TeacherTimetableMatrixResponse(BaseModel):
+    school_id: str
+    school_name: str
+    academic_year_id: str
+    academic_year_label: str
+    version_number: int
+    solver_status: Literal["OPTIMAL", "FEASIBLE"]
+    total_soft_penalty: int
+    created_at: datetime
+    is_active: bool
+    days: tuple[DayHeaderResponse, ...]
+    periods: tuple[TeacherMatrixPeriodResponse, ...]
+    teachers: tuple[TeacherMatrixTeacherResponse, ...]
+
+
 # -- Teaching Assignments API (Phase 3C.2b, `docs/DECISIONS.md` #34-#36's
 # locked HTTP contract). --------------------------------------------------
 

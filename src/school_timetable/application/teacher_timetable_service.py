@@ -25,12 +25,12 @@ from school_timetable.application.ports import ScheduleVersionRepository, Schedu
 from school_timetable.application.teacher_timetable_models import (
     DayHeader,
     TeacherTimetableCell,
-    TeacherTimetableClassSection,
-    TeacherTimetableEntry,
     TeacherTimetableRow,
     TeacherTimetableView,
 )
-from school_timetable.domain.groups import ParticipantGroup
+from school_timetable.application.teacher_timetable_entry_projection import (
+    project_teacher_timetable_entry,
+)
 from school_timetable.domain.people import Teacher
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import ScheduleEntry, SolverStatus
@@ -164,7 +164,9 @@ def _build_view(
             continue
         key = (entry.day_id, entry.period_id)
         cells.setdefault(key, []).append(
-            _project_entry(entry, activities_by_id, groups_by_id, class_sections_by_id)
+            project_teacher_timetable_entry(
+                entry, activities_by_id, groups_by_id, class_sections_by_id,
+            )
         )
 
     rows = tuple(
@@ -196,36 +198,4 @@ def _build_view(
         is_active=is_active,
         days=days,
         rows=rows,
-    )
-
-
-def _project_entry(
-    entry: ScheduleEntry,
-    activities_by_id: dict[str, str],
-    groups_by_id: dict[str, ParticipantGroup],
-    class_sections_by_id: dict[str, str],
-) -> TeacherTimetableEntry:
-    """Resolve display names/role via strict lookup -- a non-null
-    referenced ID missing from `problem`'s own lookup tables is a
-    genuine configuration inconsistency and must raise (`KeyError`),
-    never silently serialize as a blank/`None` name or an inferred
-    role. `participant_group_role`/`class_sections` are read straight
-    off the authoritative `ParticipantGroup`, never derived from the
-    group's name or `entry.class_sections`' own length."""
-    group = None if entry.participant_group_id is None else groups_by_id[entry.participant_group_id]
-    resolved_class_sections = tuple(
-        TeacherTimetableClassSection(id=class_id, name=class_sections_by_id[class_id])
-        for class_id in entry.class_sections
-    )
-    return TeacherTimetableEntry(
-        source=entry.source,
-        activity_id=entry.activity_id,
-        activity_name=activities_by_id[entry.activity_id],
-        participant_group_id=entry.participant_group_id,
-        participant_group_name=None if group is None else group.name,
-        participant_group_role=None if group is None else group.role.value,
-        class_sections=resolved_class_sections,
-        requirement_id=entry.requirement_id,
-        reserved_block_id=entry.reserved_block_id,
-        resource_id=entry.resource_id,
     )

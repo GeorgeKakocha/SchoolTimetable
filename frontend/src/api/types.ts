@@ -175,6 +175,45 @@ export interface TeacherTimetableResponse {
   rows: TeacherTimetableRow[];
 }
 
+// -- Whole-school Teacher Matrix -----------------------------------------
+//
+// Sparse by contract: `teachers[].cells` contains occupied coordinates
+// only. Absence of a teacher/day/period coordinate means the teacher is
+// free. The entry shape is exactly the existing teacher-timetable entry
+// contract, so it is reused rather than renamed or duplicated.
+
+export interface TeacherMatrixPeriod {
+  id: string;
+  name: string;
+}
+
+export interface TeacherMatrixCell {
+  day_id: string;
+  period_id: string;
+  entries: TeacherTimetableEntry[];
+}
+
+export interface TeacherMatrixTeacher {
+  id: string;
+  name: string;
+  cells: TeacherMatrixCell[];
+}
+
+export interface TeacherTimetableMatrixResponse {
+  school_id: string;
+  school_name: string;
+  academic_year_id: string;
+  academic_year_label: string;
+  version_number: number;
+  solver_status: SolverStatus;
+  total_soft_penalty: number;
+  created_at: string;
+  is_active: boolean;
+  days: DayHeader[];
+  periods: TeacherMatrixPeriod[];
+  teachers: TeacherMatrixTeacher[];
+}
+
 // -- POST /schools/{school_id}/years/{year_id}/schedule/generate --------
 //
 // Mirrors Phase 3A3.4's `GenerateScheduleResponse` exactly
