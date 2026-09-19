@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createDay,
   createPeriod,
@@ -12,7 +12,7 @@ import {
 } from "../../api/calendar";
 import type { CalendarDayItem, CalendarPeriodItem, CalendarProjectionResponse, MoveDirection } from "../../api/calendar";
 import { ApiError } from "../../api/client";
-import { AppConfigError, loadAppConfig } from "../../config/appConfig";
+import { useActiveSchoolYearContext } from "../../context/ActiveSchoolYearContext";
 
 /**
  * Calendar B: the "Calendar & Bell Schedule" tab of `SchoolSetupPage`.
@@ -182,17 +182,13 @@ type PeriodEditState = {
 };
 
 function CalendarBellSchedulePanel() {
-  const [appConfigResult] = useState<AppConfigResult>(() => {
-    try {
-      const config = loadAppConfig();
-      return { ok: true, schoolId: config.schoolId, academicYearId: config.academicYearId };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof AppConfigError ? error.message : "Frontend configuration is invalid.",
-      };
-    }
-  });
+  const { activeContext } = useActiveSchoolYearContext();
+  const appConfigResult = useMemo<AppConfigResult>(
+    () => activeContext === null
+      ? { ok: false, message: "No active school and academic year selected." }
+      : { ok: true, schoolId: activeContext.schoolId, academicYearId: activeContext.academicYearId },
+    [activeContext],
+  );
 
   const [panelState, setPanelState] = useState<PanelState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);

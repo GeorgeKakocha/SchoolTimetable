@@ -49,6 +49,7 @@ from school_timetable.api.schemas import (
     ParticipantGroupResponse,
     PeriodResponse,
     PeriodWriteResponse,
+    ProvisionSchoolResponse,
     ReservedActivitiesProjectionResponse,
     ReservedActivityClassSectionOptionResponse,
     ReservedActivityDayOptionResponse,
@@ -104,10 +105,32 @@ from school_timetable.api.schemas import (
     ValidationDiagnosticResponse,
     WholeClassTargetResponse,
 )
+from school_timetable.application.school_provisioning_models import ProvisionSchoolWithInitialYearResult
 from school_timetable.application.calendar_models import DayWriteResult, PeriodWriteResult
 from school_timetable.application.calendar_projection_models import CalendarProjectionView
 from school_timetable.application.class_section_projection_models import ClassSectionsProjectionView
 from school_timetable.application.class_timetable_models import ClassTimetableEntry, ClassTimetableView
+
+
+def provision_school_response_from_result(
+    result: ProvisionSchoolWithInitialYearResult,
+) -> ProvisionSchoolResponse:
+    """Map public application identities explicitly; omit `has_schedule`
+    to reuse the established configuration-state HTTP shape exactly."""
+    from school_timetable.api.schemas import ConfigurationRevisionStateResponse
+
+    return ProvisionSchoolResponse(
+        school=SchoolResponse(id=result.school.id, name=result.school.name),
+        academic_year=AcademicYearResponse(
+            id=result.academic_year.id, label=result.academic_year.label,
+        ),
+        configuration_state=ConfigurationRevisionStateResponse(
+            published_revision_number=result.configuration_state.published_revision_number,
+            draft_revision_number=result.configuration_state.draft_revision_number,
+            configuration_locked=result.configuration_state.configuration_locked,
+            timetable_out_of_date=result.configuration_state.timetable_out_of_date,
+        ),
+    )
 from school_timetable.application.errors import InvalidPeriodError
 from school_timetable.application.schedule_models import ActiveScheduleVersion, ScheduleVersionSummary
 from school_timetable.application.reserved_activity_projection_models import ReservedActivitiesProjectionView

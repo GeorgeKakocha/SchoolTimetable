@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { getSchedulingConfigIndex } from "../api/client";
 import ConfigurationLifecyclePanel from "./ConfigurationLifecyclePanel";
-import { loadAppConfig } from "../config/appConfig";
+import { useActiveSchoolYearContext } from "../context/ActiveSchoolYearContext";
 
 /**
  * Phase 3C.3a: the shared top-navigation shell introduced now that the
@@ -63,23 +63,19 @@ function navLinkClassName({ isActive }: { isActive: boolean }): string {
 
 function AppShell() {
   const location = useLocation();
+  const { activeContext } = useActiveSchoolYearContext();
   const [contextState, setContextState] = useState<ContextState>({ status: "loading" });
   const [projectionRefreshToken, setProjectionRefreshToken] = useState(0);
 
   useEffect(() => {
-    let schoolId: string;
-    let academicYearId: string;
-    try {
-      const config = loadAppConfig();
-      schoolId = config.schoolId;
-      academicYearId = config.academicYearId;
-    } catch {
+    if (activeContext === null) {
       setContextState({ status: "unavailable" });
       return;
     }
 
     const controller = new AbortController();
-    getSchedulingConfigIndex(schoolId, academicYearId, controller.signal)
+    setContextState({ status: "loading" });
+    getSchedulingConfigIndex(activeContext.schoolId, activeContext.academicYearId, controller.signal)
       .then((index) => {
         if (controller.signal.aborted) {
           return;
@@ -96,16 +92,9 @@ function AppShell() {
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [activeContext]);
 
   const configurationRoute = location.pathname.startsWith("/configuration/");
-  let appConfig: { schoolId: string; academicYearId: string } | null = null;
-  try {
-    appConfig = loadAppConfig();
-  } catch {
-    appConfig = null;
-  }
-
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -132,10 +121,10 @@ function AppShell() {
         </nav>
       </header>
       <main className="app-main">
-        {configurationRoute && appConfig !== null && (
+        {configurationRoute && activeContext !== null && (
           <ConfigurationLifecyclePanel
-            schoolId={appConfig.schoolId}
-            academicYearId={appConfig.academicYearId}
+            schoolId={activeContext.schoolId}
+            academicYearId={activeContext.academicYearId}
             onProjectionRefresh={() => setProjectionRefreshToken((token) => token + 1)}
           />
         )}

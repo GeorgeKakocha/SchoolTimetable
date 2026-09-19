@@ -383,9 +383,7 @@ describe("TimetablePage", () => {
 
     render(<TimetablePage />);
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Missing required frontend configuration value: VITE_SCHOOL_ID.",
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent("No active school and academic year selected.");
   });
 
   it("shows a generic config API error", async () => {

@@ -399,9 +399,7 @@ describe("TeachingAssignmentsPage", () => {
 
     render(<TeachingAssignmentsPage />);
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Missing required frontend configuration value: VITE_SCHOOL_ID.",
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent("No active school and academic year selected.");
   });
 });
 

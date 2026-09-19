@@ -19,6 +19,34 @@ from school_timetable.scheduling.lock_compatibility import IncompatibleLock
 from school_timetable.validation.errors import ValidationError
 
 
+class InvalidSchoolProvisioningError(Exception):
+    """The provisioning command contains blank normalized fields."""
+
+    def __init__(self, validation_errors: tuple[ValidationError, ...]) -> None:
+        self.validation_errors = validation_errors
+        super().__init__(f"invalid school provisioning command: {[e.code for e in validation_errors]!r}")
+
+
+class SchoolProvisioningConflictError(Exception):
+    """A School public ID already belongs to an incompatible aggregate."""
+
+    def __init__(self, school_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        super().__init__(f"school public ID {school_natural_id!r} already exists with incompatible data")
+
+
+class AcademicYearProvisioningConflictError(Exception):
+    """An AcademicYear public identity conflicts within its School."""
+
+    def __init__(self, school_natural_id: str, academic_year_natural_id: str) -> None:
+        self.school_natural_id = school_natural_id
+        self.academic_year_natural_id = academic_year_natural_id
+        super().__init__(
+            f"academic-year public ID {academic_year_natural_id!r} for school="
+            f"{school_natural_id!r} already exists with incompatible data"
+        )
+
+
 class SchedulingProblemNotFoundError(Exception):
     """No scheduling configuration exists for this school/academic-year
     pair. Raised identically whether the school itself is unknown or

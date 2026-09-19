@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createSpecialActivity,
   deleteSpecialActivity,
@@ -7,7 +7,7 @@ import {
 } from "../../api/specialActivities";
 import type { SpecialActivitiesProjectionResponse, SpecialActivityItem, SpecialActivityWriteRequest } from "../../api/specialActivities";
 import { ApiError } from "../../api/client";
-import { AppConfigError, loadAppConfig } from "../../config/appConfig";
+import { useActiveSchoolYearContext } from "../../context/ActiveSchoolYearContext";
 
 /**
  * Reserved Activities Slice A1/Reserved B: the Special Activities tab
@@ -96,17 +96,13 @@ function isBlank(value: string): boolean {
 }
 
 function SpecialActivitiesPanel() {
-  const [appConfigResult] = useState<AppConfigResult>(() => {
-    try {
-      const config = loadAppConfig();
-      return { ok: true, schoolId: config.schoolId, academicYearId: config.academicYearId };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof AppConfigError ? error.message : "Frontend configuration is invalid.",
-      };
-    }
-  });
+  const { activeContext } = useActiveSchoolYearContext();
+  const appConfigResult = useMemo<AppConfigResult>(
+    () => activeContext === null
+      ? { ok: false, message: "No active school and academic year selected." }
+      : { ok: true, schoolId: activeContext.schoolId, academicYearId: activeContext.academicYearId },
+    [activeContext],
+  );
 
   const [panelState, setPanelState] = useState<PanelState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);

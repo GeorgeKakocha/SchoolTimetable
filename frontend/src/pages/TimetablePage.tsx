@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ClassSelector from "../components/ClassSelector";
 import ClassTimetableEditor from "../components/ClassTimetableEditor";
 import TeacherSelector from "../components/TeacherSelector";
@@ -7,6 +7,7 @@ import TeacherTimetableMatrix from "../components/TeacherTimetableMatrix";
 import TimetableGrid from "../components/TimetableGrid";
 import VersionHistoryPanel from "../components/VersionHistoryPanel";
 import IncompatibleLocksDialog from "../components/IncompatibleLocksDialog";
+import { useActiveSchoolYearContext } from "../context/ActiveSchoolYearContext";
 import {
   ApiError,
   generateSchedule,
@@ -42,11 +43,10 @@ import type {
   TeacherTimetableMatrixResponse,
   ValidationDiagnostic,
 } from "../api/types";
-import { AppConfigError, loadAppConfig } from "../config/appConfig";
 
 /**
  * Phase 3B.3 (`docs/DECISIONS.md` #32): the first real browser class
- * timetable. Orchestrates, on mount: load the (pilot-fixed) app config
+ * timetable. Orchestrates, on mount: read the active runtime context
  * -> load the scheduling config index (for the class selector) ->
  * select the first backend-provided class -> load its live timetable.
  * No school/year selectors, no teacher timetable, no history/editing/
@@ -270,17 +270,13 @@ function describeRegenerationError(error: unknown): { message: string; diagnosti
 }
 
 function TimetablePage() {
-  const [appConfigResult] = useState<AppConfigResult>(() => {
-    try {
-      const config = loadAppConfig();
-      return { ok: true, schoolId: config.schoolId, academicYearId: config.academicYearId };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof AppConfigError ? error.message : "Frontend configuration is invalid.",
-      };
-    }
-  });
+  const { activeContext } = useActiveSchoolYearContext();
+  const appConfigResult = useMemo<AppConfigResult>(
+    () => activeContext === null
+      ? { ok: false, message: "No active school and academic year selected." }
+      : { ok: true, schoolId: activeContext.schoolId, academicYearId: activeContext.academicYearId },
+    [activeContext],
+  );
 
   const [configState, setConfigState] = useState<ConfigState>({ status: "loading" });
   const [configurationState, setConfigurationState] = useState<ConfigurationState>({ status: "loading" });

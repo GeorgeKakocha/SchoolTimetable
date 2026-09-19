@@ -39,6 +39,7 @@ from school_timetable.application.class_section_service import ClassSectionServi
 from school_timetable.application.class_timetable_service import ClassTimetableService
 from school_timetable.application.generate_schedule_service import GenerateScheduleService
 from school_timetable.application.schedule_editing_service import ScheduleEditingService
+from school_timetable.application.school_provisioning_service import ProvisionSchoolWithInitialYearService
 from school_timetable.application.ports import (
     ConfigurationRevisionRepository,
     ScheduleVersionRepository,
@@ -83,6 +84,7 @@ from school_timetable.persistence.calendar_repository import (
 from school_timetable.persistence.reserved_activity_repository import SqlAlchemyReservedActivityRepository
 from school_timetable.persistence.resource_repository import SqlAlchemyResourceRepository
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
+from school_timetable.persistence.school_provisioning_repository import SqlAlchemySchoolProvisioningRepository
 from school_timetable.persistence.special_activity_repository import SqlAlchemySpecialActivityRepository
 from school_timetable.persistence.teacher_availability_repository import (
     SqlAlchemyTeacherAvailabilityRepository,
@@ -101,6 +103,13 @@ def get_scheduling_problem_repository(
     always closed afterward) -- no global long-lived `Session`, no
     separate connection constructed here."""
     return SqlAlchemySchedulingProblemRepository(session)
+
+
+def get_school_provisioning_service() -> ProvisionSchoolWithInitialYearService:
+    """Compose the atomic School/initial-year provisioning use case."""
+    return ProvisionSchoolWithInitialYearService(
+        SqlAlchemySchoolProvisioningRepository(SessionLocal),
+    )
 
 
 def get_schedule_version_repository() -> ScheduleVersionRepository:

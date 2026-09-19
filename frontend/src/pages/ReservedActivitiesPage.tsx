@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   createReservedActivity,
@@ -8,7 +8,7 @@ import {
 } from "../api/reservedActivities";
 import type { ReservedActivitiesProjectionResponse, ReservedActivityItem } from "../api/reservedActivities";
 import { ApiError } from "../api/client";
-import { AppConfigError, loadAppConfig } from "../config/appConfig";
+import { useActiveSchoolYearContext } from "../context/ActiveSchoolYearContext";
 import ReservedActivityEditor from "../components/ReservedActivityEditor";
 import type { ReservedActivityDraftValues } from "../components/ReservedActivityEditor";
 import ReservedActivityCard from "../components/ReservedActivityCard";
@@ -228,17 +228,13 @@ function computeMissingPrerequisites(projection: ReservedActivitiesProjectionRes
 }
 
 function ReservedActivitiesPage() {
-  const [appConfigResult] = useState<AppConfigResult>(() => {
-    try {
-      const config = loadAppConfig();
-      return { ok: true, schoolId: config.schoolId, academicYearId: config.academicYearId };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof AppConfigError ? error.message : "Frontend configuration is invalid.",
-      };
-    }
-  });
+  const { activeContext } = useActiveSchoolYearContext();
+  const appConfigResult = useMemo<AppConfigResult>(
+    () => activeContext === null
+      ? { ok: false, message: "No active school and academic year selected." }
+      : { ok: true, schoolId: activeContext.schoolId, academicYearId: activeContext.academicYearId },
+    [activeContext],
+  );
 
   const [pageState, setPageState] = useState<PageState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);

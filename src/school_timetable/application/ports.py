@@ -63,11 +63,30 @@ from school_timetable.application.schedule_models import (
     ScheduleVersionSnapshot,
     ScheduleVersionSummary,
 )
+from school_timetable.application.school_provisioning_models import (
+    ProvisionSchoolWithInitialYearCommand,
+    ProvisionSchoolWithInitialYearResult,
+)
 from school_timetable.application.teacher_availability_models import TeacherAvailabilityExceptionFields
 from school_timetable.application.draft_snapshot import DraftConfigurationSnapshot
 from school_timetable.domain.problem import SchedulingProblem
 from school_timetable.domain.result import ScheduleEntry, SolverStatus
 from school_timetable.domain.schedule import OccurrenceKey, Schedule
+
+
+class SchoolProvisioningRepository(Protocol):
+    """Atomic persistence boundary for a School and its initial year."""
+
+    def provision_school_with_initial_year(
+        self, command: ProvisionSchoolWithInitialYearCommand,
+    ) -> ProvisionSchoolWithInitialYearResult:
+        """Create School + AcademicYear + initial DRAFT revision, or
+        return an exactly equivalent existing aggregate on replay.
+
+        Raises explicit application conflicts for incompatible existing
+        identities.  No partial aggregate may be committed.
+        """
+        ...
 
 
 class SchedulingProblemRepository(Protocol):

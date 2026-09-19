@@ -5222,3 +5222,32 @@ The spreadsheet screenshot supplied during design was visual/layout reference
 only. Its class range, day/period dimensions, colors, notation, data model, and
 spreadsheet behavior are not product assumptions. Excel/PDF export is not part
 of this feature and remains future work.
+
+## 43. Pilot provisioning is atomic and runtime context overrides build-time fallback
+
+Real School Trial provisioning is shipped through `/provision` and `POST
+/schools`. One application operation atomically creates a School, its initial
+AcademicYear, and ConfigurationRevision 1 as `DRAFT`, links the year's draft
+pointer, and leaves the published pointer and Schedule absent. Exact replay is
+idempotent. A reused School or AcademicYear public identity with incompatible
+data is an explicit conflict; no partial aggregate is committed. The public
+contract contains stable natural/public IDs only, never surrogate database IDs.
+This uses the existing schema and required no migration.
+
+Frontend context precedence is persisted runtime School/AcademicYear, then the
+Vite values as backward-compatible fallback, then no context. Once provisioning
+succeeds, only the server-returned IDs are persisted and made immediately
+authoritative for explicit API-client arguments; navigation to
+`/configuration/setup` requires no reload. The runtime choice survives refresh
+and therefore does not revert to stale Vite fallback values. `/provision` is
+outside the active-context route guard and remains reachable in every state.
+It also owns the narrow manual recovery action that removes the persisted
+override and makes the currently mounted context null. Resource 404s are not
+interpreted as stale global context and do not trigger automatic clearing.
+
+This pilot deliberately does not add a school selector, multi-school
+management, additional academic-year management, or authentication. The next
+Real School Trial #1 blocker is browser entry for the real synchronized Second
+Foreign Language split: Russian and German subgroups in one class, same period,
+different teachers. No speculative split-group implementation is selected by
+this decision.

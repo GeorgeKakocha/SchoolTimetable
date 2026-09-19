@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createResource, deleteResource, getResources, updateResource } from "../../api/resources";
 import type { ResourceItem, ResourcesProjectionResponse, ResourceWriteRequest } from "../../api/resources";
 import { ApiError } from "../../api/client";
-import { AppConfigError, loadAppConfig } from "../../config/appConfig";
+import { useActiveSchoolYearContext } from "../../context/ActiveSchoolYearContext";
 
 /**
  * Resources C: the "Rooms & Resources" tab of `SchoolSetupPage`.
@@ -97,17 +97,13 @@ function isBlank(value: string): boolean {
 }
 
 function RoomsResourcesPanel() {
-  const [appConfigResult] = useState<AppConfigResult>(() => {
-    try {
-      const config = loadAppConfig();
-      return { ok: true, schoolId: config.schoolId, academicYearId: config.academicYearId };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof AppConfigError ? error.message : "Frontend configuration is invalid.",
-      };
-    }
-  });
+  const { activeContext } = useActiveSchoolYearContext();
+  const appConfigResult = useMemo<AppConfigResult>(
+    () => activeContext === null
+      ? { ok: false, message: "No active school and academic year selected." }
+      : { ok: true, schoolId: activeContext.schoolId, academicYearId: activeContext.academicYearId },
+    [activeContext],
+  );
 
   const [panelState, setPanelState] = useState<PanelState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);

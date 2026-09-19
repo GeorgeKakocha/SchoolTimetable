@@ -38,6 +38,7 @@ from school_timetable.api.configuration_revision_routes import router as configu
 from school_timetable.api.reserved_activity_routes import router as reserved_activity_router
 from school_timetable.api.resource_routes import router as resource_router
 from school_timetable.api.schedule_routes import router as schedule_router
+from school_timetable.api.school_provisioning_routes import router as school_provisioning_router
 from school_timetable.api.special_activity_routes import router as special_activity_router
 from school_timetable.api.subject_routes import router as subject_router
 from school_timetable.api.teacher_availability_routes import router as teacher_availability_router
@@ -46,6 +47,7 @@ from school_timetable.api.teaching_assignment_routes import router as teaching_a
 from school_timetable.persistence.db import get_session
 
 app = FastAPI(title="School Timetable API")
+app.include_router(school_provisioning_router)
 app.include_router(config_router)
 app.include_router(configuration_revision_router)
 app.include_router(schedule_router)

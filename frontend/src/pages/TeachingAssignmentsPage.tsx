@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createTeachingAssignment,
   deleteTeachingAssignment,
@@ -15,7 +15,7 @@ import type {
   ValidationDiagnostic,
   WholeClassTarget,
 } from "../api/types";
-import { AppConfigError, loadAppConfig } from "../config/appConfig";
+import { useActiveSchoolYearContext } from "../context/ActiveSchoolYearContext";
 import AssignmentDrawer, { type AssignmentDrawerValues } from "./AssignmentDrawer";
 
 /**
@@ -159,17 +159,13 @@ function describeMutationError(error: unknown): string {
 type WriteOutcome = { ok: true } | { ok: false; lockRace: boolean; notFound: boolean };
 
 function TeachingAssignmentsPage() {
-  const [appConfigResult] = useState<AppConfigResult>(() => {
-    try {
-      const config = loadAppConfig();
-      return { ok: true, schoolId: config.schoolId, academicYearId: config.academicYearId };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof AppConfigError ? error.message : "Frontend configuration is invalid.",
-      };
-    }
-  });
+  const { activeContext } = useActiveSchoolYearContext();
+  const appConfigResult = useMemo<AppConfigResult>(
+    () => activeContext === null
+      ? { ok: false, message: "No active school and academic year selected." }
+      : { ok: true, schoolId: activeContext.schoolId, academicYearId: activeContext.academicYearId },
+    [activeContext],
+  );
 
   const [pageState, setPageState] = useState<PageState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);

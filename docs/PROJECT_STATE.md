@@ -4399,3 +4399,41 @@ tests intentionally deselected), 671 full `tests_web` tests with zero skips,
 and 627 frontend tests passed; the production frontend build succeeded.
 Alembic remains at the single head `398b05641152`, current at head, with no
 new upgrade operations or Matrix migration.
+
+## REAL SCHOOL TRIAL PROVISIONING SHIPPED
+
+The supported pilot entry flow is now `/provision` -> `POST /schools` -> one
+School plus its initial AcademicYear plus ConfigurationRevision 1 in `DRAFT`
+status -> persisted runtime School/AcademicYear context ->
+`/configuration/setup`. Provisioning is one atomic application operation.
+An exact replay is idempotent; incompatible reuse of either public identity is
+an explicit conflict. HTTP requests and responses use stable natural/public
+IDs only and never expose surrogate database IDs. A new year has its draft
+pointer set to Revision 1, no published revision, and no Schedule.
+
+The frontend resolves its active context in this order: persisted runtime
+context, then the existing Vite values as a backward-compatible fallback,
+then no context. A successful provision uses the IDs returned by the server,
+switches context and navigates without a reload, and remains authoritative
+across refresh. `/provision` works with or without active context and is also
+the explicit manual stale-context recovery entry point through **Clear current
+selection**. Arbitrary resource 404s do not clear context automatically.
+
+Controlled browser acceptance used only the temporary identity
+`provisioning-acceptance-20260918` /
+`ay-provisioning-acceptance-2026-2027`. It proved the existing review Vite
+context was overridden, created and read `Acceptance Teacher` in Revision 1,
+survived refresh without a Vite restart or `.env` edit, and cleared the runtime
+selection manually. The exact temporary aggregate was then removed; the review
+datasets were not changed.
+
+Closure verification: focused provisioning 16 passed; full PostgreSQL-backed
+`tests_web` 680 passed with zero skips; non-slow core 670 passed with 5 slow
+tests deselected; frontend 654 passed across 40 files; production build
+succeeded. Alembic remains at the single head `398b05641152`, current at head,
+with no new upgrade operations. No migration, authentication, school selector,
+multi-school management, or additional academic-year management was added.
+
+The next Real School Trial #1 blocker is browser entry for the actual
+synchronized Second Foreign Language split: Russian subgroup and German
+subgroup in one class, in the same period, with different teachers.

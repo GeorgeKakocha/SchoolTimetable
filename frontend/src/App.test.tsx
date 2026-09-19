@@ -4,7 +4,8 @@ import App from "./App";
 import { getClassTimetable, getSchedulingConfigIndex } from "./api/client";
 import { getTeachingAssignments } from "./api/teachingAssignments";
 import { getReservedActivities } from "./api/reservedActivities";
-import { loadAppConfig } from "./config/appConfig";
+import { AppConfigError, loadAppConfig } from "./config/appConfig";
+import { ACTIVE_SCHOOL_YEAR_STORAGE_KEY } from "./context/ActiveSchoolYearContext";
 import type {
   ClassTimetableResponse,
   SchedulingConfigIndexResponse,
@@ -101,6 +102,7 @@ const EMPTY_RESERVED_ACTIVITIES_PROJECTION: ReservedActivitiesProjectionResponse
 };
 
 beforeEach(() => {
+  window.localStorage.clear();
   mockedLoadAppConfig.mockReturnValue({ schoolId: "s1", academicYearId: "y1" });
   mockedGetSchedulingConfigIndex.mockResolvedValue(CONFIG_INDEX);
   mockedGetClassTimetable.mockResolvedValue(TIMETABLE_8A);
@@ -110,6 +112,31 @@ beforeEach(() => {
 });
 
 describe("App routing", () => {
+  it("redirects a context-dependent route to the provisioning placeholder when no context exists", async () => {
+    mockedLoadAppConfig.mockImplementation(() => {
+      throw new AppConfigError("no environment context");
+    });
+    window.history.pushState({}, "", "/timetable");
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Set up a school", level: 1 });
+    expect(window.location.pathname).toBe("/provision");
+    expect(mockedGetSchedulingConfigIndex).not.toHaveBeenCalled();
+  });
+
+  it("renders /provision without context and does not redirect-loop", async () => {
+    mockedLoadAppConfig.mockImplementation(() => {
+      throw new AppConfigError("no environment context");
+    });
+    window.history.pushState({}, "", "/provision");
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Set up a school", level: 1 });
+    expect(window.location.pathname).toBe("/provision");
+    expect(mockedGetSchedulingConfigIndex).not.toHaveBeenCalled();
+  });
   it("redirects / to /timetable", async () => {
     render(<App />);
 
@@ -124,6 +151,20 @@ describe("App routing", () => {
 
     await screen.findByRole("heading", { name: "Timetable", level: 1 });
     await screen.findByRole("combobox", { name: "Class" });
+  });
+
+  it("uses a persisted runtime override for page API requests instead of stale Vite IDs", async () => {
+    window.localStorage.setItem(ACTIVE_SCHOOL_YEAR_STORAGE_KEY, JSON.stringify({
+      version: 1, schoolId: "runtime-school", academicYearId: "runtime-year",
+    }));
+    window.history.pushState({}, "", "/timetable");
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Timetable", level: 1 });
+    expect(mockedGetSchedulingConfigIndex).toHaveBeenCalledWith(
+      "runtime-school", "runtime-year", expect.any(AbortSignal),
+    );
   });
 
   it("renders the School Setup page at /configuration/setup", async () => {

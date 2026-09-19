@@ -9,7 +9,7 @@ import type {
   TeacherAvailabilityExceptionStatus,
   TeacherAvailabilityProjectionResponse,
 } from "../api/types";
-import { AppConfigError, loadAppConfig } from "../config/appConfig";
+import { useActiveSchoolYearContext } from "../context/ActiveSchoolYearContext";
 import AvailabilityGrid from "../components/availability/AvailabilityGrid";
 import AvailabilityLegend from "../components/availability/AvailabilityLegend";
 
@@ -138,17 +138,13 @@ function describeMutationError(error: unknown): string {
 }
 
 function TeacherAvailabilityPage() {
-  const [appConfigResult] = useState<AppConfigResult>(() => {
-    try {
-      const config = loadAppConfig();
-      return { ok: true, schoolId: config.schoolId, academicYearId: config.academicYearId };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof AppConfigError ? error.message : "Frontend configuration is invalid.",
-      };
-    }
-  });
+  const { activeContext } = useActiveSchoolYearContext();
+  const appConfigResult = useMemo<AppConfigResult>(
+    () => activeContext === null
+      ? { ok: false, message: "No active school and academic year selected." }
+      : { ok: true, schoolId: activeContext.schoolId, academicYearId: activeContext.academicYearId },
+    [activeContext],
+  );
 
   const [pageState, setPageState] = useState<PageState>({ status: "loading" });
   const [retryToken, setRetryToken] = useState(0);

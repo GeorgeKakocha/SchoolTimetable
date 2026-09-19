@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SchoolResponse(BaseModel):
@@ -30,6 +30,65 @@ class SchoolResponse(BaseModel):
 class AcademicYearResponse(BaseModel):
     id: str
     label: str
+
+
+# -- School/initial-year provisioning. -------------------------------------
+
+_PUBLIC_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
+
+
+class InitialAcademicYearProvisioningRequest(BaseModel):
+    academic_year_id: str = Field(pattern=_PUBLIC_ID_PATTERN)
+    label: str
+
+    @field_validator("label")
+    @classmethod
+    def trim_nonblank_label(cls, value: str) -> str:
+        value = value.strip()
+        if value == "":
+            raise ValueError("label must not be blank")
+        return value
+
+
+class ProvisionSchoolRequest(BaseModel):
+    """Public IDs are immutable caller-chosen URL components: lowercase
+    ASCII letters/digits plus hyphen/underscore, starting with a letter
+    or digit. They are validated verbatim and never trimmed or rewritten;
+    display values are trimmed at this boundary and again by the service."""
+
+    school_id: str = Field(pattern=_PUBLIC_ID_PATTERN)
+    school_name: str
+    initial_academic_year: InitialAcademicYearProvisioningRequest
+
+    @field_validator("school_name")
+    @classmethod
+    def trim_nonblank_name(cls, value: str) -> str:
+        value = value.strip()
+        if value == "":
+            raise ValueError("school_name must not be blank")
+        return value
+
+
+class ProvisionSchoolResponse(BaseModel):
+    school: SchoolResponse
+    academic_year: AcademicYearResponse
+    configuration_state: "ConfigurationRevisionStateResponse"
+
+
+class SchoolProvisioningConflictErrorResponse(BaseModel):
+    code: Literal["SCHOOL_ID_ALREADY_EXISTS"]
+    detail: str
+
+
+class AcademicYearProvisioningConflictErrorResponse(BaseModel):
+    code: Literal["ACADEMIC_YEAR_ID_ALREADY_EXISTS"]
+    detail: str
+
+
+class InvalidSchoolProvisioningErrorResponse(BaseModel):
+    code: Literal["INVALID_SCHOOL_PROVISIONING"]
+    detail: str
+    errors: tuple["ValidationDiagnosticResponse", ...]
 
 
 class DayResponse(BaseModel):
