@@ -41,6 +41,7 @@ from school_timetable.api.schedule_routes import router as schedule_router
 from school_timetable.api.school_provisioning_routes import router as school_provisioning_router
 from school_timetable.api.special_activity_routes import router as special_activity_router
 from school_timetable.api.subject_routes import router as subject_router
+from school_timetable.api.synchronized_split_routes import router as synchronized_split_router
 from school_timetable.api.teacher_availability_routes import router as teacher_availability_router
 from school_timetable.api.teacher_routes import router as teacher_router
 from school_timetable.api.teaching_assignment_routes import router as teaching_assignment_router
@@ -55,6 +56,7 @@ app.include_router(teaching_assignment_router)
 app.include_router(teacher_router)
 app.include_router(class_section_router)
 app.include_router(subject_router)
+app.include_router(synchronized_split_router)
 app.include_router(teacher_availability_router)
 app.include_router(special_activity_router)
 app.include_router(reserved_activity_router)

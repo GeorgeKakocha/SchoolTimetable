@@ -53,7 +53,13 @@ returning it avoids duplicating that ordering logic in the caller.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from school_timetable.application.synchronized_split_models import (
+        CreateSynchronizedSplitCommand,
+        SynchronizedSplitPublicIds,
+    )
 
 from school_timetable.application.calendar_models import DayWriteResult, PeriodFields, PeriodWriteResult
 from school_timetable.application.configuration_revision_models import ConfigurationRevisionState
@@ -621,6 +627,23 @@ class TeachingAssignmentRepository(Protocol):
         backstop, never the primary business rule -- the Decision #35
         schedule-exists recheck above already guarantees no such row
         can exist when this delete is reached through this service."""
+        ...
+
+
+class SynchronizedSplitRepository(Protocol):
+    """One atomic write of exactly two synchronized SUBGROUP branches.
+
+    The adapter follows the same AcademicYear row-lock, current-draft
+    resolution, locked-configuration rejection, and reload-under-lock
+    validation discipline as every other configuration writer.
+    """
+
+    def create(
+        self,
+        command: "CreateSynchronizedSplitCommand",
+        public_ids: "SynchronizedSplitPublicIds",
+        validate: Callable[[SchedulingProblem], None],
+    ) -> None:
         ...
 
 

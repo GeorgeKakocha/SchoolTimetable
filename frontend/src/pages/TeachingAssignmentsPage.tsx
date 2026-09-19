@@ -6,17 +6,21 @@ import {
   updateTeachingAssignment,
 } from "../api/teachingAssignments";
 import { ApiError } from "../api/client";
+import { createSynchronizedSplit, getSynchronizedSplitConfig } from "../api/synchronizedSplits";
 import type {
   TeacherWorkload,
   TeachingAssignment,
   TeachingAssignmentResourceOption,
   TeachingAssignmentsProjectionResponse,
   TeachingAssignmentWriteRequest,
+  SynchronizedSplitConfigResponse,
+  SynchronizedSplitCreateRequest,
   ValidationDiagnostic,
   WholeClassTarget,
 } from "../api/types";
 import { useActiveSchoolYearContext } from "../context/ActiveSchoolYearContext";
 import AssignmentDrawer, { type AssignmentDrawerValues } from "./AssignmentDrawer";
+import SynchronizedSplitsSection from "./SynchronizedSplitsSection";
 
 /**
  * Phase 3C.3a: `/configuration/teaching-assignments`, read-only
@@ -52,7 +56,11 @@ import AssignmentDrawer, { type AssignmentDrawerValues } from "./AssignmentDrawe
 type PageState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; projection: TeachingAssignmentsProjectionResponse };
+  | {
+      status: "ready";
+      projection: TeachingAssignmentsProjectionResponse;
+      splitConfig: SynchronizedSplitConfigResponse;
+    };
 
 type AppConfigResult =
   | { ok: true; schoolId: string; academicYearId: string }
@@ -151,6 +159,18 @@ function describeMutationError(error: unknown): string {
       }
       return error.detail;
     }
+    case "INVALID_SYNCHRONIZED_SPLIT": {
+      const rawErrors = error.body?.["errors"];
+      if (Array.isArray(rawErrors)) {
+        const messages = rawErrors.flatMap((item) =>
+          typeof item === "object" && item !== null && typeof (item as { message?: unknown }).message === "string"
+            ? [(item as { message: string }).message]
+            : [],
+        );
+        if (messages.length > 0) return messages.join(" ");
+      }
+      return error.detail;
+    }
     default:
       return error.detail;
   }
@@ -172,6 +192,8 @@ function TeachingAssignmentsPage() {
   const [refreshState, setRefreshState] = useState<RefreshState>({ status: "idle" });
   const [warnings, setWarnings] = useState<ValidationDiagnostic[]>([]);
   const [staleLockNotice, setStaleLockNotice] = useState<string | null>(null);
+  const [splitError, setSplitError] = useState<string | null>(null);
+  const [splitWarnings, setSplitWarnings] = useState<ValidationDiagnostic[]>([]);
 
   const [drawer, setDrawer] = useState<DrawerState | null>(null);
   const [drawerSubmitting, setDrawerSubmitting] = useState(false);
@@ -193,12 +215,15 @@ function TeachingAssignmentsPage() {
     const controller = new AbortController();
     setPageState({ status: "loading" });
 
-    getTeachingAssignments(appConfigResult.schoolId, appConfigResult.academicYearId, controller.signal)
-      .then((projection) => {
+    Promise.all([
+      getTeachingAssignments(appConfigResult.schoolId, appConfigResult.academicYearId, controller.signal),
+      getSynchronizedSplitConfig(appConfigResult.schoolId, appConfigResult.academicYearId, controller.signal),
+    ])
+      .then(([projection, splitConfig]) => {
         if (controller.signal.aborted) {
           return;
         }
-        setPageState({ status: "ready", projection });
+        setPageState({ status: "ready", projection, splitConfig });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) {
@@ -235,8 +260,11 @@ function TeachingAssignmentsPage() {
       }
       setRefreshState({ status: "refreshing" });
       try {
-        const projection = await getTeachingAssignments(appConfigResult.schoolId, appConfigResult.academicYearId);
-        setPageState({ status: "ready", projection });
+        const [projection, splitConfig] = await Promise.all([
+          getTeachingAssignments(appConfigResult.schoolId, appConfigResult.academicYearId),
+          getSynchronizedSplitConfig(appConfigResult.schoolId, appConfigResult.academicYearId),
+        ]);
+        setPageState({ status: "ready", projection, splitConfig });
         setRefreshState({ status: "idle" });
       } catch {
         setRefreshState({ status: "stale", message: staleFailureMessage });
@@ -386,6 +414,33 @@ function TeachingAssignmentsPage() {
 
   const controlsDisabled = refreshState.status !== "idle" || drawer !== null || deleteConfirmId !== null;
 
+  const handleSplitSubmit = useCallback(async (body: SynchronizedSplitCreateRequest): Promise<boolean> => {
+    if (!appConfigResult.ok || pageState.status !== "ready" || pageState.projection.configuration_locked) {
+      return false;
+    }
+    setSplitError(null);
+    try {
+      const result = await createSynchronizedSplit(
+        appConfigResult.schoolId, appConfigResult.academicYearId, body,
+      );
+      setSplitWarnings(result.warnings);
+      await refreshProjection(REFRESH_FAILURE_MESSAGE);
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "SCHEDULING_CONFIGURATION_LOCKED") {
+        setStaleLockNotice(LOCK_RACE_MESSAGE);
+        await refreshProjection(REFRESH_FAILURE_MESSAGE);
+        return false;
+      }
+      if (error instanceof ApiError && error.status === 404) {
+        setPageState({ status: "error", message: error.detail });
+        return false;
+      }
+      setSplitError(describeMutationError(error));
+      return false;
+    }
+  }, [appConfigResult, pageState, refreshProjection]);
+
   return (
     <div className="assignments-page">
       <h1>Teaching Assignments</h1>
@@ -430,6 +485,13 @@ function TeachingAssignmentsPage() {
           )}
 
           {warnings.length > 0 && <WarningBanner warnings={warnings} onDismiss={() => setWarnings([])} />}
+          {splitWarnings.length > 0 && (
+            <WarningBanner
+              warnings={splitWarnings}
+              onDismiss={() => setSplitWarnings([])}
+              title="Synchronized split saved, but the current configuration has warnings."
+            />
+          )}
 
           <section className="page-section" aria-labelledby="workload-heading">
             <h2 id="workload-heading">Teacher workload</h2>
@@ -474,6 +536,14 @@ function TeachingAssignmentsPage() {
             )}
           </section>
 
+          <SynchronizedSplitsSection
+            config={pageState.splitConfig}
+            configurationLocked={pageState.projection.configuration_locked}
+            controlsDisabled={controlsDisabled || refreshState.status !== "idle"}
+            error={splitError}
+            onSubmit={handleSplitSubmit}
+          />
+
           {drawer !== null && (
             <AssignmentDrawer
               mode={drawer.mode}
@@ -504,11 +574,15 @@ function TeachingAssignmentsPage() {
   );
 }
 
-function WarningBanner({ warnings, onDismiss }: { warnings: ValidationDiagnostic[]; onDismiss: () => void }) {
+function WarningBanner({ warnings, onDismiss, title = "Assignment saved, but the current configuration has warnings." }: {
+  warnings: ValidationDiagnostic[];
+  onDismiss: () => void;
+  title?: string;
+}) {
   return (
     <div className="warning-banner" role="status">
       <div className="warning-banner-header">
-        <span>Assignment saved, but the current configuration has warnings.</span>
+        <span>{title}</span>
         <button type="button" className="warning-dismiss" aria-label="Dismiss warnings" onClick={onDismiss}>
           ×
         </button>

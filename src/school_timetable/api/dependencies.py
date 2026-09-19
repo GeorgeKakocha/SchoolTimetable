@@ -53,6 +53,7 @@ from school_timetable.application.special_activity_projection_service import Spe
 from school_timetable.application.special_activity_service import SpecialActivityService
 from school_timetable.application.subject_projection_service import SubjectProjectionService
 from school_timetable.application.subject_service import SubjectService
+from school_timetable.application.synchronized_split_service import SynchronizedSplitService
 from school_timetable.application.teacher_availability_projection_service import (
     TeacherAvailabilityProjectionService,
 )
@@ -86,6 +87,7 @@ from school_timetable.persistence.resource_repository import SqlAlchemyResourceR
 from school_timetable.persistence.schedule_repository import SqlAlchemyScheduleVersionRepository
 from school_timetable.persistence.school_provisioning_repository import SqlAlchemySchoolProvisioningRepository
 from school_timetable.persistence.special_activity_repository import SqlAlchemySpecialActivityRepository
+from school_timetable.persistence.synchronized_split_repository import SqlAlchemySynchronizedSplitRepository
 from school_timetable.persistence.teacher_availability_repository import (
     SqlAlchemyTeacherAvailabilityRepository,
 )
@@ -206,6 +208,14 @@ def get_teaching_assignment_service() -> TeachingAssignmentService:
     return TeachingAssignmentService(
         SessionFactorySchedulingProblemRepository(SessionLocal),
         SqlAlchemyTeachingAssignmentRepository(SessionLocal),
+    )
+
+
+def get_synchronized_split_service() -> SynchronizedSplitService:
+    """Compose the atomic two-branch split write from session-factory adapters."""
+    return SynchronizedSplitService(
+        SessionFactorySchedulingProblemRepository(SessionLocal),
+        SqlAlchemySynchronizedSplitRepository(SessionLocal),
     )
 
 

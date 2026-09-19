@@ -5251,3 +5251,32 @@ Real School Trial #1 blocker is browser entry for the real synchronized Second
 Foreign Language split: Russian and German subgroups in one class, same period,
 different teachers. No speculative split-group implementation is selected by
 this decision.
+
+## 44. Synchronized two-branch splits are one atomic configuration aggregate
+
+The pilot browser workflow creates exactly two subgroup branches as one
+aggregate in Teaching Assignments. Its request supplies one class, one positive
+weekly frequency, and for each branch a display name, teacher public ID, and
+ordinary activity public ID. The server owns collision-safe public IDs for both
+groups, both requirements, and their shared split identity; callers never send
+those IDs and no surrogate database identity crosses the application or HTTP
+boundary.
+
+Creation follows the existing editable-draft lock and transaction discipline.
+The complete candidate contains both `SUBGROUP` groups, both class memberships,
+and both requirements sharing one `split_group_id` before existing scheduling
+preflight runs. One commit persists the aggregate, and any validation,
+concurrency, collision, or persistence failure rolls all six owned rows back.
+The two teachers must differ; activities need not differ beyond being existing
+ordinary activities. No language names, one-per-day constraint,
+`min_distinct_days`, or `max_periods_per_day` are introduced.
+
+The existing `/config` response remains the sole readback contract. The
+frontend groups requirements by non-null `split_group_id` and joins structured
+participant-group/class relationships; malformed groups are reported rather
+than guessed from display text. Existing solver synchronization, independent
+verification, lifecycle cloning/staleness, and Class/Teacher/Teacher Matrix
+projections are reused without changes. Aggregate update/delete is deliberately
+deferred, and individual branch mutation is not exposed. No schema migration
+was required. The Second Foreign Language browser-entry blocker is closed, so
+Real School Trial #1 may proceed to actual school data entry.

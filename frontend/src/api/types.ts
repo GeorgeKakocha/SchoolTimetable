@@ -491,6 +491,63 @@ export interface TeachingAssignmentDeleteResponse {
   warnings: ValidationDiagnostic[];
 }
 
+// -- Atomic synchronized two-branch split -------------------------------
+
+export interface SynchronizedSplitBranchRequest {
+  participant_group_name: string;
+  teacher_id: string;
+  activity_id: string;
+}
+
+export interface SynchronizedSplitCreateRequest {
+  class_section_id: string;
+  weekly_periods: number;
+  branches: [SynchronizedSplitBranchRequest, SynchronizedSplitBranchRequest];
+}
+
+export interface SynchronizedSplitBranchResponse extends SynchronizedSplitBranchRequest {
+  participant_group_id: string;
+  requirement_id: string;
+}
+
+export interface SynchronizedSplitCreateResponse {
+  split_group_id: string;
+  class_section_id: string;
+  weekly_periods: number;
+  branches: [SynchronizedSplitBranchResponse, SynchronizedSplitBranchResponse];
+  warnings: ValidationDiagnostic[];
+}
+
+export interface SynchronizedSplitConfigActivity {
+  id: string;
+  name: string;
+  kind: string;
+}
+
+export interface SynchronizedSplitConfigParticipantGroup {
+  id: string;
+  name: string;
+  class_sections: string[];
+  role: string;
+}
+
+export interface SynchronizedSplitConfigRequirement {
+  id: string;
+  teacher_id: string;
+  activity_id: string;
+  participant_group_id: string;
+  weekly_periods: number;
+  split_group_id: string | null;
+}
+
+export interface SynchronizedSplitConfigResponse {
+  class_sections: ClassSectionSummary[];
+  teachers: TeacherSummary[];
+  activities: SynchronizedSplitConfigActivity[];
+  participant_groups: SynchronizedSplitConfigParticipantGroup[];
+  teaching_requirements: SynchronizedSplitConfigRequirement[];
+}
+
 // -- GET/POST /schools/{school_id}/years/{year_id}/teachers -------------
 // -- PUT/DELETE .../teachers/{teacher_id} --------------------------------
 //

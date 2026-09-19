@@ -8,8 +8,16 @@ import {
   getTeachingAssignments,
   updateTeachingAssignment,
 } from "../api/teachingAssignments";
+import {
+  createSynchronizedSplit,
+  getSynchronizedSplitConfig,
+} from "../api/synchronizedSplits";
 import { AppConfigError, loadAppConfig } from "../config/appConfig";
-import type { TeachingAssignmentsProjectionResponse, ValidationDiagnostic } from "../api/types";
+import type {
+  SynchronizedSplitConfigResponse,
+  TeachingAssignmentsProjectionResponse,
+  ValidationDiagnostic,
+} from "../api/types";
 
 // `../api/teachingAssignments` and `../config/appConfig` are mocked with
 // only their network/env-reading functions replaced -- `ApiError`/
@@ -26,6 +34,187 @@ vi.mock("../api/teachingAssignments", async (importOriginal) => {
   };
 });
 
+const CREATED_SPLIT_CONFIG: SynchronizedSplitConfigResponse = {
+  class_sections: [{ id: "8a", name: "8-A" }, { id: "8b", name: "8-B" }],
+  teachers: [{ id: "t1", name: "Ms. Petrova" }, { id: "t2", name: "Mr. Ivanov" }],
+  activities: [
+    { id: "math", name: "Mathematics", kind: "ORDINARY" },
+    { id: "art", name: "Art", kind: "ORDINARY" },
+  ],
+  participant_groups: [
+    { id: "server-group-a", name: "Group Alpha", class_sections: ["8a"], role: "SUBGROUP" },
+    { id: "server-group-b", name: "Group Beta", class_sections: ["8a"], role: "SUBGROUP" },
+  ],
+  teaching_requirements: [
+    {
+      id: "server-req-a", teacher_id: "t1", activity_id: "math",
+      participant_group_id: "server-group-a", weekly_periods: 2, split_group_id: "server-split",
+    },
+    {
+      id: "server-req-b", teacher_id: "t2", activity_id: "art",
+      participant_group_id: "server-group-b", weekly_periods: 2, split_group_id: "server-split",
+    },
+  ],
+};
+
+async function openSplitForm() {
+  fireEvent.click(await screen.findByRole("button", { name: "Add synchronized split" }));
+  return screen.findByText("Both branches will be scheduled simultaneously.");
+}
+
+function splitFieldsets() {
+  return {
+    branchA: screen.getByRole("group", { name: "Branch A" }),
+    branchB: screen.getByRole("group", { name: "Branch B" }),
+  };
+}
+
+function fillSplitForm() {
+  fireEvent.change(screen.getByRole("combobox", { name: "Class" }), { target: { value: "8a" } });
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Weekly periods" }), { target: { value: "2" } });
+  const { branchA, branchB } = splitFieldsets();
+  fireEvent.change(within(branchA).getByRole("textbox", { name: "Subgroup name" }),
+    { target: { value: " Group Alpha " } });
+  fireEvent.change(within(branchA).getByRole("combobox", { name: "Teacher" }), { target: { value: "t1" } });
+  fireEvent.change(within(branchA).getByRole("combobox", { name: "Subject" }), { target: { value: "math" } });
+  fireEvent.change(within(branchB).getByRole("textbox", { name: "Subgroup name" }),
+    { target: { value: "Group Beta" } });
+  fireEvent.change(within(branchB).getByRole("combobox", { name: "Teacher" }), { target: { value: "t2" } });
+  fireEvent.change(within(branchB).getByRole("combobox", { name: "Subject" }), { target: { value: "art" } });
+}
+
+describe("Synchronized splits", () => {
+  it("renders in Teaching Assignments with class, teacher, and ordinary-subject options", async () => {
+    mockedGetTeachingAssignments.mockResolvedValue(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />);
+    await openSplitForm();
+    expect(within(screen.getByRole("combobox", { name: "Class" })).getByText("8-A")).toBeInTheDocument();
+    const { branchA, branchB } = splitFieldsets();
+    expect(within(branchA).getByText("Ms. Petrova")).toBeInTheDocument();
+    expect(within(branchB).getByText("Mr. Ivanov")).toBeInTheDocument();
+    expect(within(branchA).getByText("Mathematics")).toBeInTheDocument();
+    expect(within(branchA).queryByText("Chess Club")).not.toBeInTheDocument();
+  });
+
+  it("sends the exact two-branch S2 payload with active runtime IDs and no generated IDs", async () => {
+    mockedGetTeachingAssignments.mockResolvedValue(FULL_PROJECTION);
+    mockedCreateSynchronizedSplit.mockResolvedValue({
+      split_group_id: "server-split", class_section_id: "8a", weekly_periods: 2,
+      branches: [
+        { participant_group_id: "server-group-a", participant_group_name: "Group Alpha",
+          teacher_id: "t1", activity_id: "math", requirement_id: "server-req-a" },
+        { participant_group_id: "server-group-b", participant_group_name: "Group Beta",
+          teacher_id: "t2", activity_id: "art", requirement_id: "server-req-b" },
+      ], warnings: [],
+    });
+    mockedGetSynchronizedSplitConfig.mockResolvedValueOnce(SPLIT_CONFIG)
+      .mockResolvedValueOnce(CREATED_SPLIT_CONFIG);
+    render(<TeachingAssignmentsPage />);
+    await openSplitForm(); fillSplitForm();
+    fireEvent.click(screen.getByRole("button", { name: "Save synchronized split" }));
+    await waitFor(() => expect(mockedCreateSynchronizedSplit).toHaveBeenCalledTimes(1));
+    expect(mockedCreateSynchronizedSplit).toHaveBeenCalledWith("s1", "y1", {
+      class_section_id: "8a", weekly_periods: 2,
+      branches: [
+        { participant_group_name: "Group Alpha", teacher_id: "t1", activity_id: "math" },
+        { participant_group_name: "Group Beta", teacher_id: "t2", activity_id: "art" },
+      ],
+    });
+    const payload = mockedCreateSynchronizedSplit.mock.calls[0]?.[2];
+    expect(JSON.stringify(payload)).not.toMatch(/split_group_id|participant_group_id|requirement_id/);
+    await screen.findByText("8-A · 2 per week");
+    const branch = screen.getByText("Group Alpha").closest("li") as HTMLElement;
+    expect(branch).toHaveTextContent("Group Alpha — Mathematics — Ms. Petrova");
+  });
+
+  it("prevents duplicate submit while the request is pending", async () => {
+    mockedGetTeachingAssignments.mockResolvedValue(FULL_PROJECTION);
+    const pending = deferred<Awaited<ReturnType<typeof createSynchronizedSplit>>>();
+    mockedCreateSynchronizedSplit.mockReturnValue(pending.promise);
+    render(<TeachingAssignmentsPage />); await openSplitForm(); fillSplitForm();
+    const save = screen.getByRole("button", { name: "Save synchronized split" });
+    fireEvent.click(save); fireEvent.click(save); fireEvent.click(save);
+    expect(mockedCreateSynchronizedSplit).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["blank subgroup", () => {
+      const { branchA } = splitFieldsets();
+      fireEvent.change(within(branchA).getByRole("textbox", { name: "Subgroup name" }), { target: { value: " " } });
+    }, "Enter a subgroup name."],
+    ["duplicate names", () => {
+      const { branchB } = splitFieldsets();
+      fireEvent.change(within(branchB).getByRole("textbox", { name: "Subgroup name" }),
+        { target: { value: "Group Alpha" } });
+    }, "Subgroup names must be different."],
+    ["same teacher", () => {
+      const { branchB } = splitFieldsets();
+      fireEvent.change(within(branchB).getByRole("combobox", { name: "Teacher" }), { target: { value: "t1" } });
+    }, "The simultaneous branches need different teachers."],
+    ["nonpositive periods", () => {
+      fireEvent.change(screen.getByRole("spinbutton", { name: "Weekly periods" }), { target: { value: "0" } });
+    }, "Enter a positive whole number."],
+  ])("rejects %s client-side", async (_label, mutate, message) => {
+    mockedGetTeachingAssignments.mockResolvedValue(FULL_PROJECTION);
+    render(<TeachingAssignmentsPage />); await openSplitForm(); fillSplitForm(); mutate();
+    fireEvent.click(screen.getByRole("button", { name: "Save synchronized split" }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(mockedCreateSynchronizedSplit).not.toHaveBeenCalled();
+  });
+
+  it("preserves form values and displays the backend error on failure", async () => {
+    mockedGetTeachingAssignments.mockResolvedValue(FULL_PROJECTION);
+    mockedCreateSynchronizedSplit.mockRejectedValue(new ApiError(
+      422, "The synchronized split is invalid.", "INVALID_SYNCHRONIZED_SPLIT",
+    ));
+    render(<TeachingAssignmentsPage />); await openSplitForm(); fillSplitForm();
+    fireEvent.click(screen.getByRole("button", { name: "Save synchronized split" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The synchronized split is invalid.");
+    expect(screen.getByDisplayValue("Group Alpha")).toBeInTheDocument();
+  });
+
+  it("shows backend warnings non-destructively", async () => {
+    mockedGetTeachingAssignments.mockResolvedValue(FULL_PROJECTION);
+    mockedCreateSynchronizedSplit.mockResolvedValue({
+      split_group_id: "server-split", class_section_id: "8a", weekly_periods: 2,
+      branches: [
+        { participant_group_id: "a", participant_group_name: "Group Alpha", teacher_id: "t1",
+          activity_id: "math", requirement_id: "ra" },
+        { participant_group_id: "b", participant_group_name: "Group Beta", teacher_id: "t2",
+          activity_id: "art", requirement_id: "rb" },
+      ],
+      warnings: [{ code: "CLASS_OCCUPANCY_MISMATCH", message: "Review class workload.", context: {} }],
+    });
+    render(<TeachingAssignmentsPage />); await openSplitForm(); fillSplitForm();
+    fireEvent.click(screen.getByRole("button", { name: "Save synchronized split" }));
+    expect(await screen.findByText("Review class workload.")).toBeInTheDocument();
+  });
+
+  it("renders authoritative readback, empty state, and malformed-data warning defensively", async () => {
+    mockedGetTeachingAssignments.mockResolvedValue(FULL_PROJECTION);
+    mockedGetSynchronizedSplitConfig.mockResolvedValue(CREATED_SPLIT_CONFIG);
+    const { unmount } = render(<TeachingAssignmentsPage />);
+    expect(await screen.findByText("8-A · 2 per week")).toBeInTheDocument();
+    expect(screen.getByText("Branches run simultaneously")).toBeInTheDocument();
+    unmount();
+
+    mockedGetSynchronizedSplitConfig.mockResolvedValue({
+      ...CREATED_SPLIT_CONFIG,
+      teaching_requirements: CREATED_SPLIT_CONFIG.teaching_requirements.slice(0, 1),
+    });
+    render(<TeachingAssignmentsPage />);
+    expect(await screen.findByText(/could not be displayed safely/)).toBeInTheDocument();
+    expect(screen.getByText("No synchronized splits configured yet.")).toBeInTheDocument();
+  });
+
+  it("shows an empty state and disables creation while configuration is locked", async () => {
+    mockedGetTeachingAssignments.mockResolvedValue({ ...FULL_PROJECTION, configuration_locked: true });
+    render(<TeachingAssignmentsPage />);
+    expect(await screen.findByText("No synchronized splits configured yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add synchronized split" })).toBeDisabled();
+  });
+});
+
 vi.mock("../config/appConfig", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config/appConfig")>();
   return {
@@ -34,10 +223,17 @@ vi.mock("../config/appConfig", async (importOriginal) => {
   };
 });
 
+vi.mock("../api/synchronizedSplits", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/synchronizedSplits")>();
+  return { ...actual, getSynchronizedSplitConfig: vi.fn(), createSynchronizedSplit: vi.fn() };
+});
+
 const mockedGetTeachingAssignments = vi.mocked(getTeachingAssignments);
 const mockedCreateTeachingAssignment = vi.mocked(createTeachingAssignment);
 const mockedUpdateTeachingAssignment = vi.mocked(updateTeachingAssignment);
 const mockedDeleteTeachingAssignment = vi.mocked(deleteTeachingAssignment);
+const mockedGetSynchronizedSplitConfig = vi.mocked(getSynchronizedSplitConfig);
+const mockedCreateSynchronizedSplit = vi.mocked(createSynchronizedSplit);
 const mockedLoadAppConfig = vi.mocked(loadAppConfig);
 
 /** A promise this test controls the resolution/rejection of, to assert
@@ -184,12 +380,25 @@ const EMPTY_PROJECTION: TeachingAssignmentsProjectionResponse = {
   assignments: [],
 };
 
+const SPLIT_CONFIG: SynchronizedSplitConfigResponse = {
+  class_sections: [{ id: "8a", name: "8-A" }, { id: "8b", name: "8-B" }],
+  teachers: [{ id: "t1", name: "Ms. Petrova" }, { id: "t2", name: "Mr. Ivanov" }],
+  activities: [
+    { id: "math", name: "Mathematics", kind: "ORDINARY" },
+    { id: "art", name: "Art", kind: "ORDINARY" },
+    { id: "club", name: "Chess Club", kind: "CLUB" },
+  ],
+  participant_groups: [],
+  teaching_requirements: [],
+};
+
 function rowFor(activityName: string): HTMLElement {
   return screen.getByText(activityName).closest("tr") as HTMLElement;
 }
 
 beforeEach(() => {
   mockedLoadAppConfig.mockReturnValue({ schoolId: "s1", academicYearId: "y1" });
+  mockedGetSynchronizedSplitConfig.mockResolvedValue(SPLIT_CONFIG);
 });
 
 // Every mutation test below queues its own `mockResolvedValueOnce`/

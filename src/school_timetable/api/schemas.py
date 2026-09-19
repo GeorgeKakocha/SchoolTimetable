@@ -906,6 +906,59 @@ class ConfigurationLockedErrorResponse(BaseModel):
     detail: str
 
 
+# -- Atomic synchronized two-branch split API. ---------------------------
+
+
+class SynchronizedSplitBranchRequest(BaseModel):
+    participant_group_name: str
+    teacher_id: str
+    activity_id: str
+
+
+class SynchronizedSplitCreateRequest(BaseModel):
+    class_section_id: str
+    weekly_periods: int = Field(gt=0)
+    branches: tuple[SynchronizedSplitBranchRequest, SynchronizedSplitBranchRequest]
+
+
+class SynchronizedSplitBranchResponse(BaseModel):
+    participant_group_id: str
+    participant_group_name: str
+    teacher_id: str
+    activity_id: str
+    requirement_id: str
+
+
+class SynchronizedSplitCreateResponse(BaseModel):
+    split_group_id: str
+    class_section_id: str
+    weekly_periods: int
+    branches: tuple[SynchronizedSplitBranchResponse, SynchronizedSplitBranchResponse]
+    warnings: tuple[ValidationDiagnosticResponse, ...]
+
+
+class DuplicateSubgroupNamesErrorResponse(BaseModel):
+    code: Literal["DUPLICATE_SUBGROUP_NAMES"]
+    detail: str
+
+
+class SameTeacherSynchronizedSplitErrorResponse(BaseModel):
+    code: Literal["SAME_TEACHER_SYNCHRONIZED_SPLIT"]
+    detail: str
+    teacher_id: str
+
+
+class InvalidSynchronizedSplitErrorResponse(BaseModel):
+    code: Literal["INVALID_SYNCHRONIZED_SPLIT"]
+    detail: str
+    errors: tuple[ValidationDiagnosticResponse, ...]
+
+
+class SynchronizedSplitPublicIdCollisionErrorResponse(BaseModel):
+    code: Literal["SYNCHRONIZED_SPLIT_PUBLIC_ID_COLLISION"]
+    detail: str
+
+
 # -- Teacher CRUD API (Real-School Setup MVP Slice B). -------------------
 
 

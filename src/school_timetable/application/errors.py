@@ -304,6 +304,32 @@ class InvalidTeachingAssignmentError(Exception):
         )
 
 
+class InvalidSynchronizedSplitError(Exception):
+    """The complete two-branch candidate introduces blocking preflight errors."""
+
+    def __init__(self, validation_errors: tuple[ValidationError, ...]) -> None:
+        self.validation_errors = validation_errors
+        super().__init__(f"invalid synchronized split: {[e.code for e in validation_errors]!r}")
+
+
+class DuplicateSubgroupNameError(Exception):
+    def __init__(self, participant_group_name: str) -> None:
+        self.participant_group_name = participant_group_name
+        super().__init__(f"both synchronized split branches use subgroup name {participant_group_name!r}")
+
+
+class SameTeacherSynchronizedSplitError(Exception):
+    def __init__(self, teacher_id: str) -> None:
+        self.teacher_id = teacher_id
+        super().__init__(f"both simultaneous branches use teacher {teacher_id!r}")
+
+
+class PublicIdCollisionError(Exception):
+    def __init__(self, public_id: str) -> None:
+        self.public_id = public_id
+        super().__init__(f"generated synchronized split public ID {public_id!r} collides")
+
+
 class ConfigurationLockedError(Exception):
     """Scheduling configuration writes are rejected once an
     `AcademicYear` has a generated `Schedule` (`docs/DECISIONS.md` #35).

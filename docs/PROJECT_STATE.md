@@ -4434,6 +4434,35 @@ succeeded. Alembic remains at the single head `398b05641152`, current at head,
 with no new upgrade operations. No migration, authentication, school selector,
 multi-school management, or additional academic-year management was added.
 
-The next Real School Trial #1 blocker is browser entry for the actual
-synchronized Second Foreign Language split: Russian subgroup and German
-subgroup in one class, in the same period, with different teachers.
+## SYNCHRONIZED TWO-BRANCH SPLIT SHIPPED
+
+Real School Trial #1 can now configure a synchronized two-branch subgroup
+split from the **Teaching Assignments** page. One atomic create request owns
+both `SUBGROUP` participant groups, both class memberships, both teaching
+requirements, and their shared `split_group_id`; the server generates every
+public group, requirement, and split identity. No surrogate database identity
+is exposed. The operation locks the editable draft and validates the complete
+two-branch candidate before its single commit, so a partial branch or orphan
+group cannot survive failure.
+
+Both branches target the same class and weekly frequency, use different
+teachers, and are hard-synchronized by the existing solver to the same day and
+period for every occurrence. Existing verifier class-occupancy checks continue
+to reject a simultaneous ordinary whole-class lesson. Same-day occurrences are
+allowed; this workflow adds no one-per-day or minimum-day rule.
+
+The browser reads synchronized splits back from the authoritative `/config`
+payload by structured `split_group_id`, requirement, participant-group, and
+class-membership relationships. It does not infer semantics from subgroup
+names. Class, Teacher, and Teacher Matrix timetable projections use their
+existing subgroup semantics unchanged. Aggregate update/delete is intentionally
+deferred; individual branch mutation remains unavailable. This feature uses the
+existing schema and required no migration.
+
+Controlled browser acceptance provisioned and later removed only
+`split-acceptance-20260919` / `ay-split-acceptance-2026-2027`. It created a
+two-period split, generated an optimal schedule with both branches paired in
+Monday Period I and Monday Period II, verified all three timetable views and
+the locked configuration state, and left the existing review data untouched.
+The Second Foreign Language entry blocker is closed; Real School Trial #1 may
+proceed to actual school data entry.

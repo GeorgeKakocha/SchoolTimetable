@@ -939,6 +939,89 @@ select:focus-visible {
   font-size: 0.85em;
 }
 
+/* Synchronized split entry stays within Teaching Assignments' existing
+   visual language: one compact contained form and simple read-only rows. */
+.synchronized-split-form {
+  margin: 0.9rem 0 1rem;
+  padding: 1rem;
+  border: 1px solid #d8d8d8;
+  border-radius: 0.55rem;
+  background: #fafafa;
+}
+
+.synchronized-split-form label,
+.synchronized-split-form fieldset {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.split-form-controls {
+  padding: 0;
+  border: 0;
+}
+
+.synchronized-split-form select,
+.synchronized-split-form input {
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+}
+
+.split-shared-fields,
+.split-branches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 0.8rem;
+}
+
+.split-branches fieldset {
+  padding: 0.8rem;
+  border: 1px solid #d8d8d8;
+  border-radius: 0.45rem;
+}
+
+.split-branches label + label {
+  margin-top: 0.45rem;
+}
+
+.form-guidance,
+.simultaneous-label {
+  margin: 0;
+  color: #6b6b6b;
+}
+
+.field-error {
+  color: #b00020;
+  font-size: 0.85rem;
+}
+
+.synchronized-split-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.synchronized-split-item {
+  padding: 0.8rem 1rem;
+  border: 1px solid #d8d8d8;
+  border-radius: 0.45rem;
+}
+
+.synchronized-split-item h3,
+.synchronized-split-item ul {
+  margin: 0;
+}
+
+.synchronized-split-item ul {
+  margin-top: 0.45rem;
+}
+
+@media (max-width: 760px) {
+  .split-shared-fields,
+  .split-branches {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Restrained secondary-action style (Edit) -- deliberately quieter
    than `.btn-primary`; "Add assignment" stays the page's one strong
    primary action. */
